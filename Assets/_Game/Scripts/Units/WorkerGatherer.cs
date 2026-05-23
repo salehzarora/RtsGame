@@ -6,6 +6,20 @@ using UnityEngine.AI;
 ///
 /// Loop:  MovingToResource → Gathering (wait) → MovingToBase → Deposit → repeat
 ///
+/// Auto-find behaviour:
+///   When the current ResourceNode runs out (becomes depleted, destroyed, or
+///   disappears mid-trip) the worker checks <see cref="autoFindNewResource"/>
+///   and whether it is still on an active gather job. If both are true it
+///   searches the scene for the NEAREST non-depleted ResourceNode within
+///   <see cref="resourceSearchRadius"/> and resumes the loop on that node.
+///   If no eligible node is found, or the player cancelled the job (e.g. a
+///   ground-move right-click), the worker goes idle.
+///
+///   Carrying resources when the node depletes is handled gracefully: the
+///   worker first walks to the CommandCenter and deposits its load, THEN
+///   triggers the auto-find. Workers that were empty when the node was
+///   lost search immediately.
+///
 /// Setup:
 ///   Add to the Worker capsule alongside Health, UnitMovement, SelectableUnit.
 ///   Do NOT add UnitCombat — workers don't fight.
@@ -44,6 +58,16 @@ public class WorkerGatherer : MonoBehaviour
              "here for the fallback distance check to register arrival.")]
     public float baseArrivalThreshold = 4f;
 
+    [Header("Auto Gathering")]
+    [Tooltip("If true, when the current ResourceNode is depleted the worker searches for the " +
+             "nearest non-depleted ResourceNode and continues the gather loop. Only fires while " +
+             "the worker is on an active gather job (player previously assigned a ResourceNode).")]
+    public bool autoFindNewResource = true;
+
+    [Tooltip("World-unit radius searched for the next available ResourceNode when the current " +
+             "one is depleted. Worker goes idle if no eligible node exists within this distance.")]
+    public float resourceSearchRadius = 40f;
+
     [Header("References")]
     [Tooltip("Leave empty — auto-found from scene on Awake")]
     public CommandCenter commandCenter;
@@ -58,6 +82,13 @@ public class WorkerGatherer : MonoBehaviour
     private NavMeshAgent agent;
     private int carryAmount;
     private float gatherTimer;
+
+    // True between SetGatherTarget() and the next CancelGathering() / "no more
+    // resources found". Gates auto-find so a freshly-spawned worker or a
+    // worker moved with a ground right-click does NOT start gathering on its
+    // own — auto-find only kicks in if the player explicitly assigned a node
+    // first.
+    private bool hasActiveGatherJob;
 
     // ------------------------------------------------------------------ //
 
@@ -97,6 +128,7 @@ public class WorkerGatherer : MonoBehaviour
     /// <summary>
     /// Assign a resource node as the gather target.
     /// Called by UnitSelector when the player right-clicks a ResourceNode.
+    /// Re-enables auto-find for the worker.
     /// </summary>
     public void SetGatherTarget(ResourceNode node)
     {
@@ -104,6 +136,7 @@ public class WorkerGatherer : MonoBehaviour
 
         targetNode = node;
         carryAmount = 0;
+        hasActiveGatherJob = true;
         state = WorkerState.MovingToResource;
         movement.MoveTo(node.transform.position);
         Debug.Log($"[Worker:{name}] Going to resource at {node.transform.position:F1}.");
@@ -111,11 +144,14 @@ public class WorkerGatherer : MonoBehaviour
 
     /// <summary>
     /// Interrupt gathering. Called when a move command overrides the current task.
+    /// Also disables auto-find — a manually-moved worker must NOT randomly
+    /// start gathering on its own.
     /// </summary>
     public void CancelGathering()
     {
         targetNode = null;
         carryAmount = 0;
+        hasActiveGatherJob = false;
         state = WorkerState.Idle;
         // Movement is handled by the caller (UnitSelector sets the new destination)
     }
@@ -126,10 +162,10 @@ public class WorkerGatherer : MonoBehaviour
 
     private void UpdateMovingToResource()
     {
-        // Node destroyed while we were walking to it
+        // Node destroyed while we were walking to it — search for another.
         if (targetNode == null)
         {
-            state = WorkerState.Idle;
+            TryContinueWithNewResource();
             return;
         }
 
@@ -144,10 +180,11 @@ public class WorkerGatherer : MonoBehaviour
 
     private void UpdateGathering()
     {
-        // Node destroyed while we were gathering (e.g. another worker finished it)
+        // Node destroyed mid-gather (e.g. another worker finished it). Carry
+        // is still 0 because we hadn't completed this trip yet — search now.
         if (targetNode == null)
         {
-            state = WorkerState.Idle;
+            TryContinueWithNewResource();
             return;
         }
 
@@ -210,7 +247,7 @@ public class WorkerGatherer : MonoBehaviour
 
         carryAmount = 0;
 
-        // Resume the loop if the node still has resources
+        // Resume the loop if the node still has resources, otherwise auto-find.
         if (targetNode != null && !targetNode.IsDepleted)
         {
             movement.MoveTo(targetNode.transform.position);
@@ -219,8 +256,10 @@ public class WorkerGatherer : MonoBehaviour
         }
         else
         {
+            // Node ran out during our last trip — we've now deposited our
+            // load (point 7 of the spec) and can look for a new node.
             targetNode = null;
-            state = WorkerState.Idle;
+            TryContinueWithNewResource();
         }
     }
 
@@ -248,5 +287,84 @@ public class WorkerGatherer : MonoBehaviour
                 return true;
         }
         return Vector3.Distance(transform.position, destination) <= threshold;
+    }
+
+    // ------------------------------------------------------------------ //
+    // Auto-find — pick the next ResourceNode when the current one is gone
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Called when the current <see cref="targetNode"/> has been lost (depleted /
+    /// destroyed / missing). If the worker is on an active gather job and
+    /// auto-find is enabled, switches to the nearest eligible ResourceNode
+    /// within <see cref="resourceSearchRadius"/> and resumes the loop.
+    /// Otherwise clears the job and goes idle.
+    /// </summary>
+    private void TryContinueWithNewResource()
+    {
+        if (!hasActiveGatherJob || !autoFindNewResource)
+        {
+            ClearJobAndGoIdle();
+            return;
+        }
+
+        Debug.Log($"[Worker:{name}] Current node depleted — " +
+                  $"searching for nearby resource within {resourceSearchRadius:F0}m.");
+
+        ResourceNode next = FindNearestAvailableResource();
+        if (next == null)
+        {
+            Debug.Log($"[Worker:{name}] No resources found within {resourceSearchRadius:F0}m — " +
+                      "worker idle.");
+            ClearJobAndGoIdle();
+            return;
+        }
+
+        Debug.Log($"[Worker:{name}] Found new resource node '{next.name}' at " +
+                  $"{next.transform.position:F1}.");
+
+        targetNode = next;
+        state = WorkerState.MovingToResource;
+        movement.MoveTo(next.transform.position);
+    }
+
+    /// <summary>
+    /// Linear scan of every ResourceNode in the scene. Filters out null /
+    /// inactive / depleted entries and beyond-radius candidates, then returns
+    /// the closest one. ResourceNode counts are small in this prototype so
+    /// the O(N) sweep is fine; cache it later if it ever becomes hot.
+    /// </summary>
+    private ResourceNode FindNearestAvailableResource()
+    {
+        ResourceNode[] all = FindObjectsByType<ResourceNode>(FindObjectsSortMode.None);
+
+        ResourceNode best = null;
+        float        bestDist = float.MaxValue;
+        Vector3      myPos    = transform.position;
+        float        maxDist  = resourceSearchRadius;
+
+        foreach (ResourceNode n in all)
+        {
+            if (n == null) continue;
+            if (!n.isActiveAndEnabled) continue;
+            if (n.IsDepleted) continue;                  // CurrentResources <= 0
+
+            float d = Vector3.Distance(myPos, n.transform.position);
+            if (d > maxDist) continue;
+            if (d >= bestDist) continue;
+
+            bestDist = d;
+            best     = n;
+        }
+
+        return best;
+    }
+
+    private void ClearJobAndGoIdle()
+    {
+        targetNode         = null;
+        carryAmount        = 0;
+        hasActiveGatherJob = false;
+        state              = WorkerState.Idle;
     }
 }

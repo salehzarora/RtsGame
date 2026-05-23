@@ -57,13 +57,21 @@ public class UnitSelector : MonoBehaviour
     private bool clickStartedOnGameplay;
     private RectTransform selectionBoxParent;
     private RTSHUD hud;
+    private AttackTargetMarker attackMarker;
 
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
-        mainCam = Camera.main;
-        hud     = FindAnyObjectByType<RTSHUD>();
+        mainCam      = Camera.main;
+        hud          = FindAnyObjectByType<RTSHUD>();
+        attackMarker = FindAnyObjectByType<AttackTargetMarker>();
+
+        if (attackMarker == null)
+            Debug.LogError("UnitSelector: No AttackTargetMarker found in the scene.\n" +
+                           "  Fix: Tools → RTS → Setup Attack Target Marker\n" +
+                           "  (or manually Add Component → AttackTargetMarker on GameManager).\n" +
+                           "  Combat still works without it, but no attack-target visual will show.");
 
         if (mainCam == null)
             Debug.LogError("UnitSelector: No Main Camera found. Tag your camera as MainCamera.");
@@ -103,24 +111,39 @@ public class UnitSelector : MonoBehaviour
 
     private void HandleProductionHotkeys()
     {
-        if (!Input.GetKeyDown(KeyCode.S)) return;
+        bool sPressed = Input.GetKeyDown(KeyCode.S);
+        bool wPressed = Input.GetKeyDown(KeyCode.W);
+        bool hPressed = Input.GetKeyDown(KeyCode.H);
+        if (!sPressed && !wPressed && !hPressed) return;
 
         if (selectedBuilding == null)
         {
-            Debug.LogWarning("[UnitSelector] Pressed S but no selected producer. " +
-                             "Click a Barracks first.");
+            string pressed = sPressed ? "S" : wPressed ? "W" : "H";
+            Debug.LogWarning($"[UnitSelector] Pressed {pressed} but no building is selected. " +
+                             "Click a Barracks (S), CommandCenter (W), or VehicleFactory (H) first.");
             return;
         }
 
-        UnitProducer producer = selectedBuilding.GetComponent<UnitProducer>();
-        if (producer == null)
+        // S → Soldier (Barracks only). Silent no-op otherwise.
+        if (sPressed)
         {
-            Debug.LogWarning($"[UnitSelector] Pressed S but '{selectedBuilding.name}' " +
-                             "has no UnitProducer component.");
-            return;
+            UnitProducer up = selectedBuilding.GetComponent<UnitProducer>();
+            if (up != null && up.CanProduceSoldier) up.ProduceSoldier();
         }
 
-        producer.ProduceSoldier();
+        // W → Worker (CommandCenter only). Silent no-op otherwise.
+        if (wPressed)
+        {
+            CommandCenterProducer wp = selectedBuilding.GetComponent<CommandCenterProducer>();
+            if (wp != null && wp.CanProduceWorker) wp.ProduceWorker();
+        }
+
+        // H → Humvee (VehicleFactory only). Silent no-op otherwise.
+        if (hPressed)
+        {
+            VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
+            if (vp != null && vp.CanProduceHumvee) vp.ProduceHumvee();
+        }
     }
 
     // ------------------------------------------------------------------ //
@@ -237,6 +260,18 @@ public class UnitSelector : MonoBehaviour
             {
                 foreach (SelectableUnit unit in selectedUnits)
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
+
+                if (attackMarker != null)
+                {
+                    attackMarker.Show(targetHealth.transform);
+                    // TEMPORARY debug — remove once attack-marker wiring is verified.
+                    Debug.Log("[UnitSelector] Attack command marker shown");
+                }
+                else
+                {
+                    Debug.LogError("[UnitSelector] Attack command but no AttackTargetMarker — " +
+                                   "run Tools → RTS → Setup Attack Target Marker.");
+                }
                 return;
             }
         }
@@ -251,6 +286,8 @@ public class UnitSelector : MonoBehaviour
             {
                 foreach (SelectableUnit unit in selectedUnits)
                     unit.GetComponent<WorkerGatherer>()?.SetGatherTarget(node);
+
+                attackMarker?.Hide();
                 return;
             }
         }
@@ -263,6 +300,8 @@ public class UnitSelector : MonoBehaviour
                 unit.GetComponent<UnitCombat>()?.ClearTarget();
                 unit.GetComponent<WorkerGatherer>()?.CancelGathering();
             }
+
+            attackMarker?.Hide();
 
             Vector3[] positions = GetFormationPositions(groundHit.point, selectedUnits.Count);
             for (int i = 0; i < selectedUnits.Count; i++)
@@ -320,17 +359,25 @@ public class UnitSelector : MonoBehaviour
         selectedBuilding = building;
         selectedBuilding.Select();
 
-        UnitProducer producer = building.GetComponent<UnitProducer>();
-        bool hasProducer = producer != null;
+        UnitProducer           soldierProd = building.GetComponent<UnitProducer>();
+        CommandCenterProducer  workerProd  = building.GetComponent<CommandCenterProducer>();
+        VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
+        bool canSoldier = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool canWorker  = workerProd  != null && workerProd.CanProduceWorker;
+        bool canHumvee  = vehicleProd != null && vehicleProd.CanProduceHumvee;
 
-        Debug.Log($"[UnitSelector] Building selected: '{building.name}'" +
-                  (hasProducer ? " (UnitProducer present — press S or click the Soldier button)."
-                               : " (no UnitProducer attached)."));
+        string hint;
+        if (canSoldier)      hint = " (press S or click the Soldier button).";
+        else if (canWorker)  hint = " (press W or click the Worker button).";
+        else if (canHumvee)  hint = " (press H or click the Humvee button).";
+        else                 hint = " (no production options attached).";
+
+        Debug.Log($"[UnitSelector] Building selected: '{building.name}'{hint}");
 
         if (hud != null)
         {
-            if (hasProducer) hud.ShowProductionPanel(producer);
-            else             hud.HideProductionPanel();
+            if (canSoldier || canWorker || canHumvee) hud.ShowProductionFor(building);
+            else                                       hud.HideProductionPanel();
         }
     }
 
@@ -374,6 +421,11 @@ public class UnitSelector : MonoBehaviour
         foreach (SelectableUnit unit in selectedUnits)
             unit.Deselect();
         selectedUnits.Clear();
+
+        // Clearing the selection cancels the player's intent to attack —
+        // hide the marker even though the units already in flight will
+        // continue their current command.
+        attackMarker?.Hide();
     }
 
     // ------------------------------------------------------------------ //

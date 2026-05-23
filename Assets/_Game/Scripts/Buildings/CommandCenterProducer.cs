@@ -2,40 +2,44 @@ using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
-/// Soldier production component for the Barracks.
+/// Worker production component for the CommandCenter.
 ///
-/// One responsibility: spawn Soldier units. The CommandCenter has its own
-/// component (CommandCenterProducer) for Workers — by design these are
-/// separate types so a building cannot accidentally be configured to produce
-/// both.
+/// Parallel sibling to UnitProducer (which makes Soldiers on the Barracks):
+/// keeping the two component types separate means a single building can only
+/// produce the units intended for it — there is no shared field that could
+/// accidentally enable cross-production.
 ///
-/// Setup — Barracks:
-///   1. Attach this component (with Building + SelectableBuilding).
-///   2. Drag the Soldier prefab into Soldier Prefab.
-///   3. Tune Soldier Cost (default 50).
-///   4. Optionally assign Spawn Point (a child Transform beside the building);
-///      otherwise units spawn at Spawn Offset relative to the building.
+/// Setup — CommandCenter:
+///   1. Attach this component (with CommandCenter + SelectableBuilding) to
+///      the CommandCenter GameObject.
+///   2. Drag the Worker prefab into Worker Prefab.
+///   3. Tune Worker Cost (default 75).
+///   4. Optionally assign Spawn Point; otherwise workers spawn at Spawn Offset
+///      relative to the CommandCenter.
 ///
-/// Production controls (while the Barracks is selected):
-///   • Click the Soldier button in the bottom-left production panel
-///   • Or press S
+/// Production controls (while the CommandCenter is selected):
+///   • Click the Worker button in the bottom-left production panel
+///   • Or press W
+///
+/// One-click setup: Tools → RTS → Setup Command Center configures everything
+/// and bootstraps a WorkerPrefab from SoldierPrefab if you don't have one yet.
 /// </summary>
 [RequireComponent(typeof(SelectableBuilding))]
-public class UnitProducer : MonoBehaviour
+public class CommandCenterProducer : MonoBehaviour
 {
     // ------------------------------------------------------------------ //
     // Inspector
     // ------------------------------------------------------------------ //
 
-    [Header("Soldier Production")]
-    [Tooltip("The Soldier prefab to instantiate")]
-    public GameObject soldierPrefab;
+    [Header("Worker Production")]
+    [Tooltip("The Worker prefab to instantiate")]
+    public GameObject workerPrefab;
 
-    [Tooltip("Resource cost per Soldier")]
-    public int soldierCost = 50;
+    [Tooltip("Resource cost per Worker")]
+    public int workerCost = 75;
 
-    [Tooltip("Keyboard shortcut to produce a Soldier (UnitSelector hardcodes S)")]
-    public KeyCode produceKey = KeyCode.S;
+    [Tooltip("Keyboard shortcut to produce a Worker (UnitSelector hardcodes W)")]
+    public KeyCode produceWorkerKey = KeyCode.W;
 
     [Header("Spawn Location")]
     [Tooltip("Explicit spawn point (child Transform). Leave empty to use spawnOffset.")]
@@ -48,43 +52,41 @@ public class UnitProducer : MonoBehaviour
     public float navMeshSnapRadius = 5f;
 
     // ------------------------------------------------------------------ //
-    // Capability flag — used by the HUD to decide whether to show the Soldier button
+    // Capability flag — used by the HUD to decide whether to show the Worker button
     // ------------------------------------------------------------------ //
 
-    /// <summary>True when this producer has a Soldier prefab assigned.</summary>
-    public bool CanProduceSoldier => soldierPrefab != null;
+    /// <summary>True when this producer has a Worker prefab assigned.</summary>
+    public bool CanProduceWorker => workerPrefab != null;
 
     // ------------------------------------------------------------------ //
     // Private
     // ------------------------------------------------------------------ //
 
-    private SelectableBuilding selectableBuilding;
     private PlayerResourceManager resourceManager;
 
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
-        selectableBuilding = GetComponent<SelectableBuilding>();
-        resourceManager    = FindAnyObjectByType<PlayerResourceManager>();
+        resourceManager = FindAnyObjectByType<PlayerResourceManager>();
 
         if (resourceManager == null)
-            Debug.LogError($"UnitProducer on '{name}': No PlayerResourceManager found in scene.");
+            Debug.LogError($"CommandCenterProducer on '{name}': No PlayerResourceManager found in scene.");
     }
 
     // ------------------------------------------------------------------ //
     // Public — called by UnitSelector / RTSHUD
     // ------------------------------------------------------------------ //
 
-    /// <summary>Spawn one Soldier. No-op (logs info) if no Soldier prefab is assigned.</summary>
-    public void ProduceSoldier()
+    /// <summary>Spawn one Worker. No-op (logs info) if no Worker prefab is assigned.</summary>
+    public void ProduceWorker()
     {
-        if (!CanProduceSoldier)
+        if (!CanProduceWorker)
         {
-            Debug.Log($"[UnitProducer] '{name}' has no Soldier prefab assigned — ignoring.");
+            Debug.Log($"[CommandCenter] '{name}' has no Worker prefab assigned — ignoring.");
             return;
         }
-        SpawnUnit(soldierPrefab, soldierCost, "Soldier");
+        SpawnUnit(workerPrefab, workerCost, "Worker");
     }
 
     // ------------------------------------------------------------------ //
@@ -97,21 +99,23 @@ public class UnitProducer : MonoBehaviour
 
         if (resourceManager == null)
         {
-            Debug.LogError($"[UnitProducer] Cannot produce {unitLabel}: PlayerResourceManager missing.");
+            Debug.LogError($"[CommandCenter] Cannot produce {unitLabel}: PlayerResourceManager missing.");
             return;
         }
 
+        // CommandCenter does not consume power today; check anyway in case a
+        // PowerConsumer is added later.
         PowerConsumer power = GetComponent<PowerConsumer>();
         if (power != null && !power.IsPowered)
         {
-            Debug.LogWarning($"[Power] Not enough power. Production paused. " +
-                             $"Build a PowerPlant (P) to restore power.");
+            Debug.LogWarning($"[Power] Not enough power. {unitLabel} production paused. " +
+                             "Build a PowerPlant (P) to restore power.");
             return;
         }
 
         if (!resourceManager.CanAfford(cost))
         {
-            Debug.LogWarning($"[{name}] Not enough resources to produce {unitLabel}. " +
+            Debug.LogWarning($"[CommandCenter] Not enough resources to produce {unitLabel}. " +
                              $"Need {cost}, have {resourceManager.CurrentResources}.");
             return;
         }
@@ -130,7 +134,7 @@ public class UnitProducer : MonoBehaviour
         else
         {
             spawnPos = desired;
-            Debug.LogWarning($"[UnitProducer] Could not find NavMesh near spawn point for {unitLabel}. " +
+            Debug.LogWarning($"[CommandCenter] Could not find NavMesh near spawn point for {unitLabel}. " +
                              $"Placing at {spawnPos:F1}. Check that the NavMesh is baked near '{name}'.");
         }
 
@@ -141,7 +145,7 @@ public class UnitProducer : MonoBehaviour
 
         resourceManager.SpendResources(cost);
 
-        Debug.Log($"[UnitProducer] {unitLabel} produced by '{name}' at {spawnPos:F1}. " +
+        Debug.Log($"[CommandCenter] {unitLabel} produced by '{name}' at {spawnPos:F1}. " +
                   $"Remaining resources: {resourceManager.CurrentResources}");
     }
 }

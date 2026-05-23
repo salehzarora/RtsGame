@@ -38,6 +38,7 @@ public static class SetupRTSHUD
     private static readonly Color BtnBarracksColor  = new Color(0.18f, 0.45f, 0.82f, 1.00f); // steel blue
     private static readonly Color BtnPowerColor     = new Color(0.82f, 0.60f, 0.08f, 1.00f); // amber
     private static readonly Color BtnSoldierColor   = new Color(0.30f, 0.65f, 0.30f, 1.00f); // green
+    private static readonly Color BtnWorkerColor    = new Color(0.78f, 0.50f, 0.18f, 1.00f); // tan/orange
 
     // ------------------------------------------------------------------ //
     // Entry point
@@ -126,10 +127,18 @@ public static class SetupRTSHUD
         productionPanel.gameObject.SetActive(false); // hidden until a producer is selected
         Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x150, bottom-left, hidden by default)");
 
+        // Soldier button is anchored at +30 (above center) so the Worker button
+        // can sit at -30 below it inside the same 250×150 panel.
         Button btnSoldier = CreateButton(
             productionPanel, "BtnSoldier", "Soldier - 50",
             BtnSoldierColor,
-            anchoredPos: new Vector2(0f, 0f),
+            anchoredPos: new Vector2(0f, 30f),
+            size:        new Vector2(220f, 50f));
+
+        Button btnWorker = CreateButton(
+            productionPanel, "BtnWorker", "Worker - 75",
+            BtnWorkerColor,
+            anchoredPos: new Vector2(0f, -30f),
             size:        new Vector2(220f, 50f));
 
         // ── 5. GameManager + RTSHUD ───────────────────────────────────── //
@@ -148,14 +157,18 @@ public static class SetupRTSHUD
         hud.resourcesText       = resourcesText;
         hud.powerText           = powerText;
         hud.productionPanel     = productionPanel.gameObject;
+        hud.soldierButton       = btnSoldier.gameObject;
         hud.soldierButtonLabel  = btnSoldier.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.workerButton        = btnWorker.gameObject;
+        hud.workerButtonLabel   = btnWorker.GetComponentInChildren<TextMeshProUGUI>(true);
         EditorUtility.SetDirty(hud);
 
         // Wire buttons to RTSHUD callback methods
         WireButton(btnBarracks,   hud, nameof(RTSHUD.OnClickBuildBarracks));
         WireButton(btnPowerPlant, hud, nameof(RTSHUD.OnClickBuildPowerPlant));
         WireButton(btnSoldier,    hud, nameof(RTSHUD.OnClickProduceSoldier));
-        Debug.Log("[SetupRTSHUD] ✓ Buttons wired — BtnBarracks + BtnPowerPlant + BtnSoldier");
+        WireButton(btnWorker,     hud, nameof(RTSHUD.OnClickProduceWorker));
+        Debug.Log("[SetupRTSHUD] ✓ Buttons wired — BtnBarracks + BtnPowerPlant + BtnSoldier + BtnWorker");
 
         // Ensure the HUD renders on top of any other scene UI
         canvas.transform.SetAsLastSibling();

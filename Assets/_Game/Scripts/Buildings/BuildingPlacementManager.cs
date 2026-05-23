@@ -39,6 +39,11 @@ public class BuildingPlacementManager : MonoBehaviour
     [Tooltip("Resource cost for placing a PowerPlant")]
     public int powerPlantCost = 150;
 
+    [Tooltip("The VehicleFactory prefab — Building + SelectableBuilding + PowerConsumer + VehicleFactoryProducer. Hotkey: V")]
+    public GameObject vehicleFactoryPrefab;
+    [Tooltip("Resource cost for placing a VehicleFactory")]
+    public int vehicleFactoryCost = 300;
+
     [Tooltip("Y offset so the building sits on the ground surface (half the building's world height)")]
     public float placementHeightOffset = 0.75f;
 
@@ -114,9 +119,11 @@ public class BuildingPlacementManager : MonoBehaviour
         if (!IsPlacing)
         {
             if (Input.GetKeyDown(KeyCode.B))
-                TryEnterPlacementMode(barracksPrefab,   barracksCost,   "Barracks");
+                TryEnterPlacementMode(barracksPrefab,       barracksCost,       "Barracks");
             else if (Input.GetKeyDown(KeyCode.P))
-                TryEnterPlacementMode(powerPlantPrefab, powerPlantCost, "PowerPlant");
+                TryEnterPlacementMode(powerPlantPrefab,     powerPlantCost,     "PowerPlant");
+            else if (Input.GetKeyDown(KeyCode.V))
+                TryEnterPlacementMode(vehicleFactoryPrefab, vehicleFactoryCost, "VehicleFactory");
             return;
         }
 
@@ -154,6 +161,13 @@ public class BuildingPlacementManager : MonoBehaviour
     {
         if (!IsPlacing)
             TryEnterPlacementMode(powerPlantPrefab, powerPlantCost, "PowerPlant");
+    }
+
+    /// <summary>Starts VehicleFactory ghost placement. Safe to call from UI buttons.</summary>
+    public void StartVehicleFactoryPlacement()
+    {
+        if (!IsPlacing)
+            TryEnterPlacementMode(vehicleFactoryPrefab, vehicleFactoryCost, "VehicleFactory");
     }
 
     // ------------------------------------------------------------------ //

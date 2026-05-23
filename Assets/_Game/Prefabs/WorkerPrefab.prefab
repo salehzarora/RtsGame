@@ -807,9 +807,9 @@ GameObject:
   - component: {fileID: 1977956238850529398}
   - component: {fileID: 3205472671008666460}
   - component: {fileID: 4009610691626825348}
-  - component: {fileID: 8049170332246212668}
+  - component: {fileID: 8697405200582759181}
   m_Layer: 6
-  m_Name: SoldierPrefab
+  m_Name: WorkerPrefab
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -830,7 +830,6 @@ Transform:
   m_Children:
   - {fileID: 1989163559931296024}
   - {fileID: 3609094444793055742}
-  - {fileID: 8671456757506517560}
   - {fileID: 7778444691954332069}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -975,7 +974,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Health
   team: 0
   maxHealth: 100
---- !u!114 &8049170332246212668
+--- !u!114 &8697405200582759181
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -984,18 +983,13 @@ MonoBehaviour:
   m_GameObject: {fileID: 6067435896608983967}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f1fd9056727da664588da2e992f8a085, type: 3}
+  m_Script: {fileID: 11500000, guid: 8b4d827238020db4ca68505aa1fa849d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UnitCombat
-  attackRange: 8
-  attackDamage: 10
-  attackCooldown: 0.4
-  isRanged: 1
-  firePoint: {fileID: 8671456757506517560}
-  rotationSpeed: 540
-  tracerColor: {r: 1, g: 0.85, b: 0.3, a: 1}
-  tracerDuration: 0.06
-  tracerWidth: 0.05
+  m_EditorClassIdentifier: Assembly-CSharp::WorkerGatherer
+  gatherTime: 1.5
+  arrivalThreshold: 1.5
+  baseArrivalThreshold: 4
+  commandCenter: {fileID: 0}
 --- !u!1 &6132738001858159055
 GameObject:
   m_ObjectHideFlags: 0
@@ -1300,35 +1294,4 @@ Transform:
   - {fileID: 229425195929560424}
   - {fileID: 6808206821314709058}
   m_Father: {fileID: 3609094444793055742}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &8867753585817135869
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 8671456757506517560}
-  m_Layer: 0
-  m_Name: FirePoint
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &8671456757506517560
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8867753585817135869}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.35, y: 0.15, z: 0.5}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 3970202236340412702}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

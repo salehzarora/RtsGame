@@ -46,9 +46,29 @@ public class RTSHUD : MonoBehaviour
              "UnitProducer is selected. Set up automatically by Tools → RTS → Setup HUD.")]
     public GameObject productionPanel;
 
-    [Tooltip("Optional. The TMP label inside the Soldier button — updated to show " +
-             "cost when a producer is selected. Leave null to keep the static label.")]
+    [Tooltip("Soldier button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected building's UnitProducer.CanProduceSoldier).")]
+    public GameObject soldierButton;
+
+    [Tooltip("The TMP label inside the Soldier button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI soldierButtonLabel;
+
+    [Tooltip("Worker button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected building's UnitProducer.CanProduceWorker).")]
+    public GameObject workerButton;
+
+    [Tooltip("The TMP label inside the Worker button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI workerButtonLabel;
+
+    [Tooltip("Humvee button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected building's VehicleFactoryProducer.CanProduceHumvee).")]
+    public GameObject humveeButton;
+
+    [Tooltip("The TMP label inside the Humvee button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI humveeButtonLabel;
 
     // ------------------------------------------------------------------ //
     // Private references — found at runtime
@@ -58,8 +78,11 @@ public class RTSHUD : MonoBehaviour
     private PowerManager           powerManager;
     private BuildingPlacementManager placementManager;
 
-    // Currently selected building's UnitProducer (null when nothing producible is selected)
-    private UnitProducer currentProducer;
+    // Currently bound producers — at most one of each, and at least one must
+    // be non-null while the production panel is visible.
+    private UnitProducer           currentSoldierProducer;
+    private CommandCenterProducer  currentWorkerProducer;
+    private VehicleFactoryProducer currentVehicleProducer;
 
     // ------------------------------------------------------------------ //
 
@@ -135,35 +158,80 @@ public class RTSHUD : MonoBehaviour
         placementManager.StartPowerPlantPlacement();
     }
 
+    /// <summary>Called by the Vehicle Factory button. Starts VehicleFactory placement mode.</summary>
+    public void OnClickBuildVehicleFactory()
+    {
+        if (placementManager == null) return;
+        placementManager.StartVehicleFactoryPlacement();
+    }
+
     // ------------------------------------------------------------------ //
     // Production panel — driven by UnitSelector when buildings are selected
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Shows the bottom-left production panel and binds its Soldier button to the
-    /// given producer. Called by UnitSelector when a Barracks is selected.
+    /// Shows the production panel for <paramref name="building"/>. The HUD
+    /// queries the building for UnitProducer (Soldier) and CommandCenterProducer
+    /// (Worker) and shows exactly the buttons that match the components found.
+    /// Called by UnitSelector when a building is left-clicked.
     /// </summary>
-    public void ShowProductionPanel(UnitProducer producer)
+    public void ShowProductionFor(SelectableBuilding building)
     {
-        if (producer == null)
+        if (building == null)
         {
             HideProductionPanel();
             return;
         }
 
-        currentProducer = producer;
+        UnitProducer           soldierProd = building.GetComponent<UnitProducer>();
+        CommandCenterProducer  workerProd  = building.GetComponent<CommandCenterProducer>();
+        VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
+
+        bool showSoldier = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool showWorker  = workerProd  != null && workerProd.CanProduceWorker;
+        bool showHumvee  = vehicleProd != null && vehicleProd.CanProduceHumvee;
+
+        if (!showSoldier && !showWorker && !showHumvee)
+        {
+            HideProductionPanel();
+            return;
+        }
+
+        currentSoldierProducer = showSoldier ? soldierProd : null;
+        currentWorkerProducer  = showWorker  ? workerProd  : null;
+        currentVehicleProducer = showHumvee  ? vehicleProd : null;
 
         if (productionPanel != null)
             productionPanel.SetActive(true);
 
-        if (soldierButtonLabel != null)
-            soldierButtonLabel.text = $"Soldier - {producer.soldierCost}";
+        // --- Soldier button -------------------------------------------- //
+        if (soldierButton != null)
+            soldierButton.SetActive(showSoldier);
+
+        if (showSoldier && soldierButtonLabel != null)
+            soldierButtonLabel.text = $"Soldier - {soldierProd.soldierCost}";
+
+        // --- Worker button --------------------------------------------- //
+        if (workerButton != null)
+            workerButton.SetActive(showWorker);
+
+        if (showWorker && workerButtonLabel != null)
+            workerButtonLabel.text = $"Worker - {workerProd.workerCost}";
+
+        // --- Humvee button --------------------------------------------- //
+        if (humveeButton != null)
+            humveeButton.SetActive(showHumvee);
+
+        if (showHumvee && humveeButtonLabel != null)
+            humveeButtonLabel.text = $"Humvee - {vehicleProd.humveeCost}";
     }
 
-    /// <summary>Hides the production panel and forgets the bound producer.</summary>
+    /// <summary>Hides the production panel and forgets the bound producers.</summary>
     public void HideProductionPanel()
     {
-        currentProducer = null;
+        currentSoldierProducer = null;
+        currentWorkerProducer  = null;
+        currentVehicleProducer = null;
 
         if (productionPanel != null)
             productionPanel.SetActive(false);
@@ -172,13 +240,39 @@ public class RTSHUD : MonoBehaviour
     /// <summary>Called by the Soldier button. Produces from the bound UnitProducer.</summary>
     public void OnClickProduceSoldier()
     {
-        if (currentProducer == null)
+        if (currentSoldierProducer == null)
         {
-            Debug.LogWarning("[RTSHUD] Soldier button clicked but no producer is selected. " +
+            Debug.LogWarning("[RTSHUD] Soldier button clicked but no Soldier producer is selected. " +
                              "Select a Barracks first.");
             return;
         }
 
-        currentProducer.ProduceSoldier();
+        currentSoldierProducer.ProduceSoldier();
+    }
+
+    /// <summary>Called by the Worker button. Produces from the bound CommandCenterProducer.</summary>
+    public void OnClickProduceWorker()
+    {
+        if (currentWorkerProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] Worker button clicked but no Worker producer is selected. " +
+                             "Select a CommandCenter first.");
+            return;
+        }
+
+        currentWorkerProducer.ProduceWorker();
+    }
+
+    /// <summary>Called by the Humvee button. Produces from the bound VehicleFactoryProducer.</summary>
+    public void OnClickProduceHumvee()
+    {
+        if (currentVehicleProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] Humvee button clicked but no Vehicle producer is selected. " +
+                             "Select a VehicleFactory first.");
+            return;
+        }
+
+        currentVehicleProducer.ProduceHumvee();
     }
 }
