@@ -1,3 +1,10 @@
+// =============================================================================
+// PAUSED — Enemy AI is disabled for the current development phase.
+// The game currently focuses on the player-side army and base building only.
+// Re-enable this system in a later phase when enemy faction gameplay is added.
+// DO NOT add this component to any scene object or prefab until then.
+// =============================================================================
+
 using UnityEngine;
 
 /// <summary>

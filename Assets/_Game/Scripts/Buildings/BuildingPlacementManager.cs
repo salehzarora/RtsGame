@@ -1,19 +1,23 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 /// <summary>
-/// Manages placing a Barracks building on the ground.
+/// Manages placing buildings on the ground.
 ///
 /// Controls:
-///   B          — enter placement mode
-///   Left click — place (if valid and affordable)
+///   B          — enter Barracks placement mode    (cost: barracksCost)
+///   P          — enter PowerPlant placement mode  (cost: powerPlantCost)
+///   Left click — confirm place (if valid and affordable)
 ///   Right click / Escape — cancel
+///
+/// Adding more building types later: add a new prefab/cost pair and a key-check
+/// in Update() that calls TryEnterPlacementMode(prefab, cost, label).
 ///
 /// Setup:
 ///   1. Add to GameManager.
-///   2. Assign barracksPrefab (the Barracks cube prefab).
+///   2. Assign barracksPrefab and powerPlantPrefab.
 ///   3. Assign groundLayer, obstacleLayer.
 ///   4. Optionally assign ghostValidMaterial / ghostInvalidMaterial.
-///      If left empty, transparent materials are created at runtime.
 ///
 /// Important: UnitSelector.Update checks BuildingPlacementManager.IsPlacing
 /// and skips all input processing while placement is active — no click conflicts.
@@ -24,12 +28,16 @@ public class BuildingPlacementManager : MonoBehaviour
     // Inspector
     // ------------------------------------------------------------------ //
 
-    [Header("Building")]
-    [Tooltip("The Barracks cube prefab — must have a Building component and be on the Building layer")]
+    [Header("Buildings")]
+    [Tooltip("The Barracks prefab — Building component, Building layer. Hotkey: B")]
     public GameObject barracksPrefab;
-
     [Tooltip("Resource cost for placing a Barracks")]
     public int barracksCost = 100;
+
+    [Tooltip("The PowerPlant prefab — Building + PowerPlant components, Building layer. Hotkey: P")]
+    public GameObject powerPlantPrefab;
+    [Tooltip("Resource cost for placing a PowerPlant")]
+    public int powerPlantCost = 150;
 
     [Tooltip("Y offset so the building sits on the ground surface (half the building's world height)")]
     public float placementHeightOffset = 0.75f;
@@ -77,6 +85,11 @@ public class BuildingPlacementManager : MonoBehaviour
     private Material      runtimeValidMat;
     private Material      runtimeInvalidMat;
 
+    // Active placement session — set by TryEnterPlacementMode
+    private GameObject    activePrefab;
+    private int           activeCost;
+    private string        activeLabel;
+
     // ------------------------------------------------------------------ //
 
     private void Awake()
@@ -97,10 +110,13 @@ public class BuildingPlacementManager : MonoBehaviour
 
     private void Update()
     {
-        // Enter placement mode
-        if (Input.GetKeyDown(KeyCode.B) && !IsPlacing)
+        // Enter placement mode — one key per building type
+        if (!IsPlacing)
         {
-            TryEnterPlacementMode();
+            if (Input.GetKeyDown(KeyCode.B))
+                TryEnterPlacementMode(barracksPrefab,   barracksCost,   "Barracks");
+            else if (Input.GetKeyDown(KeyCode.P))
+                TryEnterPlacementMode(powerPlantPrefab, powerPlantCost, "PowerPlant");
             return;
         }
 
@@ -109,10 +125,11 @@ public class BuildingPlacementManager : MonoBehaviour
         UpdateGhostTransform();
         UpdateGhostColor();
 
-        // Confirm placement
+        // Confirm placement — skip if the click landed on a UI element
         if (Input.GetMouseButtonDown(0))
         {
-            TryPlace();
+            if (!EventSystem.current.IsPointerOverGameObject())
+                TryPlace();
             return;
         }
 
@@ -122,22 +139,49 @@ public class BuildingPlacementManager : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
+    // Public API — called by RTSHUD buttons (or keyboard shortcuts)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>Starts Barracks ghost placement. Safe to call from UI buttons.</summary>
+    public void StartBarracksPlacement()
+    {
+        if (!IsPlacing)
+            TryEnterPlacementMode(barracksPrefab, barracksCost, "Barracks");
+    }
+
+    /// <summary>Starts PowerPlant ghost placement. Safe to call from UI buttons.</summary>
+    public void StartPowerPlantPlacement()
+    {
+        if (!IsPlacing)
+            TryEnterPlacementMode(powerPlantPrefab, powerPlantCost, "PowerPlant");
+    }
+
+    // ------------------------------------------------------------------ //
     // Placement mode entry / exit
     // ------------------------------------------------------------------ //
 
-    private void TryEnterPlacementMode()
+    private void TryEnterPlacementMode(GameObject prefab, int cost, string label)
     {
-        if (barracksPrefab == null)
+        if (prefab == null)
         {
-            Debug.LogError("BuildingPlacementManager: barracksPrefab is not assigned.");
+            Debug.LogError($"BuildingPlacementManager: {label} prefab is not assigned.");
             return;
         }
 
-        IsPlacing = true;
+        activePrefab = prefab;
+        activeCost   = cost;
+        activeLabel  = label;
+        IsPlacing    = true;
+
+        // Make sure any in-progress drag selection is aborted and its UI hidden.
+        // Otherwise a HUD button click can leave a stale selection rectangle on screen.
+        UnitSelector selector = FindAnyObjectByType<UnitSelector>();
+        if (selector != null)
+            selector.CancelDragSelection();
 
         // Spawn ghost — a visual-only copy of the prefab
-        ghost = Instantiate(barracksPrefab);
-        ghost.name = "_GhostBarracks";
+        ghost = Instantiate(activePrefab);
+        ghost.name = $"_Ghost{activeLabel}";
 
         // Strip ALL colliders so the ghost is invisible to raycasts and NavMesh
         foreach (Collider col in ghost.GetComponentsInChildren<Collider>(true))
@@ -196,7 +240,7 @@ public class BuildingPlacementManager : MonoBehaviour
     {
         if (!ghost.activeSelf) return;
 
-        bool affordable = resourceManager != null && resourceManager.CanAfford(barracksCost);
+        bool affordable = resourceManager != null && resourceManager.CanAfford(activeCost);
         bool clearGround = IsFootprintClear(ghost.transform.position);
 
         isValid = affordable && clearGround;
@@ -225,17 +269,17 @@ public class BuildingPlacementManager : MonoBehaviour
             return;
         }
 
-        if (resourceManager == null || !resourceManager.CanAfford(barracksCost))
+        if (resourceManager == null || !resourceManager.CanAfford(activeCost))
         {
-            Debug.LogWarning($"[Placement] Cannot place Barracks: need {barracksCost} resources, " +
+            Debug.LogWarning($"[Placement] Cannot place {activeLabel}: need {activeCost} resources, " +
                              $"have {(resourceManager != null ? resourceManager.CurrentResources : 0)}.");
             return;
         }
 
         // Instantiate the real building
         Vector3 pos = ghost.transform.position;
-        GameObject placed = Instantiate(barracksPrefab, pos, Quaternion.identity);
-        placed.name = "Barracks";
+        GameObject placed = Instantiate(activePrefab, pos, Quaternion.identity);
+        placed.name = activeLabel;
 
         // Ensure placed building is on the Building layer
         int buildingLayer = LayerMask.NameToLayer("Building");
@@ -246,8 +290,8 @@ public class BuildingPlacementManager : MonoBehaviour
                 child.gameObject.layer = buildingLayer;
         }
 
-        resourceManager.SpendResources(barracksCost);
-        Debug.Log($"[Placement] Barracks placed at {pos:F1}. Remaining resources: {resourceManager.CurrentResources}");
+        resourceManager.SpendResources(activeCost);
+        Debug.Log($"[Placement] {activeLabel} placed at {pos:F1}. Remaining resources: {resourceManager.CurrentResources}");
 
         CancelPlacement();
     }

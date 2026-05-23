@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 /// <summary>
 /// Handles single-click selection, drag-box multi-selection, and group move commands.
@@ -49,13 +50,20 @@ public class UnitSelector : MonoBehaviour
     private Camera mainCam;
     private Vector2 dragStartPos;
     private bool isDragging;
+    // True only when the current mouse hold was started on the gameplay surface
+    // (not over UI and not while placing a building). Without this gate, the
+    // held-block re-evaluates Vector2.Distance against a stale dragStartPos and
+    // spuriously opens the selection box after clicking HUD buttons.
+    private bool clickStartedOnGameplay;
     private RectTransform selectionBoxParent;
+    private RTSHUD hud;
 
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
         mainCam = Camera.main;
+        hud     = FindAnyObjectByType<RTSHUD>();
 
         if (mainCam == null)
             Debug.LogError("UnitSelector: No Main Camera found. Tag your camera as MainCamera.");
@@ -124,13 +132,39 @@ public class UnitSelector : MonoBehaviour
         // Record drag start
         if (Input.GetMouseButtonDown(0))
         {
-            dragStartPos = Input.mousePosition;
-            isDragging = false;
+            // Block drag/click when the pointer is over a UI element, or when the
+            // placement manager has already entered placement mode this frame.
+            bool overUI    = EventSystem.current != null &&
+                             EventSystem.current.IsPointerOverGameObject();
+            bool placing   = BuildingPlacementManager.IsPlacing;
+
+            if (overUI || placing)
+            {
+                clickStartedOnGameplay = false;
+                return;
+            }
+
+            dragStartPos           = Input.mousePosition;
+            isDragging             = false;
+            clickStartedOnGameplay = true;
         }
+
+        // If the mouse-down did not land on the gameplay surface, ignore the rest
+        // of the hold. This prevents stale dragStartPos values from re-triggering
+        // the box when the user clicks a HUD button.
+        if (!clickStartedOnGameplay) return;
 
         // While held: check if we crossed the drag threshold
         if (Input.GetMouseButton(0))
         {
+            // If placement started mid-hold (e.g. button click handler enabled it),
+            // abort the drag immediately and hide the box.
+            if (BuildingPlacementManager.IsPlacing)
+            {
+                CancelDragSelection();
+                return;
+            }
+
             if (!isDragging &&
                 Vector2.Distance(Input.mousePosition, dragStartPos) > dragThreshold)
             {
@@ -159,7 +193,26 @@ public class UnitSelector : MonoBehaviour
             {
                 HandleSingleClick();
             }
+
+            clickStartedOnGameplay = false;
         }
+    }
+
+    // ------------------------------------------------------------------ //
+    // PUBLIC — called by BuildingPlacementManager when placement begins
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Aborts any in-progress drag selection and hides the selection-box UI.
+    /// Safe to call at any time; no-op when not dragging.
+    /// </summary>
+    public void CancelDragSelection()
+    {
+        isDragging             = false;
+        clickStartedOnGameplay = false;
+
+        if (selectionBoxRect != null && selectionBoxRect.gameObject.activeSelf)
+            selectionBoxRect.gameObject.SetActive(false);
     }
 
     // ------------------------------------------------------------------ //
@@ -169,6 +222,7 @@ public class UnitSelector : MonoBehaviour
     private void HandleRightClick()
     {
         if (!Input.GetMouseButtonDown(1)) return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         if (selectedUnits.Count == 0) return;
 
         Ray ray = mainCam.ScreenPointToRay(Input.mousePosition);
@@ -266,10 +320,18 @@ public class UnitSelector : MonoBehaviour
         selectedBuilding = building;
         selectedBuilding.Select();
 
-        bool hasProducer = building.GetComponent<UnitProducer>() != null;
+        UnitProducer producer = building.GetComponent<UnitProducer>();
+        bool hasProducer = producer != null;
+
         Debug.Log($"[UnitSelector] Building selected: '{building.name}'" +
-                  (hasProducer ? " (UnitProducer present — press S to produce a Soldier)."
+                  (hasProducer ? " (UnitProducer present — press S or click the Soldier button)."
                                : " (no UnitProducer attached)."));
+
+        if (hud != null)
+        {
+            if (hasProducer) hud.ShowProductionPanel(producer);
+            else             hud.HideProductionPanel();
+        }
     }
 
     private void DeselectBuilding()
@@ -277,6 +339,9 @@ public class UnitSelector : MonoBehaviour
         if (selectedBuilding == null) return;
         selectedBuilding.Deselect();
         selectedBuilding = null;
+
+        if (hud != null)
+            hud.HideProductionPanel();
     }
 
     private void SelectUnitsInRect(Rect screenRect)

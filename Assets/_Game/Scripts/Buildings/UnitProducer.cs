@@ -102,6 +102,15 @@ public class UnitProducer : MonoBehaviour
             return;
         }
 
+        // Check power before spending resources
+        PowerConsumer power = GetComponent<PowerConsumer>();
+        if (power != null && !power.IsPowered)
+        {
+            Debug.LogWarning($"[Power] Not enough power. Production paused. " +
+                             $"Build a PowerPlant (P) to restore power.");
+            return;
+        }
+
         if (!resourceManager.CanAfford(cost))
         {
             Debug.LogWarning($"[UnitProducer] Not enough resources to produce {unitLabel}. " +
