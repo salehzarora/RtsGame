@@ -13,7 +13,9 @@ GameObject:
   - component: {fileID: 2811238335410728528}
   - component: {fileID: 8124368648659623201}
   - component: {fileID: 299214454141092943}
-  m_Layer: 7
+  - component: {fileID: -2546268683819003572}
+  - component: {fileID: 1646456304971889851}
+  m_Layer: 9
   m_Name: Barracks
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -127,3 +129,34 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Building
   buildingName: Barracks
   cost: 100
+--- !u!114 &-2546268683819003572
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1810595053945247796}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 61507db6f84b3bf46be5ef105546614c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SelectableBuilding
+  selectionIndicator: {fileID: 0}
+--- !u!114 &1646456304971889851
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1810595053945247796}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6a11e4d03f845c64485c4cf9f81a863e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::UnitProducer
+  soldierPrefab: {fileID: 6067435896608983967, guid: 46dc3e8eac0855b4eb312a435983154c, type: 3}
+  soldierCost: 50
+  produceKey: 115
+  spawnPoint: {fileID: 0}
+  spawnOffset: {x: 4, y: 0, z: 0}
+  navMeshSnapRadius: 5

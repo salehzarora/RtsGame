@@ -86,6 +86,33 @@ public class UnitSelector : MonoBehaviour
 
         HandleLeftMouse();
         HandleRightClick();
+        HandleProductionHotkeys();
+    }
+
+    // ------------------------------------------------------------------ //
+    // PRODUCTION HOTKEYS — routed to the currently selected building
+    // ------------------------------------------------------------------ //
+
+    private void HandleProductionHotkeys()
+    {
+        if (!Input.GetKeyDown(KeyCode.S)) return;
+
+        if (selectedBuilding == null)
+        {
+            Debug.LogWarning("[UnitSelector] Pressed S but no selected producer. " +
+                             "Click a Barracks first.");
+            return;
+        }
+
+        UnitProducer producer = selectedBuilding.GetComponent<UnitProducer>();
+        if (producer == null)
+        {
+            Debug.LogWarning($"[UnitSelector] Pressed S but '{selectedBuilding.name}' " +
+                             "has no UnitProducer component.");
+            return;
+        }
+
+        producer.ProduceSoldier();
     }
 
     // ------------------------------------------------------------------ //
@@ -238,6 +265,11 @@ public class UnitSelector : MonoBehaviour
 
         selectedBuilding = building;
         selectedBuilding.Select();
+
+        bool hasProducer = building.GetComponent<UnitProducer>() != null;
+        Debug.Log($"[UnitSelector] Building selected: '{building.name}'" +
+                  (hasProducer ? " (UnitProducer present — press S to produce a Soldier)."
+                               : " (no UnitProducer attached)."));
     }
 
     private void DeselectBuilding()

@@ -64,18 +64,18 @@ public class UnitProducer : MonoBehaviour
             Debug.LogError($"UnitProducer on '{name}': No PlayerResourceManager found in scene.");
     }
 
-    private void Update()
+    // Input is driven by UnitSelector (single, centralized place that knows the
+    // currently selected building). UnitSelector calls ProduceSoldier() directly,
+    // which prevents double-firing if multiple producers are in the scene.
+
+    /// <summary>Public entry point for the Soldier hotkey. Called by UnitSelector.</summary>
+    public void ProduceSoldier()
     {
-        // Only respond to input while this specific building is selected
-        if (!selectableBuilding.IsSelected) return;
-
-        if (Input.GetKeyDown(produceKey))
-            SpawnUnit(soldierPrefab, soldierCost, "Soldier");
-
-        // Future unit types: add more key-checks here and call SpawnUnit with their prefab/cost.
-        // Example:
-        //   if (Input.GetKeyDown(KeyCode.A)) SpawnUnit(archerPrefab, archerCost, "Archer");
+        SpawnUnit(soldierPrefab, soldierCost, "Soldier");
     }
+
+    // Future unit types: add another public Produce* method here that calls SpawnUnit
+    // with their prefab/cost, and add a matching key-check in UnitSelector.
 
     // ------------------------------------------------------------------ //
     // Core production method — reused for every future unit type
