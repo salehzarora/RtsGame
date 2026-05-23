@@ -48,6 +48,11 @@ public class UnitCombat : MonoBehaviour
     private UnitMovement movement;
     private float attackTimer;
 
+    /// <summary>True when the unit has no active target (state == Idle).
+    /// EnemyAIController uses this to detect an immediately-dead target and
+    /// retarget without waiting for the periodic scan.</summary>
+    public bool IsIdle => state == CombatState.Idle;
+
     // ------------------------------------------------------------------ //
 
     private void Awake()
@@ -102,7 +107,8 @@ public class UnitCombat : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Assign an enemy Health as the attack target.
+    /// Assign a target Health component to attack.
+    /// Works for both player-controlled and AI-controlled units — no team check.
     /// The unit will immediately begin chasing.
     /// </summary>
     public void SetTarget(Health enemyHealth)
