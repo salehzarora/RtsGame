@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.AI;
 
 /// <summary>
 /// Gives a unit worker behaviour: gather from a ResourceNode and deposit at the CommandCenter.
@@ -35,8 +36,13 @@ public class WorkerGatherer : MonoBehaviour
     public float gatherTime = 1.5f;
 
     [Header("Navigation")]
-    [Tooltip("Distance at which the worker considers itself 'arrived' at a destination")]
+    [Tooltip("Distance at which the worker considers itself 'arrived' at a ResourceNode")]
     public float arrivalThreshold = 1.5f;
+
+    [Tooltip("Larger arrival distance used for the CommandCenter. The CC is a wide cube; " +
+             "the NavMeshAgent stops at the cube's surface, not its center, so we need slack " +
+             "here for the fallback distance check to register arrival.")]
+    public float baseArrivalThreshold = 4f;
 
     [Header("References")]
     [Tooltip("Leave empty — auto-found from scene on Awake")]
@@ -49,6 +55,7 @@ public class WorkerGatherer : MonoBehaviour
     private WorkerState state = WorkerState.Idle;
     private ResourceNode targetNode;
     private UnitMovement movement;
+    private NavMeshAgent agent;
     private int carryAmount;
     private float gatherTimer;
 
@@ -57,13 +64,18 @@ public class WorkerGatherer : MonoBehaviour
     private void Awake()
     {
         movement = GetComponent<UnitMovement>();
+        agent    = GetComponent<NavMeshAgent>();
 
         if (commandCenter == null)
             commandCenter = FindAnyObjectByType<CommandCenter>();
 
         if (commandCenter == null)
-            Debug.LogWarning($"WorkerGatherer on {name}: No CommandCenter found. " +
+            Debug.LogWarning($"[Worker:{name}] No CommandCenter found. " +
                              "Worker cannot deposit until one exists.");
+
+        if (FindAnyObjectByType<PlayerResourceManager>() == null)
+            Debug.LogWarning($"[Worker:{name}] No PlayerResourceManager found. " +
+                             "Deposits will be ignored until one exists.");
     }
 
     private void Update()
@@ -94,6 +106,7 @@ public class WorkerGatherer : MonoBehaviour
         carryAmount = 0;
         state = WorkerState.MovingToResource;
         movement.MoveTo(node.transform.position);
+        Debug.Log($"[Worker:{name}] Going to resource at {node.transform.position:F1}.");
     }
 
     /// <summary>
@@ -120,11 +133,12 @@ public class WorkerGatherer : MonoBehaviour
             return;
         }
 
-        if (HasArrived(targetNode.transform.position))
+        if (HasArrived(targetNode.transform.position, arrivalThreshold))
         {
             movement.Stop();
             gatherTimer = gatherTime;
             state = WorkerState.Gathering;
+            Debug.Log($"[Worker:{name}] Arrived at resource — gathering for {gatherTime:F1}s.");
         }
     }
 
@@ -142,10 +156,11 @@ public class WorkerGatherer : MonoBehaviour
 
         // Collect resources — Gather() destroys the node if fully depleted
         carryAmount = targetNode.Gather();
+        Debug.Log($"[Worker:{name}] Gathered {carryAmount}.");
 
         if (commandCenter == null)
         {
-            // No base to return to — drop carry and go idle
+            Debug.LogWarning($"[Worker:{name}] No CommandCenter — dropping {carryAmount} and going idle.");
             carryAmount = 0;
             state = WorkerState.Idle;
             return;
@@ -153,26 +168,46 @@ public class WorkerGatherer : MonoBehaviour
 
         movement.MoveTo(commandCenter.transform.position);
         state = WorkerState.MovingToBase;
+        Debug.Log($"[Worker:{name}] Returning to CommandCenter at " +
+                  $"{commandCenter.transform.position:F1} carrying {carryAmount}.");
     }
 
     private void UpdateMovingToBase()
     {
         if (commandCenter == null)
         {
+            Debug.LogWarning($"[Worker:{name}] CommandCenter disappeared mid-trip. " +
+                             $"Discarding {carryAmount}.");
+            carryAmount = 0;
             state = WorkerState.Idle;
             return;
         }
 
-        if (HasArrived(commandCenter.transform.position))
+        if (HasArrived(commandCenter.transform.position, baseArrivalThreshold))
         {
             movement.Stop();
             state = WorkerState.Depositing; // handled next frame in ExecuteDeposit
+            Debug.Log($"[Worker:{name}] Arrived at CommandCenter — depositing {carryAmount}.");
         }
     }
 
     private void ExecuteDeposit()
     {
-        commandCenter.Deposit(carryAmount);
+        if (carryAmount <= 0)
+        {
+            Debug.LogWarning($"[Worker:{name}] Deposit skipped — carrying 0.");
+        }
+        else if (commandCenter == null)
+        {
+            Debug.LogWarning($"[Worker:{name}] Deposit skipped — CommandCenter is null.");
+        }
+        else
+        {
+            int amount = carryAmount;
+            commandCenter.Deposit(amount);
+            Debug.Log($"[Worker:{name}] Deposited {amount}.");
+        }
+
         carryAmount = 0;
 
         // Resume the loop if the node still has resources
@@ -180,6 +215,7 @@ public class WorkerGatherer : MonoBehaviour
         {
             movement.MoveTo(targetNode.transform.position);
             state = WorkerState.MovingToResource;
+            Debug.Log($"[Worker:{name}] Returning to resource for next trip.");
         }
         else
         {
@@ -192,9 +228,25 @@ public class WorkerGatherer : MonoBehaviour
     // Helpers
     // ------------------------------------------------------------------ //
 
-    /// <summary>True when within arrivalThreshold of the destination.</summary>
-    private bool HasArrived(Vector3 destination)
+    /// <summary>
+    /// True when the worker has reached <paramref name="destination"/>.
+    ///
+    /// Primary signal: NavMeshAgent.remainingDistance once the path is computed —
+    /// this is the reliable answer when the destination sits inside an obstacle
+    /// (e.g. the CommandCenter cube), because the agent pathed to the building's
+    /// surface and reports remainingDistance from there.
+    ///
+    /// Fallback: straight-line Vector3.Distance with the supplied threshold —
+    /// handles the case where the agent has no path at all.
+    /// </summary>
+    private bool HasArrived(Vector3 destination, float threshold)
     {
-        return Vector3.Distance(transform.position, destination) <= arrivalThreshold;
+        if (agent != null && agent.enabled && agent.isOnNavMesh && !agent.pathPending && agent.hasPath)
+        {
+            float stop = Mathf.Max(agent.stoppingDistance, threshold);
+            if (agent.remainingDistance <= stop)
+                return true;
+        }
+        return Vector3.Distance(transform.position, destination) <= threshold;
     }
 }

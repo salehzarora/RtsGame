@@ -38,6 +38,14 @@ public class CommandCenter : MonoBehaviour
     public void Deposit(int amount)
     {
         if (amount <= 0) return;
-        resourceManager?.AddResources(amount);
+
+        if (resourceManager == null)
+        {
+            Debug.LogWarning($"[CommandCenter] Deposit({amount}) ignored — " +
+                             "PlayerResourceManager missing from the scene.");
+            return;
+        }
+
+        resourceManager.AddResources(amount);
     }
 }
