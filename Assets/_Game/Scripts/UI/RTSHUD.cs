@@ -54,6 +54,14 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI soldierButtonLabel;
 
+    [Tooltip("RPG Soldier button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected building's UnitProducer.CanProduceRPGSoldier).")]
+    public GameObject rpgSoldierButton;
+
+    [Tooltip("The TMP label inside the RPG Soldier button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI rpgSoldierButtonLabel;
+
     [Tooltip("Worker button GameObject. Visibility is toggled per producer " +
              "(visible only when the selected building's UnitProducer.CanProduceWorker).")]
     public GameObject workerButton;
@@ -212,23 +220,25 @@ public class RTSHUD : MonoBehaviour
         VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
         Airfield               airfield    = building.GetComponent<Airfield>();
 
-        bool showSoldier   = soldierProd != null && soldierProd.CanProduceSoldier;
-        bool showWorker    = workerProd  != null && workerProd.CanProduceWorker;
-        bool showHumvee    = vehicleProd != null && vehicleProd.CanProduceHumvee;
-        bool showTank      = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
-        bool showStrikeJet = airfield    != null && airfield.CanProduceStrikeJet;
+        bool showSoldier    = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool showRPGSoldier = soldierProd != null && soldierProd.CanProduceRPGSoldier;
+        bool showWorker     = workerProd  != null && workerProd.CanProduceWorker;
+        bool showHumvee     = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool showTank       = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool showStrikeJet  = airfield    != null && airfield.CanProduceStrikeJet;
 
-        if (!showSoldier && !showWorker && !showHumvee && !showTank && !showStrikeJet)
+        if (!showSoldier && !showRPGSoldier && !showWorker && !showHumvee && !showTank && !showStrikeJet)
         {
             HideProductionPanel();
             return;
         }
 
-        currentSoldierProducer = showSoldier              ? soldierProd : null;
-        currentWorkerProducer  = showWorker               ? workerProd  : null;
+        // Soldier producer drives both Soldier and RPG Soldier buttons.
+        currentSoldierProducer = (showSoldier || showRPGSoldier) ? soldierProd : null;
+        currentWorkerProducer  = showWorker                       ? workerProd  : null;
         // Vehicle producer is bound when either of its outputs is available.
-        currentVehicleProducer = (showHumvee || showTank) ? vehicleProd : null;
-        currentAirfield        = showStrikeJet            ? airfield    : null;
+        currentVehicleProducer = (showHumvee || showTank)         ? vehicleProd : null;
+        currentAirfield        = showStrikeJet                    ? airfield    : null;
 
         if (productionPanel != null)
             productionPanel.SetActive(true);
@@ -239,6 +249,13 @@ public class RTSHUD : MonoBehaviour
 
         if (showSoldier && soldierButtonLabel != null)
             soldierButtonLabel.text = $"Soldier - {soldierProd.soldierCost}";
+
+        // --- RPG Soldier button ---------------------------------------- //
+        if (rpgSoldierButton != null)
+            rpgSoldierButton.SetActive(showRPGSoldier);
+
+        if (showRPGSoldier && rpgSoldierButtonLabel != null)
+            rpgSoldierButtonLabel.text = $"RPG Soldier - {soldierProd.rpgSoldierCost}";
 
         // --- Worker button --------------------------------------------- //
         if (workerButton != null)
@@ -292,6 +309,19 @@ public class RTSHUD : MonoBehaviour
         }
 
         currentSoldierProducer.ProduceSoldier();
+    }
+
+    /// <summary>Called by the RPG Soldier button. Produces from the bound UnitProducer.</summary>
+    public void OnClickProduceRPGSoldier()
+    {
+        if (currentSoldierProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] RPG Soldier button clicked but no producer is selected. " +
+                             "Select a Barracks first.");
+            return;
+        }
+
+        currentSoldierProducer.ProduceRPGSoldier();
     }
 
     /// <summary>Called by the Worker button. Produces from the bound CommandCenterProducer.</summary>

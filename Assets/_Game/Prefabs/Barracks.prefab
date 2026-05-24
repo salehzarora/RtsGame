@@ -131,6 +131,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Building
   buildingName: Barracks
   cost: 100
+  placementYOffsetOverride: -1
 --- !u!114 &-2546268683819003572
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -159,6 +160,9 @@ MonoBehaviour:
   soldierPrefab: {fileID: 6067435896608983967, guid: 46dc3e8eac0855b4eb312a435983154c, type: 3}
   soldierCost: 50
   produceKey: 115
+  rpgSoldierPrefab: {fileID: 5427510531269640741, guid: 0d040f1c5f88eb042afb9eeb7bb68829, type: 3}
+  rpgSoldierCost: 120
+  produceRPGSoldierKey: 114
   spawnPoint: {fileID: 0}
   spawnOffset: {x: 4, y: 0, z: 0}
   navMeshSnapRadius: 5

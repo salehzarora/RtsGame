@@ -136,13 +136,15 @@ public class UnitSelector : MonoBehaviour
         bool hPressed = Input.GetKeyDown(KeyCode.H);
         bool tPressed = Input.GetKeyDown(KeyCode.T);
         bool jPressed = Input.GetKeyDown(KeyCode.J);
-        if (!sPressed && !wPressed && !hPressed && !tPressed && !jPressed) return;
+        bool rPressed = Input.GetKeyDown(KeyCode.R);
+        if (!sPressed && !wPressed && !hPressed && !tPressed && !jPressed && !rPressed) return;
 
         if (selectedBuilding == null)
         {
-            string pressed = sPressed ? "S" : wPressed ? "W" : hPressed ? "H" : tPressed ? "T" : "J";
+            string pressed = sPressed ? "S" : wPressed ? "W" : hPressed ? "H" :
+                             tPressed ? "T" : jPressed ? "J" : "R";
             Debug.LogWarning($"[UnitSelector] Pressed {pressed} but no building is selected. " +
-                             "Click a Barracks (S), CommandCenter (W), VehicleFactory (H/T), or Airfield (J) first.");
+                             "Click a Barracks (S/R), CommandCenter (W), VehicleFactory (H/T), or Airfield (J) first.");
             return;
         }
 
@@ -151,6 +153,13 @@ public class UnitSelector : MonoBehaviour
         {
             UnitProducer up = selectedBuilding.GetComponent<UnitProducer>();
             if (up != null && up.CanProduceSoldier) up.ProduceSoldier();
+        }
+
+        // R → RPG Soldier (Barracks only). Silent no-op otherwise.
+        if (rPressed)
+        {
+            UnitProducer up = selectedBuilding.GetComponent<UnitProducer>();
+            if (up != null && up.CanProduceRPGSoldier) up.ProduceRPGSoldier();
         }
 
         // W → Worker (CommandCenter only). Silent no-op otherwise.
@@ -294,9 +303,14 @@ public class UnitSelector : MonoBehaviour
 
             if (targetHealth != null && targetHealth.team == Health.Team.Enemy)
             {
-                // Ground units use UnitCombat (chase + shoot on NavMesh).
+                // Ground units use UnitCombat (chase + shoot on NavMesh) OR
+                // RocketCombat (chase + fire RocketProjectile). A given unit
+                // only has one of the two — null-conditional skips the other.
                 foreach (SelectableUnit unit in selectedUnits)
+                {
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
+                    unit.GetComponent<RocketCombat>()?.SetTarget(targetHealth);
+                }
 
                 // Aircraft use AirUnitController (takeoff + fly + missile + return).
                 // Multi-aircraft selections share one launch group ID so the
@@ -343,6 +357,7 @@ public class UnitSelector : MonoBehaviour
             foreach (SelectableUnit unit in selectedUnits)
             {
                 unit.GetComponent<UnitCombat>()?.ClearTarget();
+                unit.GetComponent<RocketCombat>()?.ClearTarget();
                 unit.GetComponent<WorkerGatherer>()?.CancelGathering();
             }
 
@@ -428,14 +443,17 @@ public class UnitSelector : MonoBehaviour
         CommandCenterProducer  workerProd  = building.GetComponent<CommandCenterProducer>();
         VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
         Airfield               airfield    = building.GetComponent<Airfield>();
-        bool canSoldier   = soldierProd != null && soldierProd.CanProduceSoldier;
-        bool canWorker    = workerProd  != null && workerProd.CanProduceWorker;
-        bool canHumvee    = vehicleProd != null && vehicleProd.CanProduceHumvee;
-        bool canTank      = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
-        bool canStrikeJet = airfield    != null && airfield.CanProduceStrikeJet;
+        bool canSoldier    = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool canRPGSoldier = soldierProd != null && soldierProd.CanProduceRPGSoldier;
+        bool canWorker     = workerProd  != null && workerProd.CanProduceWorker;
+        bool canHumvee     = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool canTank       = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool canStrikeJet  = airfield    != null && airfield.CanProduceStrikeJet;
 
         string hint;
-        if (canSoldier)                     hint = " (press S or click the Soldier button).";
+        if (canSoldier && canRPGSoldier)    hint = " (press S/R or click the Soldier/RPG Soldier button).";
+        else if (canSoldier)                hint = " (press S or click the Soldier button).";
+        else if (canRPGSoldier)             hint = " (press R or click the RPG Soldier button).";
         else if (canWorker)                 hint = " (press W or click the Worker button).";
         else if (canHumvee && canTank)      hint = " (press H/T or click the Humvee/Artillery Tank button).";
         else if (canHumvee)                 hint = " (press H or click the Humvee button).";
@@ -447,8 +465,10 @@ public class UnitSelector : MonoBehaviour
 
         if (hud != null)
         {
-            if (canSoldier || canWorker || canHumvee || canTank || canStrikeJet) hud.ShowProductionFor(building);
-            else                                                                  hud.HideProductionPanel();
+            if (canSoldier || canRPGSoldier || canWorker || canHumvee || canTank || canStrikeJet)
+                hud.ShowProductionFor(building);
+            else
+                hud.HideProductionPanel();
         }
     }
 

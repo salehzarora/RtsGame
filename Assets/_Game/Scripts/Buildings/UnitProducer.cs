@@ -37,6 +37,17 @@ public class UnitProducer : MonoBehaviour
     [Tooltip("Keyboard shortcut to produce a Soldier (UnitSelector hardcodes S)")]
     public KeyCode produceKey = KeyCode.S;
 
+    [Header("RPG Soldier Production")]
+    [Tooltip("The RPG Soldier prefab to instantiate. Anti-vehicle / anti-air infantry " +
+             "with a rocket launcher.")]
+    public GameObject rpgSoldierPrefab;
+
+    [Tooltip("Resource cost per RPG Soldier.")]
+    public int rpgSoldierCost = 120;
+
+    [Tooltip("Keyboard shortcut to produce an RPG Soldier (UnitSelector hardcodes R).")]
+    public KeyCode produceRPGSoldierKey = KeyCode.R;
+
     [Header("Spawn Location")]
     [Tooltip("Explicit spawn point (child Transform). Leave empty to use spawnOffset.")]
     public Transform spawnPoint;
@@ -53,6 +64,9 @@ public class UnitProducer : MonoBehaviour
 
     /// <summary>True when this producer has a Soldier prefab assigned.</summary>
     public bool CanProduceSoldier => soldierPrefab != null;
+
+    /// <summary>True when this producer has an RPG Soldier prefab assigned.</summary>
+    public bool CanProduceRPGSoldier => rpgSoldierPrefab != null;
 
     // ------------------------------------------------------------------ //
     // Private
@@ -85,6 +99,23 @@ public class UnitProducer : MonoBehaviour
             return;
         }
         SpawnUnit(soldierPrefab, soldierCost, "Soldier");
+    }
+
+    /// <summary>
+    /// Spawn one RPG Soldier. No-op (logs info) if no RPG Soldier prefab is
+    /// assigned — typical for a Barracks that pre-dates this unit. Run
+    /// Tools → RTS → Units → Repair Barracks RPG Production to wire it up.
+    /// </summary>
+    public void ProduceRPGSoldier()
+    {
+        if (!CanProduceRPGSoldier)
+        {
+            Debug.Log($"[UnitProducer] '{name}' has no RPG Soldier prefab assigned — ignoring. " +
+                      "Run Tools → RTS → Units → Repair Barracks RPG Production.");
+            return;
+        }
+        SpawnUnit(rpgSoldierPrefab, rpgSoldierCost, "RPG Soldier");
+        Debug.Log($"[Barracks] Produced RPG Soldier.");
     }
 
     // ------------------------------------------------------------------ //
