@@ -147,6 +147,44 @@ public class Airfield : MonoBehaviour
     public bool runwayBusyDebugLogs = true;
 
     // ------------------------------------------------------------------ //
+    // Runway ownership model (used by debug tools + landing deadlock guard)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>What kind of operation currently owns the runway, if any.</summary>
+    public enum RunwayMode { None, Takeoff, Landing }
+
+    /// <summary>
+    /// Derived from existing state — the runway is owned for Landing while
+    /// <see cref="activeLandingJet"/> is non-null, for Takeoff while any lane
+    /// has an aircraft in pre-roll or rolling, otherwise None.
+    /// </summary>
+    public RunwayMode CurrentRunwayMode
+    {
+        get
+        {
+            if (activeLandingJet != null)       return RunwayMode.Landing;
+            if (IsTakeoffPreRollOrRollActive()) return RunwayMode.Takeoff;
+            return RunwayMode.None;
+        }
+    }
+
+    /// <summary>
+    /// Single point-of-truth for "which aircraft holds the runway". For Landing
+    /// this is <see cref="activeLandingJet"/>; for Takeoff it's the first lane
+    /// found in pre-roll/roll (lane A preferred). Null when CurrentRunwayMode == None.
+    /// </summary>
+    public AirUnitController CurrentRunwayOwner
+    {
+        get
+        {
+            if (activeLandingJet != null) return activeLandingJet;
+            if (IsConflictingTakeoffState(activeJetA)) return activeJetA;
+            if (IsConflictingTakeoffState(activeJetB)) return activeJetB;
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------ //
     // Public types
     // ------------------------------------------------------------------ //
 
@@ -267,6 +305,11 @@ public class Airfield : MonoBehaviour
 
     private void Update()
     {
+        // Orphaned-owner detection: if the landing aircraft is destroyed or
+        // has wandered into a non-landing state without releasing, force-clear
+        // the lock so queued aircraft + holding aircraft can proceed.
+        CheckOrphanedLandingOwner();
+
         // Try to dispatch the head of the queue every frame. The method
         // gates itself on lane availability and the spacing timer.
         TryGrantFromQueue();
@@ -274,6 +317,95 @@ public class Airfield : MonoBehaviour
         // Batch-takeoff bookkeeping: deferred Lane B release + partner timeout.
         TickDeferredLaneBRelease();
         CheckBatchTimeout();
+    }
+
+    /// <summary>
+    /// Force-clear <see cref="activeLandingJet"/> when its owner is destroyed
+    /// (Unity-null) or has somehow left the landing state machine without
+    /// calling <see cref="ReleaseLandingRunway"/>. Without this guard, a single
+    /// missed release call would deadlock the airfield permanently — every
+    /// subsequent returning aircraft would circle in the holding pattern
+    /// forever.
+    /// </summary>
+    private void CheckOrphanedLandingOwner()
+    {
+        if (activeLandingJet == null) return;
+
+        // Unity-overloaded == catches destroyed Objects too.
+        AirUnitController owner = activeLandingJet;
+
+        // 1. Owner's home airfield got rebound elsewhere (rare, but defensive).
+        if (owner.HomeAirfield != this)
+        {
+            Debug.LogWarning($"[Airfield] Runway owner lost — force releasing runway. " +
+                             $"(Owner '{owner.name}' no longer belongs to this Airfield.)");
+            activeLandingJet = null;
+            return;
+        }
+
+        // 2. Owner is in a state outside the active landing chain. They must
+        //    have transitioned out (e.g. snapped Parked via timeout) without
+        //    calling ReleaseLandingRunway.
+        if (!IsActiveLandingState(owner))
+        {
+            Debug.LogWarning($"[Airfield] Runway owner '{owner.name}' is in state " +
+                             $"{owner.State} (not an active landing state) — force releasing runway.");
+            activeLandingJet = null;
+        }
+    }
+
+    /// <summary>
+    /// True while the aircraft genuinely owns the runway for landing — from
+    /// the moment landing clearance is granted up to (and including) the
+    /// FinalLanding rollout. TaxiingToSlot, Parked, and any airborne / takeoff
+    /// state are NOT landing-runway-owning.
+    /// </summary>
+    private static bool IsActiveLandingState(AirUnitController jet)
+    {
+        if (jet == null) return false;
+        var s = jet.State;
+        return s == AirUnitController.FlightState.WaitingForLandingClearance
+            || s == AirUnitController.FlightState.LandingApproach
+            || s == AirUnitController.FlightState.FinalLanding;
+    }
+
+    /// <summary>
+    /// Public entry point for an aircraft (or a debug tool) to ask the Airfield
+    /// to verify its runway owner. If the owner is dead / in a wrong state,
+    /// the runway is force-released and queued aircraft can proceed on the
+    /// next Update tick. <paramref name="reason"/> is logged for traceability.
+    /// </summary>
+    public void ForceReleaseRunwayIfOrphaned(string reason)
+    {
+        if (activeLandingJet == null) return;
+
+        // Re-use the standard orphan check; it logs internally on success.
+        AirUnitController before = activeLandingJet;
+        CheckOrphanedLandingOwner();
+        if (activeLandingJet == null && before != null)
+        {
+            Debug.LogWarning($"[Airfield] Runway force-released due to: {reason}.");
+        }
+    }
+
+    /// <summary>
+    /// Unconditional runway release — clears <see cref="activeLandingJet"/>
+    /// and any pending batch state. Intended for the debug editor tool
+    /// (Tools → RTS → Air System → Force Release Runway). Not for gameplay.
+    /// </summary>
+    public void DebugForceReleaseRunway()
+    {
+        if (activeLandingJet != null)
+        {
+            Debug.LogWarning($"[Airfield] DEBUG force-release: clearing landing owner " +
+                             $"'{activeLandingJet.name}'.");
+            activeLandingJet = null;
+        }
+
+        // Clear any zombie batch-ready flags whose owning jets are gone.
+        if (activeJetA == null) readyJetA = false;
+        if (activeJetB == null) readyJetB = false;
+        if (pendingLaneBJet == null) pendingLaneBJet = null;
     }
 
     // ------------------------------------------------------------------ //
@@ -442,6 +574,9 @@ public class Airfield : MonoBehaviour
         clearance = null;
         if (jet == null) return false;
 
+        if (runwayBusyDebugLogs)
+            Debug.Log($"[Airfield] Landing requested by '{jet.name}'.");
+
         // Already cleared — return the same bundle so a re-request mid-approach
         // doesn't lose progress.
         if (activeLandingJet == jet)
@@ -454,7 +589,7 @@ public class Airfield : MonoBehaviour
         if (activeLandingJet != null)
         {
             if (runwayBusyDebugLogs)
-                Debug.Log("[Airfield] Runway busy — aircraft holding.");
+                Debug.Log($"[Airfield] Landing denied — runway busy by '{activeLandingJet.name}'.");
             return false;
         }
 
@@ -462,27 +597,37 @@ public class Airfield : MonoBehaviour
         if (landingUsesSharedRunway && IsTakeoffPreRollOrRollActive())
         {
             if (runwayBusyDebugLogs)
-                Debug.Log("[Airfield] Runway busy — aircraft holding.");
+                Debug.Log($"[Airfield] Landing denied — runway busy with takeoff.");
             return false;
         }
 
         activeLandingJet = jet;
         clearance = BuildLandingClearance(jet);
-        Debug.Log("[Airfield] Landing clearance granted.");
+        Debug.Log($"[Airfield] Landing clearance granted to '{jet.name}'.");
         return true;
     }
 
     /// <summary>
     /// Called by the aircraft once it has touched down and is leaving the
     /// runway for the taxi-back. Frees the shared runway lock so queued
-    /// takeoffs and other landings can proceed.
+    /// takeoffs and other landings can proceed. The next holding aircraft's
+    /// retry timer (or the takeoff queue's tick) picks up the freed runway
+    /// automatically — no explicit notify needed.
     /// </summary>
     public void ReleaseLandingRunway(AirUnitController jet)
     {
-        if (activeLandingJet != jet) return;
+        if (activeLandingJet != jet)
+        {
+            // Either already released, or the wrong jet is calling — both safe to ignore.
+            if (runwayBusyDebugLogs && activeLandingJet != null && jet != null)
+                Debug.Log($"[Airfield] Ignoring runway release from '{jet.name}' — " +
+                          $"owner is '{activeLandingJet.name}'.");
+            return;
+        }
         activeLandingJet = null;
         if (runwayBusyDebugLogs)
-            Debug.Log("[Airfield] Runway released after landing.");
+            Debug.Log($"[Airfield] Runway released by '{jet.name}' after landing exit. " +
+                      $"Next holding/queued aircraft will pick it up.");
     }
 
     /// <summary>True while a takeoff jet is taxiing onto, aligning at, or rolling on the runway.</summary>

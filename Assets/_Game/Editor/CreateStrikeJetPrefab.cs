@@ -34,17 +34,21 @@ public static class CreateStrikeJetPrefab
     // Stats — match the user spec
     private const float MaxHealth     = 260f;
     private const float FlightAltitude = 12f;
-    private const float CruiseSpeed   = 14f;
-    private const float AttackRange         = 18f;   // missile release range
+    private const float AttackRange         = 18f;   // when to drop into AttackRun (brain-side)
     private const int   MaxAmmo             = 2;
     private const float MissileDamage       = 120f;
     private const float MissileFireDelay    = 0.75f; // seconds between the two missile releases
     private const float MissileProjectileSpeed = 30f;
     private const float AttackEgressDistance   = 15f; // straight forward distance before turning is allowed
-    private const float MaxTurnRateDegrees     = 45f; // smooth recovery arc — wider when home is behind
     private const float ReturnAlignmentAngle   = 8f;  // angle (deg) below which WideReturnTurn exits
     private const float ImpactFlashDuration    = 0.2f;
     private const float BarHeight              = 2.0f;
+
+    // Weapon firing rules — tuned for playable RTS pacing (close + cone-tolerant)
+    private const float MinReleaseDistance     = 3.5f;
+    private const float MaxReleaseDistance     = 24f;
+    private const float ForwardConeDegrees     = 90f;
+    private const float ReloadSecondsPerMissile = 3f;
 
     // Palette
     private static readonly Color FuselageGrey = new Color(0.55f, 0.58f, 0.62f);
@@ -81,9 +85,9 @@ public static class CreateStrikeJetPrefab
             EnsureFolder("Assets/_Game/Prefabs");
             PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
             Debug.Log($"[CreateStrikeJetPrefab] ✓ Saved {PrefabPath}.\n" +
-                      $"  Stats: HP={MaxHealth}, ReleaseRange={AttackRange}, Damage={MissileDamage}, " +
-                      $"FireDelay={MissileFireDelay}, MaxAmmo={MaxAmmo}, " +
-                      $"EgressDistance={AttackEgressDistance}, TurnRate={MaxTurnRateDegrees}deg/s, " +
+                      $"  Stats: HP={MaxHealth}, AttackRange={AttackRange}, MaxAmmo={MaxAmmo}, " +
+                      $"ReleaseWindow=[{MinReleaseDistance},{MaxReleaseDistance}], " +
+                      $"Cone={ForwardConeDegrees}°, EgressDistance={AttackEgressDistance}, " +
                       $"FlightAltitude={FlightAltitude}.\n" +
                       "  Drop into Airfield → Strike Jet Prefab.");
         }
@@ -109,19 +113,32 @@ public static class CreateStrikeJetPrefab
         UnitCategory cat = root.AddComponent<UnitCategory>();
         cat.category     = UnitCategory.Category.Aircraft;
 
+        // AircraftWeapon must be present BEFORE AirUnitController because the
+        // controller has [RequireComponent(typeof(AircraftWeapon))] and we want
+        // explicit control over the weapon's tuning rather than the auto-added
+        // default. Order also matters in editor — RequireComponent on AddComponent
+        // can otherwise add a default weapon with the wrong values.
+        AircraftWeapon weapon          = root.AddComponent<AircraftWeapon>();
+        weapon.maxAmmo                 = MaxAmmo;
+        weapon.reloadSecondsPerMissile = ReloadSecondsPerMissile;
+        weapon.missileDamage           = MissileDamage;
+        weapon.damageType              = DamageType.Missile;
+        weapon.missileProjectileSpeed  = MissileProjectileSpeed;
+        weapon.impactFlashDuration     = ImpactFlashDuration;
+        weapon.missileFireDelay        = MissileFireDelay;
+        weapon.minReleaseDistance      = MinReleaseDistance;
+        weapon.maxReleaseDistance      = MaxReleaseDistance;
+        weapon.forwardConeDegrees      = ForwardConeDegrees;
+
         AirUnitController controller    = root.AddComponent<AirUnitController>();
         controller.flightAltitude       = FlightAltitude;
-        controller.cruiseSpeed          = CruiseSpeed;
         controller.attackRange          = AttackRange;
-        controller.maxAmmo              = MaxAmmo;
-        controller.missileDamage        = MissileDamage;
-        controller.missileFireDelay     = MissileFireDelay;
-        controller.missileProjectileSpeed = MissileProjectileSpeed;
         controller.attackEgressDistance = AttackEgressDistance;
-        controller.maxTurnRateDegrees   = MaxTurnRateDegrees;
         controller.returnAlignmentAngle = ReturnAlignmentAngle;
-        controller.impactFlashDuration  = ImpactFlashDuration;
-        controller.damageType           = DamageType.Missile;
+        // Profile defaults declared on the controller match the previously-tuned
+        // values (taxi 4, takeoff roll 10, cruise 14 / 85 deg/s, attack-run 14 /
+        // 0 deg/s, landing 7 / descent 5, holding 14 / 180 deg/s). No assignments
+        // needed unless tuning diverges from the defaults.
 
         // --- Visual children ------------------------------------------- //
 

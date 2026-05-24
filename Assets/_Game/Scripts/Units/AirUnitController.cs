@@ -1,52 +1,61 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Rendering;
-using UnityEngine.Serialization;
 
 /// <summary>
-/// Drives an aircraft through its sortie loop:
+/// Aircraft "brain" — runs the sortie state machine and dispatches movement to
+/// the active <see cref="FlightProfile"/>. Inspired by the SAGE engine's
+/// AIUpdate / LocomotorSet split:
 ///
-///   Parked → WaitingForTakeoffClearance → TaxiingToRunway → TakeoffRoll
-///                                                                  ↓
-///                                                              Climbing
-///                                                                  ↓
-///                              FlyingToTarget ←──────────── (mission dispatch)
-///                                    ↓                              ↓
-///                              AttackRun → AttackEgress     FlyingToPoint
-///                                              ↓                    ↓
-///                                          WideReturnTurn ← ← PatrollingPoint
-///                                              ↓
-///                                          Returning → Landing → Parked
+///   • This file = brain (state transitions, target selection, mission logic).
+///   • <see cref="FlightProfile"/> = body (speed / turn rate / vertical rate
+///     per phase). Each state's Update reads its movement values from the
+///     profile, not from scattered top-level fields.
+///   • <see cref="AircraftWeapon"/> = ammo / fire cooldown / cone + range
+///     validation / projectile spawning.
+///   • <see cref="Airfield"/> = slot ownership, runway traffic control,
+///     batch-takeoff synchronization, landing queue.
 ///
-/// The Airfield owns the takeoff queue. A parked jet given a mission asks
-/// for a runway lane via <see cref="Airfield.RequestTakeoffClearance"/> —
-/// it either taxis immediately (lane free) or enters
-/// <see cref="FlightState.WaitingForTakeoffClearance"/> until a lane frees.
-/// At most two jets are airborne in the takeoff sequence at once (one per
-/// lane), so a six-jet order departs in three pairs.
+///   Parked → WaitingForTakeoffClearance → TaxiingToRunway → AligningForTakeoff
+///         → WaitingForBatchTakeoff → TakeoffRoll → Climbing
+///                                                       ↓
+///                                       FlyingToTarget ←──── (mission dispatch)
+///                                            ↓                       ↓
+///                                  RepositioningForAttack       FlyingToPoint
+///                                            ↓                       ↓
+///                                       AttackRun           PatrollingPoint
+///                                            ↓                       ↓
+///                                       AttackEgress → WideReturnTurn ←
+///                                                            ↓
+///                                                       Returning
+///                                                            ↓
+///                                       WaitingForLandingClearance
+///                                                            ↓
+///                                                       LandingApproach
+///                                                            ↓
+///                                                       FinalLanding
+///                                                            ↓
+///                                                       TaxiingToSlot → Parked
 ///
-/// Attack mode is a real fly-by — the jet locks its forward direction when
-/// it enters AttackRun, keeps moving while releasing missiles spaced by
-/// <see cref="missileFireDelay"/>, then flies straight for
-/// <see cref="attackEgressDistance"/> world units (AttackEgress) before
-/// any turning is allowed. The recovery turn happens in WideReturnTurn,
-/// which applies a max-yaw-rate steering arc toward the home approach
-/// point — no 90° snaps, ever. Missiles are real projectiles (see
-/// <see cref="StrikeMissile"/>), not instant tracer lines.
+/// Attack mode is a real fly-by — the jet locks its forward heading via
+/// <see cref="attackRunProfile"/> (turnRateDegrees ≈ 0) and asks
+/// <see cref="AircraftWeapon.TryFire"/> each tick. Fire / cooldown / cone
+/// checks all live on the weapon; this file only decides whether to keep
+/// running, egress, or reposition based on the returned <see cref="AircraftWeapon.FireResult"/>.
 ///
 /// The aircraft does NOT use NavMeshAgent / UnitMovement — it moves by direct
-/// transform manipulation. Ground states (TaxiingToRunway / AligningForTakeoff
-/// / TakeoffRoll) hold the aircraft at the home slot's world Y (plus the
-/// optional <see cref="groundHeightOffset"/> lift, default 0); Climbing onward
-/// holds it at <see cref="flightAltitude"/>.
+/// transform manipulation. Ground states (TaxiingToRunway / AligningForTakeoff /
+/// TakeoffRoll / TaxiingToSlot) hold the aircraft at the home slot's world Y
+/// (plus the optional <see cref="groundHeightOffset"/> lift, default 0);
+/// Climbing onward holds it at <see cref="flightAltitude"/>.
 ///
 /// Setup (done automatically by Tools → RTS → Air System → Create Strike Jet Prefab):
 ///   1. Attach to the aircraft root GameObject (with Health, SelectableAircraft,
-///      UnitCategory = Aircraft, and a BoxCollider for selection).
-///   2. Assign a child Transform "FirePoint" under/near the missile pods.
-///   3. Tune attack range / ammo / damage / altitude in the Inspector.
+///      UnitCategory = Aircraft, BoxCollider, and an AircraftWeapon).
+///   2. Assign a child Transform "FirePoint" near the missile pods.
+///   3. Tune flight profiles + altitude + approach validation in the Inspector.
 ///   4. The Airfield calls AssignHome(...) at spawn time — do NOT call it yourself.
 /// </summary>
+[RequireComponent(typeof(AircraftWeapon))]
 public class AirUnitController : MonoBehaviour
 {
     // ------------------------------------------------------------------ //
@@ -56,176 +65,217 @@ public class AirUnitController : MonoBehaviour
     public enum FlightState
     {
         Parked,
-        WaitingForTakeoffClearance,   // queued — Airfield will grant when a lane is free
-        TaxiingToRunway,              // following waypoints (taxi → lane corridor → queue → start)
-        AligningForTakeoff,           // pivot in place at TakeoffStart, face TakeoffEnd direction
-        WaitingForBatchTakeoff,       // aligned, holding for batch-partner ready signal from Airfield
-        TakeoffRoll,                  // accelerating along the runway from Start to End
-        Climbing,                     // airborne, gaining altitude after the roll
+        WaitingForTakeoffClearance,
+        TaxiingToRunway,
+        AligningForTakeoff,
+        WaitingForBatchTakeoff,
+        TakeoffRoll,
+        Climbing,
         FlyingToTarget,
-        AttackRun,                    // diving past target, releasing missiles in flight
-        AttackEgress,                 // post-strike straight run before any turning
-        WideReturnTurn,               // smooth max-turn-rate arc back toward base (no 90° snap)
+        RepositioningForAttack,
+        AttackRun,
+        AttackEgress,
+        WideReturnTurn,
         FlyingToPoint,
         PatrollingPoint,
-        Returning,                    // flying back to the airfield approach point
-        WaitingForLandingClearance,   // holding pattern circle while the runway is busy
-        LandingApproach,              // lined up with the runway, still at altitude
-        FinalLanding,                 // descending from altitude to ground along the runway
-        TaxiingToSlot                 // on the apron, taxiing back to the home slot
+        Returning,
+        WaitingForLandingClearance,
+        LandingApproach,
+        FinalLanding,
+        TaxiingToSlot
     }
 
     // ------------------------------------------------------------------ //
-    // Inspector — Flight
+    // Inspector — Flight Profiles
+    // ------------------------------------------------------------------ //
+
+    [Header("Flight Profiles")]
+    [Tooltip("Slow ground roll between parking slot and runway start. " +
+             "Also used for taxi-back after landing. Speed ≈ 4, turn ≈ 180.")]
+    public FlightProfile taxiProfile = new FlightProfile
+    {
+        name = "Taxi", speed = 4f, turnRateDegrees = 180f,
+        verticalSpeed = 0f, arrivalThreshold = 0.3f
+    };
+
+    [Tooltip("Takeoff roll along the runway. Forward speed ≈ 10; vertical " +
+             "(used by Climbing as climb-out rate) ≈ 8.")]
+    public FlightProfile takeoffProfile = new FlightProfile
+    {
+        name = "Takeoff", speed = 10f, turnRateDegrees = 180f,
+        verticalSpeed = 8f, arrivalThreshold = 2f
+    };
+
+    [Tooltip("Standard level cruise — used by FlyingToTarget, FlyingToPoint, " +
+             "Returning, Repositioning, WideReturnTurn. Speed 14, turn 85 deg/s.")]
+    public FlightProfile cruiseProfile = new FlightProfile
+    {
+        name = "Cruise", speed = 14f, turnRateDegrees = 85f,
+        verticalSpeed = 0f, arrivalThreshold = 0.5f
+    };
+
+    [Tooltip("Locked-heading attack run. Turn rate near zero so the jet flies " +
+             "straight through the release window. Speed matches cruise.")]
+    public FlightProfile attackRunProfile = new FlightProfile
+    {
+        name = "AttackRun", speed = 14f, turnRateDegrees = 0f,
+        verticalSpeed = 0f, arrivalThreshold = 0f
+    };
+
+    [Tooltip("Final landing roll + descent. Forward speed 7 (slower than cruise), " +
+             "verticalSpeed 5 = descent rate. Wider arrival threshold 0.4.")]
+    public FlightProfile landingProfile = new FlightProfile
+    {
+        name = "Landing", speed = 7f, turnRateDegrees = 180f,
+        verticalSpeed = 5f, arrivalThreshold = 0.4f
+    };
+
+    [Tooltip("Circling motion — patrol pattern and landing holding pattern. " +
+             "Fast tangent rotation (180 deg/s) keeps the circle smooth.")]
+    public FlightProfile holdingProfile = new FlightProfile
+    {
+        name = "Holding", speed = 14f, turnRateDegrees = 180f,
+        verticalSpeed = 0f, arrivalThreshold = 0.4f
+    };
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Flight (non-profile state)
     // ------------------------------------------------------------------ //
 
     [Header("Flight")]
     [Tooltip("Cruise altitude in world units while flying.")]
     public float flightAltitude = 12f;
 
-    [Tooltip("Horizontal cruise speed (units / second).")]
-    public float cruiseSpeed = 14f;
-
-    [Tooltip("Vertical climb / descent speed (units / second).")]
-    public float verticalSpeed = 6f;
-
-    [Tooltip("Yaw rotation speed when turning toward a target (degrees / second).")]
-    public float turnSpeed = 180f;
-
-    [Tooltip("XZ distance below which the Returning state hands off to Landing (legacy " +
-             "field; new flow uses landingApproachDistance for the approach handoff and " +
-             "landingArrivalThreshold for tight waypoint arrival).")]
-    public float landingApproachThreshold = 0.5f;
-
-    [Header("Landing — Approach & Hold")]
-    [Tooltip("XZ distance below which the Returning state considers itself 'at the airfield " +
-             "approach point' and requests landing clearance.")]
-    public float landingApproachDistance = 25f;
-
-    [Tooltip("Radius of the holding-pattern circle flown around the airfield approach point " +
-             "while the runway is busy.")]
-    public float landingHoldingRadius = 14f;
-
-    [Tooltip("Seconds between landing-clearance retries while in WaitingForLandingClearance.")]
-    public float landingClearanceCheckInterval = 0.5f;
-
-    [Header("Landing — Final & Taxi-back")]
-    [Tooltip("Horizontal speed (world units / sec) along the runway during FinalLanding.")]
-    public float landingRollSpeed = 7f;
-
-    [Tooltip("Vertical descent rate (world units / sec) during FinalLanding. Combined with " +
-             "landingRollSpeed and the runway length, determines the descent angle.")]
-    public float landingDescentSpeed = 5f;
-
-    [Tooltip("Speed (world units / sec) while taxiing back from the runway exit to the slot.")]
-    public float taxiBackSpeed = 4f;
-
-    [Tooltip("Tight XZ distance threshold below which a landing or taxi-back waypoint counts " +
-             "as reached.")]
-    public float landingArrivalThreshold = 0.4f;
-
-    [Header("Taxi / Takeoff")]
-    [Tooltip("Ground speed (units/sec) while taxiing from slot to runway.")]
-    public float taxiSpeed = 4f;
-
-    [Tooltip("Ground speed (units/sec) while rolling down the runway.")]
-    public float takeoffRollSpeed = 10f;
-
-    [Tooltip("Vertical climb rate (units/sec) once airborne, until cruise altitude.")]
-    public float climbSpeed = 8f;
-
-    [Tooltip("XZ distance below which a taxi waypoint counts as reached.")]
-    public float taxiArrivalThreshold = 0.3f;
-
-    [Tooltip("XZ distance from the TakeoffEnd point at which the lane is released " +
-             "back to the Airfield and the aircraft transitions to Climbing.")]
-    public float takeoffEndReleaseDistance = 2f;
-
-    [Tooltip("Extra Y lift (world units) added on top of the home slot's Y while " +
-             "taxiing / rolling. With the Y=0 baseline cleanup this is 0 — the " +
-             "logic root sits at the slot's world Y when on the ground, and any " +
-             "visual lift is handled by the StrikeJet's visual children (e.g. " +
-             "the selection ring sits above the runway via its own local Y).")]
+    [Tooltip("Extra Y lift (world units) added on top of the home slot's Y " +
+             "while on the ground. 0 for the standard Y=0 baseline.")]
     public float groundHeightOffset = 0f;
 
     [Header("Takeoff Alignment")]
-    [Tooltip("Yaw rate (degrees/sec) while AligningForTakeoff. The aircraft holds " +
-             "its position at TakeoffStart and rotates in place toward TakeoffEnd.")]
+    [Tooltip("Yaw rate (degrees/sec) while AligningForTakeoff. The aircraft " +
+             "holds its position at TakeoffStart and rotates in place.")]
     public float takeoffAlignmentTurnSpeed = 90f;
 
     [Tooltip("Angle (degrees) below which alignment is considered complete and " +
-             "the aircraft transitions to TakeoffRoll.")]
+             "the aircraft transitions to WaitingForBatchTakeoff.")]
     public float takeoffAlignmentAngleThreshold = 3f;
 
+    [Tooltip("XZ distance from the TakeoffEnd point at which the lane is " +
+             "released back to the Airfield and the aircraft transitions to Climbing.")]
+    public float takeoffEndReleaseDistance = 2f;
+
+    [Header("Landing — Approach & Hold")]
+    [Tooltip("XZ distance below which Returning hands off to the landing-clearance " +
+             "request flow.")]
+    public float landingApproachDistance = 25f;
+
+    [Tooltip("Radius of the holding-pattern circle around the approach point.")]
+    public float landingHoldingRadius = 14f;
+
+    [Tooltip("Seconds between landing-clearance retries while holding.")]
+    public float landingClearanceCheckInterval = 0.5f;
+
+    [Header("Landing — Fail-safe Timeouts")]
+    [Tooltip("Max seconds an aircraft may sit in WaitingForLandingClearance before " +
+             "it asks the Airfield to force-release a stuck runway owner. Prevents " +
+             "infinite circling when a previous landing aircraft never released.")]
+    public float landingClearanceTimeout = 12f;
+
+    [Tooltip("Max seconds an aircraft may spend in LandingApproach before snapping " +
+             "to FinalLanding from its current position. Guards against overshoot " +
+             "loops where cruise turn radius exceeds the LandingStart arrival window.")]
+    public float landingApproachTimeout = 8f;
+
+    [Tooltip("Max seconds an aircraft may spend in FinalLanding before force-touchdown " +
+             "at the current XZ position. Guards against descent stalls.")]
+    public float finalLandingTimeout = 15f;
+
+    [Tooltip("Max seconds an aircraft may spend in TaxiingToSlot before snapping " +
+             "to its home slot. Guards against waypoint-stuck aircraft.")]
+    public float taxiToSlotTimeout = 15f;
+
     // ------------------------------------------------------------------ //
-    // Inspector — Attack
+    // Inspector — Attack (non-weapon state)
     // ------------------------------------------------------------------ //
 
     [Header("Attack")]
-    [Tooltip("Missile release range — when the jet's XZ distance to the target drops below this, " +
-             "it stops steering, locks its current forward direction, and starts the attack run.")]
+    [Tooltip("Missile-release range. When XZ distance to target drops below this, " +
+             "the jet stops steering, locks forward direction, and starts the run. " +
+             "Actual missile gating happens on AircraftWeapon.")]
     public float attackRange = 18f;
 
-    [Tooltip("Maximum missiles per sortie. After firing this many, the aircraft exits and returns.")]
-    public int maxAmmo = 2;
-
-    [Tooltip("Base damage per missile, before category modifier in DamageRules.")]
-    public float missileDamage = 120f;
-
-    [Tooltip("Seconds between consecutive missile launches during an attack run.")]
-    public float missileFireDelay = 0.75f;
-
-    [Tooltip("Damage type used for the modifier lookup. Missile is strong vs Vehicle/Building.")]
-    public DamageType damageType = DamageType.Missile;
-
-    [Header("Attack Run")]
-    [Tooltip("Missile projectile speed (world units / second).")]
-    public float missileProjectileSpeed = 30f;
-
-    [Tooltip("Forward distance (world units) the jet keeps flying straight after the last missile " +
-             "before it is allowed to start any turn. Renamed from attackRunExitDistance.")]
-    [FormerlySerializedAs("attackRunExitDistance")]
+    [Tooltip("Forward distance (world units) the jet keeps flying after the last " +
+             "missile before any turn is allowed.")]
     public float attackEgressDistance = 15f;
 
-    [Tooltip("If true, AttackTarget calls during an active attack run will swap the target. " +
-             "Default false: the run completes on its current target before retargeting.")]
+    [Tooltip("If true, AttackTarget calls during an active attack run swap targets. " +
+             "Default false: the current run completes before retargeting.")]
     public bool attackRunCanRetarget = false;
 
-    [Header("Return Arc")]
-    [Tooltip("Maximum yaw turn rate during WideReturnTurn, in degrees per second. " +
-             "Combined with cruiseSpeed this determines the minimum turn radius — at " +
-             "cruise 14 / rate 45, the radius is ~17.8 world units.")]
-    public float maxTurnRateDegrees = 45f;
-
-    [Tooltip("Angle (degrees) between current heading and the direction to the home slot " +
-             "below which WideReturnTurn hands off to Returning. Smaller = tighter alignment.")]
-    public float returnAlignmentAngle = 8f;
-
-    [Tooltip("Seconds the bright impact sphere is visible at the missile's blast point.")]
-    public float impactFlashDuration = 0.2f;
-
-    [Tooltip("Colour of the missile body and impact flash.")]
-    [ColorUsage(false)] public Color missileColor = new Color(1f, 0.45f, 0.10f);
-
-    [Header("Reload")]
-    [Tooltip("Seconds spent Parked between each automatic missile reload. " +
-             "Reload only ticks while the aircraft is in the Parked state.")]
-    public float reloadSecondsPerMissile = 3f;
-
-    [Tooltip("If false, AttackTarget calls with 0 ammo are rejected with a warning. " +
-             "If true, the jet still takes off and dives, but no missile releases.")]
+    [Tooltip("If false, AttackTarget calls with 0 ammo are rejected. " +
+             "If true, the jet still takes off and dives without releases.")]
     public bool canAttackWithNoAmmo = false;
 
+    [Header("Return Arc")]
+    [Tooltip("Angle (degrees) between current heading and direction to home below " +
+             "which WideReturnTurn hands off to Returning. Smaller = tighter alignment.")]
+    public float returnAlignmentAngle = 8f;
+
+    [Header("Attack Approach Validation")]
+    [Tooltip("Minimum XZ distance the jet must be from a target to consider an attack " +
+             "run. Inside this distance the approach is too steep — jet repositions.")]
+    public float minAttackApproachDistance = 8f;
+
+    [Tooltip("Minimum forward-vs-target dot product for a valid attack approach. " +
+             "0.15 ≈ target within ±81° of forward.")]
+    public float minAttackForwardDot = 0.15f;
+
+    [Tooltip("Maximum angle (degrees) between forward and target direction at which " +
+             "the approach is considered valid.")]
+    public float minAttackAngle = 75f;
+
+    [Tooltip("How far ahead of the aircraft a repositioning waypoint is placed.")]
+    public float approachRepositionDistance = 14f;
+
+    [Tooltip("Radius of the reattack orbit around the target during repositioning.")]
+    public float reattackOrbitRadius = 14f;
+
+    [Tooltip("Safety timeout (seconds) for RepositioningForAttack.")]
+    public float maxRepositionTime = 5f;
+
+    [Tooltip("Maximum reposition attempts before the jet commits to a relaxed attack " +
+             "(any forward direction, within max range). Prevents endless loops.")]
+    public int maxRepositionAttempts = 2;
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Patrol
+    // ------------------------------------------------------------------ //
+
     [Header("Patrol")]
-    [Tooltip("Radius of the circle flown around a patrol point, in world units.")]
+    [Tooltip("Radius of the patrol circle, in world units.")]
     public float patrolCircleRadius = 10f;
 
-    [Tooltip("Number of full laps to fly around the patrol point before returning home.")]
+    [Tooltip("Full laps before returning home.")]
     public int patrolCircleCount = 2;
 
-    [Tooltip("Angular speed around the patrol circle, in degrees / second. " +
-             "60 deg/s ≈ a full lap every 6 seconds.")]
+    [Tooltip("Angular speed around the patrol circle (degrees/sec).")]
     public float patrolAngularSpeed = 60f;
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Parked Repair
+    // ------------------------------------------------------------------ //
+
+    [Header("Parked Repair")]
+    [Tooltip("If true, the aircraft slowly repairs its Health while in the Parked " +
+             "state. Reload is independent and ticks regardless of this setting.")]
+    public bool repairWhileParked = true;
+
+    [Tooltip("HP restored per second while parked. Only ticks when Health is below " +
+             "max AND the parent Health is on team Player.")]
+    public float parkedRepairRate = 10f;
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Visual
+    // ------------------------------------------------------------------ //
 
     [Header("Visual")]
     [Tooltip("Launch origin for spawned StrikeMissile projectiles. " +
@@ -233,43 +283,46 @@ public class AirUnitController : MonoBehaviour
     public Transform firePoint;
 
     // ------------------------------------------------------------------ //
-    // Runtime state
+    // Runtime state — public
     // ------------------------------------------------------------------ //
 
     public FlightState State { get; private set; } = FlightState.Parked;
-    public int CurrentAmmo { get; private set; }
-    public Airfield HomeAirfield { get; private set; }
-    /// <summary>The parking slot Transform this aircraft is bound to.
-    /// Airfield reads this to identify the jet's index for the taxi route.</summary>
-    public Transform HomeSlot => homeSlot;
+    public Airfield    HomeAirfield { get; private set; }
+    public Transform   HomeSlot     => homeSlot;
+    public long        LaunchGroupId { get; private set; }
 
-    /// <summary>
-    /// Identifier set by UnitSelector when the player issues the same right-click
-    /// command to multiple selected aircraft. Non-zero means the aircraft is
-    /// part of a synchronized launch group; 0 means a solo command.
-    /// Airfield uses matching IDs to decide whether to sync-release Lane A and
-    /// Lane B from <see cref="FlightState.WaitingForBatchTakeoff"/>.
-    /// </summary>
-    public long LaunchGroupId { get; private set; }
+    /// <summary>Forwarding accessor — actual ammo lives on AircraftWeapon. Kept for callers (HUD, debug).</summary>
+    public int CurrentAmmo => weapon != null ? weapon.CurrentAmmo : 0;
 
-    private Transform homeSlot;
-    private Health    target;
+    /// <summary>Forwarding accessor — actual rack size lives on AircraftWeapon.</summary>
+    public int maxAmmo => weapon != null ? weapon.maxAmmo : 0;
 
-    // Attack-run state. fireDelayTimer counts down to the next missile;
-    // missilesFiredThisRun caps total releases per pass; attackEgressStart
-    // is the AttackEgress anchor for measuring travelled distance.
-    private float   fireDelayTimer;
+    // ------------------------------------------------------------------ //
+    // Runtime state — private
+    // ------------------------------------------------------------------ //
+
+    private AircraftWeapon weapon;
+    private Health         health;
+    private Transform      homeSlot;
+    private Health         target;
+
+    // Parked-repair tracking: one log line when repair starts (damaged → first
+    // tick), one when it completes (reaches max). repairingThisSession is true
+    // while the aircraft is mid-repair so we don't re-log every parked frame.
+    private bool repairingThisSession;
+
+    // Attack-run state. missilesFiredThisRun caps releases per pass at maxAmmo
+    // so a fresh rack doesn't dump an unlimited burst; attackEgressStart is the
+    // anchor for measuring distance during AttackEgress.
     private int     missilesFiredThisRun;
     private Vector3 attackEgressStart;
 
-    // Reload-while-parked timer. Only ticks in the Parked state; reset to 0
-    // on landing so a freshly-landed jet doesn't get a free first reload.
-    private float reloadTimer;
+    // Repositioning safety: timeout + attempt cap. After maxRepositionAttempts
+    // a bad approach forces a relaxed attack instead of yet another reposition.
+    private float repositionStartTime;
+    private int   repositionAttempts;
 
-    // Landing flow state. landingClearance is the bundle from Airfield;
-    // taxiBackRoute is the post-touchdown waypoint list (exit → taxi-point → slot);
-    // finalLandingStartXZ is captured on entry to FinalLanding so we can lerp
-    // altitude as a fraction of the descent path.
+    // Landing-flow state.
     private Airfield.LandingClearance landingClearance;
     private Transform[] taxiBackRoute;
     private int         taxiBackIndex;
@@ -277,30 +330,58 @@ public class AirUnitController : MonoBehaviour
     private float       landingClearanceRetryTimer;
     private float       holdingPatternAngle;
 
-    // Takeoff sequence state. clearance holds the lane assignment + waypoints
-    // handed back by Airfield.RequestTakeoffClearance. taxiRoute is the list
-    // of points the aircraft visits in order; taxiRouteIndex is the next one.
+    // Takeoff-flow state.
     private Airfield.TakeoffClearance clearance;
     private Transform[] taxiRoute;
     private int         taxiRouteIndex;
-    // True once we've handed the lane back to Airfield — prevents a double-release.
     private bool        laneReleased;
 
-    // Patrol mission state. hasPatrolMission gates the Climbing dispatch and
-    // FlyToPoint behaviour so an aircraft never patrols by accident.
+    // Patrol state.
     private bool    hasPatrolMission;
     private Vector3 patrolCenter;
-    private float   patrolAngleSwept;     // total degrees flown around the centre this mission
-    private float   patrolCurrentAngle;   // current angle on the circle (degrees, math convention)
-    private int     lastReportedCircle;   // for the "circle N/M" log
+    private float   patrolAngleSwept;
+    private float   patrolCurrentAngle;
+    private int     lastReportedCircle;
+
+    // Profile-switch logging — single "Using profile: X" line per actual switch.
+    private FlightProfile lastLoggedProfile;
+
+    // State-entry timestamp — used by landing-state timeouts. Reset whenever
+    // the FSM transitions to a new state. The Update() switch checks this
+    // each frame; no need for explicit OnEnter/OnExit hooks.
+    private FlightState lastObservedState;
+    private float       stateEnteredTime;
+
+    // ------------------------------------------------------------------ //
+    // Lifecycle
+    // ------------------------------------------------------------------ //
+
+    private void Awake()
+    {
+        weapon = GetComponent<AircraftWeapon>();
+        // [RequireComponent] enforces this in the editor for newly-built prefabs,
+        // but a pre-refactor StrikeJetPrefab.prefab on disk may still lack one.
+        // Auto-add a default so the aircraft is at least operational; warn the
+        // user to persist the values via the repair tool.
+        if (weapon == null)
+        {
+            Debug.LogWarning($"[Aircraft:{name}] AircraftWeapon missing — auto-adding with defaults. " +
+                             "Run Tools → RTS → Air System → Repair Strike Jet Weapon to persist tuned values.");
+            weapon = gameObject.AddComponent<AircraftWeapon>();
+        }
+
+        // Cached for the parked-repair tick. Null is acceptable (e.g. test
+        // dummies without a Health component) — repair just no-ops in that case.
+        health = GetComponent<Health>();
+    }
 
     // ------------------------------------------------------------------ //
     // Wiring — called by Airfield at spawn
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Bind this aircraft to its parent Airfield and the parking-slot Transform
-    /// it returns to between sorties. Called by Airfield.ProduceStrikeJet.
+    /// Bind this aircraft to its parent Airfield and parking-slot Transform.
+    /// Called by Airfield.ProduceStrikeJet.
     /// </summary>
     public void AssignHome(Airfield airfield, Transform slot)
     {
@@ -313,9 +394,9 @@ public class AirUnitController : MonoBehaviour
             transform.rotation = slot.rotation;
         }
 
-        CurrentAmmo = maxAmmo;
-        reloadTimer = 0f;
-        State       = FlightState.Parked;
+        if (weapon != null) weapon.ResetAmmo();
+        repositionAttempts = 0;
+        State              = FlightState.Parked;
     }
 
     // ------------------------------------------------------------------ //
@@ -323,13 +404,9 @@ public class AirUnitController : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Order the aircraft to attack <paramref name="enemy"/>. If parked it
-    /// takes off; if already airborne it retargets. Ignores friendlies.
-    ///
-    /// <paramref name="groupId"/> identifies a multi-aircraft launch group:
-    ///   • 0  → solo command, no batch synchronization at takeoff.
-    ///   • &gt;0 → all aircraft sharing this ID belong to the same group; the
-    ///         Airfield syncs Lane A + Lane B in-batch pairs at TakeoffRoll.
+    /// Order the aircraft to attack <paramref name="enemy"/>. Parked → takeoff;
+    /// airborne → retarget. <paramref name="groupId"/> identifies a synchronized
+    /// launch group (0 = solo).
     /// </summary>
     public void AttackTarget(Health enemy, long groupId = 0L)
     {
@@ -339,8 +416,6 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        // Don't disturb an active strike — wait for the run to complete unless
-        // the operator explicitly opts in via attackRunCanRetarget.
         if ((State == FlightState.AttackRun || State == FlightState.AttackEgress) &&
             !attackRunCanRetarget)
         {
@@ -348,23 +423,22 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        // No ammo — refuse the order outright (unless the operator allowed
-        // empty-rack runs). Reload happens automatically while Parked.
-        if (CurrentAmmo <= 0 && !canAttackWithNoAmmo)
+        if (!HasAmmoForAttack() && !canAttackWithNoAmmo)
         {
             Debug.LogWarning($"[Aircraft:{name}] Cannot attack — no missiles loaded.");
             return;
         }
 
-        target = enemy;
-        hasPatrolMission = false; // attack command overrides any pending patrol
+        // New target → fresh reposition budget.
+        if (target != enemy) repositionAttempts = 0;
+
+        target           = enemy;
+        hasPatrolMission = false;
         LaunchGroupId    = groupId;
 
         switch (State)
         {
             case FlightState.Parked:
-                // Ask the Airfield for a runway lane. The mission state is
-                // selected later, after Climbing finishes — see UpdateClimbing.
                 RequestTakeoffClearanceFromAirfield(forAttack: true, enemyName: enemy.name);
                 break;
 
@@ -372,7 +446,6 @@ public class AirUnitController : MonoBehaviour
             case FlightState.TaxiingToRunway:
             case FlightState.TakeoffRoll:
             case FlightState.Climbing:
-                // Mid-departure — keep current clearance, just update mission.
                 Debug.Log($"[Aircraft:{name}] Mid-departure — will attack '{enemy.name}' after climb-out.");
                 break;
 
@@ -380,16 +453,13 @@ public class AirUnitController : MonoBehaviour
             case FlightState.LandingApproach:
             case FlightState.FinalLanding:
             case FlightState.TaxiingToSlot:
-                // Don't try to abort mid-landing — runway state is committed.
-                // Wait for Parked, then accept the new order.
                 Debug.Log($"[Aircraft:{name}] Mid-landing — ignoring attack order until parked.");
                 target = null;
                 return;
 
             default:
-                // Already in the air on a mission — just swap targets.
                 State = FlightState.FlyingToTarget;
-                Debug.Log($"[Aircraft:{name}] Retargeting to '{enemy.name}'.");
+                Debug.Log($"[Aircraft:{name}] Smooth turn toward new command. Retargeting to '{enemy.name}'.");
                 break;
         }
     }
@@ -397,20 +467,15 @@ public class AirUnitController : MonoBehaviour
     /// <summary>
     /// Order the aircraft to fly to <paramref name="worldPos"/>, circle it
     /// <see cref="patrolCircleCount"/> times, then return to its home slot.
-    /// Mid-attack the call is ignored so an active strike isn't interrupted.
-    ///
-    /// See <see cref="AttackTarget"/> for the <paramref name="groupId"/> semantics.
     /// </summary>
     public void FlyToPoint(Vector3 worldPos, long groupId = 0L)
     {
-        // Don't interrupt an active strike — patrol commands are advisory.
         if (State == FlightState.AttackRun || State == FlightState.AttackEgress)
         {
             Debug.Log($"[Aircraft:{name}] Mid-attack — ignoring patrol command.");
             return;
         }
 
-        // Patrol replaces any pending attack target.
         target              = null;
         hasPatrolMission    = true;
         patrolCenter        = worldPos;
@@ -431,8 +496,6 @@ public class AirUnitController : MonoBehaviour
             case FlightState.TaxiingToRunway:
             case FlightState.TakeoffRoll:
             case FlightState.Climbing:
-                // Mid-departure — current taxi/roll/climb keeps going, mission
-                // dispatch picks up the new patrolCenter when Climbing exits.
                 Debug.Log($"[Aircraft:{name}] Mid-departure — will patrol after climb-out.");
                 break;
 
@@ -445,12 +508,13 @@ public class AirUnitController : MonoBehaviour
                 return;
 
             default:
-                // Airborne (FlyingToTarget, FlyingToPoint, PatrollingPoint, Returning).
                 State = FlightState.FlyingToPoint;
                 Debug.Log($"[Aircraft:{name}] Diverting to new patrol point.");
                 break;
         }
     }
+
+    private bool HasAmmoForAttack() => weapon != null && weapon.HasAmmo;
 
     // ------------------------------------------------------------------ //
     // Public — called by Airfield when a runway lane frees up
@@ -480,7 +544,6 @@ public class AirUnitController : MonoBehaviour
 
         if (HomeAirfield.RequestTakeoffClearance(this, out Airfield.TakeoffClearance c))
         {
-            // Immediate grant.
             clearance      = c;
             taxiRoute      = BuildTaxiRoute(c);
             taxiRouteIndex = 0;
@@ -491,18 +554,11 @@ public class AirUnitController : MonoBehaviour
         }
         else
         {
-            // Queued — Airfield will call GrantTakeoffClearance when our turn comes up.
             State = FlightState.WaitingForTakeoffClearance;
         }
     }
 
-    /// <summary>
-    /// Copies the clearance's ordered TaxiRoute (per-slot pull-out → lane
-    /// corridor → runway queue → takeoff start), filtering out any nulls so
-    /// a partially-configured Airfield still produces a usable route. The
-    /// last entry is the TakeoffStart, which is where AligningForTakeoff
-    /// kicks in.
-    /// </summary>
+    /// <summary>Filters the clearance's TaxiRoute, dropping nulls.</summary>
     private Transform[] BuildTaxiRoute(Airfield.TakeoffClearance c)
     {
         if (c == null || c.TaxiRoute == null) return new Transform[0];
@@ -514,97 +570,117 @@ public class AirUnitController : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
-    // Unity lifecycle
+    // Unity tick
     // ------------------------------------------------------------------ //
 
     private void Update()
     {
+        // Stamp the moment any state change happened — landing-state timeouts
+        // read elapsed time off this. Cheap: only one Time.time write per
+        // actual transition. Initial value is recorded on the very first tick.
+        if (State != lastObservedState)
+        {
+            // Leaving Parked → end the repair session so the next park logs
+            // "Repairing while parked." fresh instead of staying silent.
+            if (lastObservedState == FlightState.Parked) repairingThisSession = false;
+
+            lastObservedState = State;
+            stateEnteredTime  = Time.time;
+        }
+
         switch (State)
         {
-            case FlightState.Parked:                     UpdateParkedReload();      break;
-            case FlightState.WaitingForTakeoffClearance: /* idle, Airfield drives  */ break;
-            case FlightState.TaxiingToRunway:            UpdateTaxiingToRunway();   break;
-            case FlightState.AligningForTakeoff:         UpdateAligningForTakeoff();break;
+            case FlightState.Parked:                     UpdateParkedReload();           break;
+            case FlightState.WaitingForTakeoffClearance:                                 break;
+            case FlightState.TaxiingToRunway:            UpdateTaxiingToRunway();        break;
+            case FlightState.AligningForTakeoff:         UpdateAligningForTakeoff();     break;
             case FlightState.WaitingForBatchTakeoff:     UpdateWaitingForBatchTakeoff(); break;
-            case FlightState.TakeoffRoll:                UpdateTakeoffRoll();       break;
-            case FlightState.Climbing:                   UpdateClimbing();          break;
-            case FlightState.FlyingToTarget:             UpdateFlyingToTarget();    break;
-            case FlightState.AttackRun:                  UpdateAttackRun();         break;
-            case FlightState.AttackEgress:               UpdateAttackEgress();      break;
-            case FlightState.WideReturnTurn:             UpdateWideReturnTurn();    break;
-            case FlightState.FlyingToPoint:              UpdateFlyingToPoint();     break;
-            case FlightState.PatrollingPoint:            UpdatePatrollingPoint();   break;
-            case FlightState.Returning:                   UpdateReturning();                  break;
-            case FlightState.WaitingForLandingClearance:  UpdateWaitingForLandingClearance(); break;
-            case FlightState.LandingApproach:             UpdateLandingApproach();            break;
-            case FlightState.FinalLanding:                UpdateFinalLanding();               break;
-            case FlightState.TaxiingToSlot:               UpdateTaxiingToSlot();              break;
+            case FlightState.TakeoffRoll:                UpdateTakeoffRoll();            break;
+            case FlightState.Climbing:                   UpdateClimbing();               break;
+            case FlightState.FlyingToTarget:             UpdateFlyingToTarget();         break;
+            case FlightState.RepositioningForAttack:     UpdateRepositioningForAttack(); break;
+            case FlightState.AttackRun:                  UpdateAttackRun();              break;
+            case FlightState.AttackEgress:               UpdateAttackEgress();           break;
+            case FlightState.WideReturnTurn:             UpdateWideReturnTurn();         break;
+            case FlightState.FlyingToPoint:              UpdateFlyingToPoint();          break;
+            case FlightState.PatrollingPoint:            UpdatePatrollingPoint();        break;
+            case FlightState.Returning:                  UpdateReturning();              break;
+            case FlightState.WaitingForLandingClearance: UpdateWaitingForLandingClearance(); break;
+            case FlightState.LandingApproach:            UpdateLandingApproach();        break;
+            case FlightState.FinalLanding:               UpdateFinalLanding();           break;
+            case FlightState.TaxiingToSlot:              UpdateTaxiingToSlot();          break;
         }
     }
 
     // ------------------------------------------------------------------ //
-    // State updates
+    // Parked — reload + repair
     // ------------------------------------------------------------------ //
 
-    /// <summary>
-    /// Reloads one missile every <see cref="reloadSecondsPerMissile"/> seconds
-    /// while Parked. Stops reloading once the rack is full. Only ticks in
-    /// the Parked state — flying / attacking / returning / landing all skip
-    /// this method by virtue of the Update() switch.
-    /// </summary>
     private void UpdateParkedReload()
     {
-        if (CurrentAmmo >= maxAmmo)
+        if (weapon != null) weapon.TickReload(Time.deltaTime);
+        TickParkedRepair();
+    }
+
+    /// <summary>
+    /// Slowly restores Health while the aircraft is Parked. No-op when:
+    ///   • repairWhileParked is disabled in the Inspector,
+    ///   • no Health component is attached (e.g. test dummies),
+    ///   • Health.team is not Player (enemy aircraft never repair here),
+    ///   • Health is already at max.
+    ///
+    /// Logs exactly twice per damaged session — once when the first heal tick
+    /// fires ("Repairing while parked.") and once when max is reached
+    /// ("Fully repaired."). The repairingThisSession flag is also cleared on
+    /// every non-Parked tick (see <see cref="ClearRepairFlagOnExit"/>) so a
+    /// re-parked aircraft logs the start message fresh.
+    /// </summary>
+    private void TickParkedRepair()
+    {
+        if (!repairWhileParked || health == null) return;
+        if (health.team != Health.Team.Player) return;
+        if (health.CurrentHealth >= health.maxHealth)
         {
-            reloadTimer = 0f;
+            if (repairingThisSession)
+            {
+                Debug.Log($"[Aircraft:{name}] Fully repaired.");
+                repairingThisSession = false;
+            }
             return;
         }
 
-        reloadTimer += Time.deltaTime;
-        if (reloadTimer >= reloadSecondsPerMissile)
+        if (!repairingThisSession)
         {
-            reloadTimer = 0f;
-            CurrentAmmo = Mathf.Min(maxAmmo, CurrentAmmo + 1);
-            Debug.Log($"[Aircraft:{name}] Reloaded missile. Ammo: {CurrentAmmo}/{maxAmmo}");
+            Debug.Log($"[Aircraft:{name}] Repairing while parked.");
+            repairingThisSession = true;
         }
+
+        health.Heal(parkedRepairRate * Time.deltaTime);
     }
 
     // ------------------------------------------------------------------ //
-    // Taxi → Roll → Climb (replaces the old vertical TakingOff)
+    // Taxi → Align → Roll → Climb
     // ------------------------------------------------------------------ //
 
-    /// <summary>
-    /// Drive the aircraft along <see cref="taxiRoute"/> at <see cref="taxiSpeed"/>,
-    /// staying at <see cref="GetGroundY"/>. Once the last waypoint
-    /// (the TakeoffStart) is reached, transition to AligningForTakeoff so
-    /// the jet can pivot smoothly in place instead of sliding into the run.
-    /// </summary>
     private void UpdateTaxiingToRunway()
     {
+        UseProfile(taxiProfile);
         float groundY = GetGroundY();
+
         if (taxiRoute == null || taxiRouteIndex >= taxiRoute.Length)
         {
-            // Route ran out (or missing waypoints) — hand off to alignment
-            // anyway so the jet still pivots before rolling. Real fix:
-            // re-run Repair Airfield Layout.
             State = FlightState.AligningForTakeoff;
             return;
         }
 
         Transform wp = taxiRoute[taxiRouteIndex];
-        if (wp == null)
-        {
-            taxiRouteIndex++;
-            return;
-        }
+        if (wp == null) { taxiRouteIndex++; return; }
 
-        Vector3 target = wp.position;
-        target.y = groundY;
-
-        Vector3 dir = target - transform.position;
+        Vector3 wpPos = wp.position; wpPos.y = groundY;
+        Vector3 dir   = wpPos - transform.position;
         Vector2 distXZ = new Vector2(dir.x, dir.z);
 
-        if (distXZ.magnitude <= taxiArrivalThreshold)
+        if (distXZ.magnitude <= taxiProfile.arrivalThreshold)
         {
             taxiRouteIndex++;
             if (taxiRouteIndex >= taxiRoute.Length)
@@ -615,42 +691,26 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        // Move at taxi speed, hold ground height, face direction of motion.
-        Vector3 step = dir.normalized * taxiSpeed * Time.deltaTime;
+        Vector3 step = dir.normalized * taxiProfile.speed * Time.deltaTime;
         if (step.magnitude > dir.magnitude) step = dir;
         transform.position += step;
 
-        Vector3 pos = transform.position;
-        pos.y = groundY;
-        transform.position = pos;
-
-        FaceVelocity(step);
+        Vector3 pos = transform.position; pos.y = groundY; transform.position = pos;
+        FaceVelocity(step, taxiProfile.turnRateDegrees);
     }
 
-    /// <summary>
-    /// Hold the aircraft on the takeoff start mark and pivot smoothly in
-    /// place toward the runway direction (TakeoffStart → TakeoffEnd). The
-    /// rotation is clamped by <see cref="takeoffAlignmentTurnSpeed"/>;
-    /// position is hard-locked to TakeoffStart so the wheels don't slide.
-    /// Transitions to TakeoffRoll once the yaw angle is below
-    /// <see cref="takeoffAlignmentAngleThreshold"/>.
-    /// </summary>
     private void UpdateAligningForTakeoff()
     {
         if (clearance == null || clearance.TakeoffStart == null || clearance.TakeoffEnd == null)
         {
-            // Missing markers — fall through to rolling so the jet doesn't stall.
             State = FlightState.TakeoffRoll;
             return;
         }
 
-        // Hard-lock position at the takeoff start so a finite rotation rate
-        // doesn't appear as a side-skidding pivot.
         Vector3 holdPos = clearance.TakeoffStart.position;
         holdPos.y = GetGroundY();
         transform.position = holdPos;
 
-        // Runway direction from the two lane markers, projected to the XZ plane.
         Vector3 runwayDir = clearance.TakeoffEnd.position - clearance.TakeoffStart.position;
         runwayDir.y = 0f;
         if (runwayDir.sqrMagnitude < 0.0001f)
@@ -664,21 +724,12 @@ public class AirUnitController : MonoBehaviour
 
         if (angle <= takeoffAlignmentAngleThreshold)
         {
-            // Snap to exact heading so the roll is straight down the lane.
             transform.rotation = want;
-
-            // Hand off to the Airfield instead of rolling immediately. For a
-            // solo command (LaunchGroupId = 0 or no batch partner), Airfield
-            // calls BeginTakeoffRoll back synchronously. For a synchronized
-            // group launch, the jet holds in WaitingForBatchTakeoff until its
-            // Lane-A / Lane-B partner is also ready.
             State = FlightState.WaitingForBatchTakeoff;
             Debug.Log($"[Aircraft:{name}] Ready at takeoff hold point.");
 
-            if (HomeAirfield != null)
-                HomeAirfield.NotifyReadyForTakeoffRoll(this);
-            else
-                BeginTakeoffRoll();   // no airfield — just roll
+            if (HomeAirfield != null) HomeAirfield.NotifyReadyForTakeoffRoll(this);
+            else                      BeginTakeoffRoll();
             return;
         }
 
@@ -686,12 +737,6 @@ public class AirUnitController : MonoBehaviour
             transform.rotation, want, takeoffAlignmentTurnSpeed * Time.deltaTime);
     }
 
-    /// <summary>
-    /// Holding state at the takeoff start — orientation already locked to
-    /// the runway direction, position re-locked each frame to the takeoff
-    /// start mark. The Airfield calls <see cref="BeginTakeoffRoll"/> when
-    /// the synchronized batch partner is also ready (or after the timeout).
-    /// </summary>
     private void UpdateWaitingForBatchTakeoff()
     {
         if (clearance == null || clearance.TakeoffStart == null) return;
@@ -699,14 +744,9 @@ public class AirUnitController : MonoBehaviour
         Vector3 holdPos = clearance.TakeoffStart.position;
         holdPos.y = GetGroundY();
         transform.position = holdPos;
-        // Rotation already locked from AligningForTakeoff.
     }
 
-    /// <summary>
-    /// Called by Airfield to release this aircraft into the takeoff roll.
-    /// Safe to call from <see cref="FlightState.AligningForTakeoff"/> or
-    /// <see cref="FlightState.WaitingForBatchTakeoff"/>; ignored otherwise.
-    /// </summary>
+    /// <summary>Released into the takeoff roll by the Airfield (sync or solo).</summary>
     public void BeginTakeoffRoll()
     {
         if (State != FlightState.WaitingForBatchTakeoff &&
@@ -716,26 +756,20 @@ public class AirUnitController : MonoBehaviour
         Debug.Log($"[Aircraft:{name}] Takeoff roll started");
     }
 
-    /// <summary>
-    /// Accelerate along the runway from <see cref="Airfield.TakeoffClearance.TakeoffStart"/>
-    /// toward <see cref="Airfield.TakeoffClearance.TakeoffEnd"/>, still on the
-    /// ground. Releases the lane (and switches to Climbing) when the jet is
-    /// within <see cref="takeoffEndReleaseDistance"/> of the end marker.
-    /// </summary>
     private void UpdateTakeoffRoll()
     {
+        UseProfile(takeoffProfile);
+
         if (clearance == null || clearance.TakeoffEnd == null)
         {
-            // No end marker — just rotate up and hope for the best.
             ReleaseLane();
             State = FlightState.Climbing;
             return;
         }
 
         float groundY = GetGroundY();
-        Vector3 target = clearance.TakeoffEnd.position;
-        target.y = groundY;
-        Vector3 dir = target - transform.position;
+        Vector3 endPos = clearance.TakeoffEnd.position; endPos.y = groundY;
+        Vector3 dir    = endPos - transform.position;
         Vector2 distXZ = new Vector2(dir.x, dir.z);
 
         if (distXZ.magnitude <= takeoffEndReleaseDistance)
@@ -745,28 +779,26 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        Vector3 step = dir.normalized * takeoffRollSpeed * Time.deltaTime;
+        Vector3 step = dir.normalized * takeoffProfile.speed * Time.deltaTime;
         transform.position += step;
 
-        Vector3 pos = transform.position;
-        pos.y = groundY;
-        transform.position = pos;
-
-        FaceVelocity(step);
+        Vector3 pos = transform.position; pos.y = groundY; transform.position = pos;
+        FaceVelocity(step, takeoffProfile.turnRateDegrees);
     }
 
-    /// <summary>
-    /// Hold the runway heading and climb out at <see cref="climbSpeed"/> while
-    /// moving forward at <see cref="cruiseSpeed"/>. Once at altitude, dispatch
-    /// to the mission state (attack / patrol / wide return).
-    /// </summary>
     private void UpdateClimbing()
     {
-        Vector3 step = transform.forward * cruiseSpeed * Time.deltaTime;
+        // Climbing is the transition between takeoff (ground) and cruise (in-air):
+        // forward speed at cruise rate, vertical rate read from TakeoffProfile so
+        // climb-out feel is tunable separately from cruise verticalSpeed.
+        UseProfile(cruiseProfile);
+
+        Vector3 step = transform.forward * cruiseProfile.speed * Time.deltaTime;
         transform.position += step;
 
         Vector3 pos = transform.position;
-        pos.y = Mathf.MoveTowards(pos.y, flightAltitude, climbSpeed * Time.deltaTime);
+        pos.y = Mathf.MoveTowards(pos.y, flightAltitude,
+                                  takeoffProfile.verticalSpeed * Time.deltaTime);
         transform.position = pos;
 
         if (pos.y >= flightAltitude - 0.05f)
@@ -779,7 +811,6 @@ public class AirUnitController : MonoBehaviour
         }
     }
 
-    /// <summary>Returns the runway lane to the Airfield exactly once per mission.</summary>
     private void ReleaseLane()
     {
         if (laneReleased) return;
@@ -787,167 +818,202 @@ public class AirUnitController : MonoBehaviour
         if (HomeAirfield != null) HomeAirfield.ReleaseTakeoffSlot(this);
     }
 
-    /// <summary>
-    /// Resolves the ground Y the aircraft should hold while taxiing / rolling
-    /// / aligning. Uses the home slot's world Y as the baseline (so the
-    /// airfield can sit at any world Y — flat terrain or elevated), then
-    /// adds <see cref="groundHeightOffset"/> as an optional lift. Defaults
-    /// to slot.position.y when groundHeightOffset is the standard 0.
-    /// </summary>
     private float GetGroundY()
     {
         float baseY = (homeSlot != null) ? homeSlot.position.y : 0f;
         return baseY + groundHeightOffset;
     }
 
+    // ------------------------------------------------------------------ //
+    // Cruise → Attack
+    // ------------------------------------------------------------------ //
+
     private void UpdateFlyingToTarget()
     {
-        if (target == null)
+        UseProfile(cruiseProfile);
+
+        if (target == null) { EnterWideReturnTurn(); return; }
+
+        ApproachQuality quality = EvaluateApproach(out float distXZ, out float forwardDot);
+
+        switch (quality)
         {
-            // Target evaporated mid-cruise — head home via the arc, no snap.
-            EnterWideReturnTurn();
+            case ApproachQuality.Good:
+                BeginAttackRun();
+                return;
+
+            case ApproachQuality.TooClose:
+            case ApproachQuality.Behind:
+            case ApproachQuality.BadAngle:
+                EnterRepositioning(quality, forwardDot, distXZ);
+                return;
+        }
+
+        // TooFar / NoTarget — keep cruising toward the target.
+        StepForwardAtAltitude(cruiseProfile);
+
+        Vector3 wantedXZ = new Vector3(
+            target.transform.position.x, flightAltitude, target.transform.position.z);
+        SmoothSteerInAir(wantedXZ, cruiseProfile.turnRateDegrees);
+    }
+
+    private void UpdateRepositioningForAttack()
+    {
+        UseProfile(cruiseProfile);
+
+        if (target == null) { EnterWideReturnTurn(); return; }
+
+        ApproachQuality quality = EvaluateApproach(out float distXZ, out float forwardDot);
+
+        if (quality == ApproachQuality.Good) { BeginAttackRun(); return; }
+
+        // Pulled out of effective range — cruise back toward the target normally.
+        if (quality == ApproachQuality.TooFar)
+        {
+            State = FlightState.FlyingToTarget;
             return;
         }
 
-        Vector3 wantedXZ = new Vector3(target.transform.position.x, flightAltitude, target.transform.position.z);
-        Vector3 dir      = wantedXZ - transform.position;
-        float distXZ     = new Vector2(dir.x, dir.z).magnitude;
-
-        if (distXZ <= attackRange)
+        // Safety timeout — don't orbit forever.
+        if (Time.time - repositionStartTime > maxRepositionTime)
         {
-            // Enter the attack run with the jet's CURRENT forward direction
-            // frozen — it should fly past the target, not over it.
-            missilesFiredThisRun = 0;
-            fireDelayTimer       = 0f;     // first missile releases immediately
-            State                = FlightState.AttackRun;
-            Debug.Log($"[Aircraft:{name}] Starting attack run on '{target.name}'");
+            if (forwardDot >= minAttackForwardDot && distXZ >= minAttackApproachDistance)
+            {
+                Debug.LogWarning($"[Aircraft:{name}] Reposition timeout — attempting safe attack.");
+                BeginAttackRun();
+            }
+            else
+            {
+                Debug.LogWarning($"[Aircraft:{name}] Reposition timeout — returning.");
+                target = null;
+                EnterWideReturnTurn();
+            }
             return;
         }
 
-        Vector3 step = dir.normalized * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
+        StepForwardAtAltitude(cruiseProfile);
 
-        FaceVelocity(step);
+        Vector3 wantedXZ = new Vector3(
+            target.transform.position.x, flightAltitude, target.transform.position.z);
+        SmoothSteerInAir(wantedXZ, cruiseProfile.turnRateDegrees);
+    }
+
+    private void BeginAttackRun()
+    {
+        missilesFiredThisRun = 0;
+        if (weapon != null) weapon.ResetFireCooldown();
+        State = FlightState.AttackRun;
+        Debug.Log($"[Aircraft:{name}] Approach acceptable — firing.");
     }
 
     /// <summary>
-    /// Fly straight forward at cruise speed while releasing up to
-    /// <see cref="maxAmmo"/> missiles, spaced by <see cref="missileFireDelay"/>.
-    /// The jet does NOT steer toward the target during the run — that's the
-    /// whole point: it's a fly-by, not a hover.
+    /// Locked-heading fly-by. Tick the weapon cooldown, ask it to fire, react
+    /// to the result. The weapon owns the actual cone / range / ammo checks —
+    /// this method only decides whether to keep running or egress.
     /// </summary>
     private void UpdateAttackRun()
     {
-        // Continue forward along whatever heading we entered the run with.
-        Vector3 step = transform.forward * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
-        // Lock altitude — small drift can accumulate from rotation otherwise.
-        Vector3 p = transform.position;
-        p.y = flightAltitude;
-        transform.position = p;
+        UseProfile(attackRunProfile);
 
-        // Missile release on the delay timer.
-        fireDelayTimer -= Time.deltaTime;
-        if (fireDelayTimer <= 0f && missilesFiredThisRun < maxAmmo)
+        // Forward motion at locked heading (turnRate ≈ 0 in the profile).
+        StepForwardAtAltitude(attackRunProfile);
+
+        if (weapon == null) { BeginAttackEgress(); return; }
+
+        weapon.TickFireCooldown(Time.deltaTime);
+
+        // Cap releases at the rack size so a re-attack doesn't dump everything at once.
+        if (missilesFiredThisRun >= weapon.maxAmmo)
         {
-            // Target died between missiles — skip the second and exit early.
-            if (target == null)
-            {
-                Debug.Log($"[Aircraft:{name}] Target lost during attack run — exiting.");
+            BeginAttackEgress();
+            return;
+        }
+
+        if (target == null)
+        {
+            Debug.Log($"[Aircraft:{name}] Target lost during attack run — exiting.");
+            BeginAttackEgress();
+            return;
+        }
+
+        AircraftWeapon.FireResult result = weapon.TryFire(target, firePoint, transform.forward);
+        switch (result)
+        {
+            case AircraftWeapon.FireResult.Fired:
+                missilesFiredThisRun++;
+                if (!weapon.HasAmmo || missilesFiredThisRun >= weapon.maxAmmo)
+                {
+                    Debug.Log($"[Aircraft:{name}] Attack run complete — exiting");
+                    BeginAttackEgress();
+                }
+                break;
+
+            case AircraftWeapon.FireResult.TargetTooClose:
+            case AircraftWeapon.FireResult.TargetBehind:
+            case AircraftWeapon.FireResult.NoAmmo:
                 BeginAttackEgress();
-                return;
-            }
+                break;
 
-            missilesFiredThisRun += 1;
-            CurrentAmmo           = Mathf.Max(0, CurrentAmmo - 1);
-            fireDelayTimer        = missileFireDelay;
-
-            SpawnMissileAt(target);
-            Debug.Log($"[Aircraft:{name}] Missile {missilesFiredThisRun} launched. " +
-                      $"Ammo: {CurrentAmmo}/{maxAmmo}");
-
-            // All missiles released — start the exit run.
-            if (missilesFiredThisRun >= maxAmmo)
-            {
-                Debug.Log($"[Aircraft:{name}] Attack run complete — exiting");
-                BeginAttackEgress();
-            }
+            case AircraftWeapon.FireResult.OffCone:
+            case AircraftWeapon.FireResult.Cooldown:
+            case AircraftWeapon.FireResult.NoTarget:
+                // Continue forward — re-evaluate next tick.
+                break;
         }
     }
 
-    /// <summary>
-    /// After the last missile, keep flying straight for
-    /// <see cref="attackEgressDistance"/> world units before any turn is
-    /// allowed. Hands off to the WideReturnTurn arc — never directly to
-    /// Returning — so the jet can never snap a 90° corner toward base.
-    /// </summary>
     private void UpdateAttackEgress()
     {
-        Vector3 step = transform.forward * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
-        Vector3 p = transform.position;
-        p.y = flightAltitude;
-        transform.position = p;
+        UseProfile(attackRunProfile);
+
+        StepForwardAtAltitude(attackRunProfile);
 
         Vector3 travelXZ = transform.position - attackEgressStart;
         travelXZ.y = 0f;
         if (travelXZ.magnitude >= attackEgressDistance)
         {
-            target = null;                  // mission over
+            target = null;
             EnterWideReturnTurn();
         }
     }
 
     private void BeginAttackEgress()
     {
-        attackEgressStart = transform.position;
-        State             = FlightState.AttackEgress;
+        attackEgressStart  = transform.position;
+        repositionAttempts = 0;
+        State              = FlightState.AttackEgress;
         Debug.Log($"[Aircraft:{name}] Entering egress phase.");
     }
 
-    /// <summary>
-    /// Smooth max-turn-rate arc back toward the home approach point. The jet
-    /// keeps moving forward at cruise speed every frame and yaws by at most
-    /// <see cref="maxTurnRateDegrees"/> deg/s toward the home direction.
-    /// Hands off to <see cref="FlightState.Returning"/> once the heading is
-    /// within <see cref="returnAlignmentAngle"/> of the home bearing.
-    ///
-    /// The arc shape emerges from speed × rate: at cruise 14 / rate 45 deg/s
-    /// the radius is ~17.8 world units. A jet whose home is dead behind
-    /// therefore flies a ~half-circle of that radius before lining up —
-    /// a natural wide recovery, not a corner snap.
-    /// </summary>
+    // ------------------------------------------------------------------ //
+    // Return arc + helpers
+    // ------------------------------------------------------------------ //
+
     private void UpdateWideReturnTurn()
     {
+        UseProfile(cruiseProfile);
+
         if (homeSlot == null)
         {
-            // Airfield destroyed while we were turning — give up and idle.
             Debug.LogWarning($"[Aircraft:{name}] Home slot lost mid-return — holding in air.");
             State = FlightState.Parked;
             return;
         }
 
-        // Direction we WANT to face: home approach at altitude.
-        Vector3 approach = GetApproachPointToAirfield();
-        Vector3 toApproachXZ = approach - transform.position;
-        toApproachXZ.y = 0f;
-
-        Vector3 forwardXZ = transform.forward;
-        forwardXZ.y = 0f;
+        Vector3 approach    = GetApproachPointToAirfield();
+        Vector3 toApproachXZ = approach - transform.position; toApproachXZ.y = 0f;
+        Vector3 forwardXZ   = transform.forward; forwardXZ.y = 0f;
 
         if (toApproachXZ.sqrMagnitude < 0.0001f || forwardXZ.sqrMagnitude < 0.0001f)
         {
-            // Degenerate — already on top of home (rare). Just hand off.
             State = FlightState.Returning;
             return;
         }
 
         toApproachXZ.Normalize();
         forwardXZ.Normalize();
-
         float angle = Vector3.Angle(forwardXZ, toApproachXZ);
 
-        // Aligned enough — exit the arc and let Returning fly straight home.
         if (angle <= returnAlignmentAngle)
         {
             Debug.Log($"[Aircraft:{name}] Return arc complete. Heading to base.");
@@ -955,37 +1021,18 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        // Choose turn direction from cross-product sign. At 180° the cross
-        // is ≈ 0; default to a right turn so the jet doesn't sit there.
         float turnSign = Mathf.Sign(Vector3.Cross(forwardXZ, toApproachXZ).y);
         if (Mathf.Abs(turnSign) < 0.001f) turnSign = 1f;
 
-        // Clamp this frame's yaw delta to the max turn rate. This is what
-        // produces the smooth arc — no instant snap.
-        float yawDelta = Mathf.Min(angle, maxTurnRateDegrees * Time.deltaTime) * turnSign;
+        float yawDelta = Mathf.Min(angle, cruiseProfile.turnRateDegrees * Time.deltaTime) * turnSign;
         transform.Rotate(0f, yawDelta, 0f, Space.World);
 
-        // Move forward at cruise speed, then re-lock altitude.
-        Vector3 step = transform.forward * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
-        Vector3 p = transform.position;
-        p.y = flightAltitude;
-        transform.position = p;
+        StepForwardAtAltitude(cruiseProfile);
     }
 
-    // ------------------------------------------------------------------ //
-    // Return-arc helpers
-    // ------------------------------------------------------------------ //
-
-    /// <summary>
-    /// Enter <see cref="FlightState.WideReturnTurn"/>, logging whether the
-    /// airfield is behind (wide arc) or to the side/front (smaller arc).
-    /// Called by both AttackEgress and PatrollingPoint completion.
-    /// </summary>
     private void EnterWideReturnTurn()
     {
         State = FlightState.WideReturnTurn;
-
         if (homeSlot == null) return;
 
         if (IsAirfieldBehindCurrentHeading())
@@ -994,13 +1041,6 @@ public class AirUnitController : MonoBehaviour
             Debug.Log($"[Aircraft:{name}] Airfield is ahead/side — using moderate return curve.");
     }
 
-    /// <summary>
-    /// True when the XZ direction from the aircraft to the home approach
-    /// point is more than 90° away from the aircraft's current forward.
-    /// (dot &lt; 0 ⇒ behind.) Used only for log selection — the turn rule
-    /// itself is the same in either case; the wide arc emerges from the
-    /// constant turn radius and 180° of rotation work.
-    /// </summary>
     private bool IsAirfieldBehindCurrentHeading()
     {
         if (homeSlot == null) return false;
@@ -1008,134 +1048,69 @@ public class AirUnitController : MonoBehaviour
         Vector3 forwardXZ = transform.forward; forwardXZ.y = 0f;
         Vector3 toHomeXZ  = homeSlot.position - transform.position; toHomeXZ.y = 0f;
 
-        if (forwardXZ.sqrMagnitude < 0.0001f || toHomeXZ.sqrMagnitude < 0.0001f)
-            return false;
+        if (forwardXZ.sqrMagnitude < 0.0001f || toHomeXZ.sqrMagnitude < 0.0001f) return false;
 
         return Vector3.Dot(forwardXZ.normalized, toHomeXZ.normalized) < 0f;
     }
 
-    /// <summary>
-    /// World-space approach waypoint: home slot's XZ at flight altitude.
-    /// Returning then descends from this point during Landing.
-    /// </summary>
     private Vector3 GetApproachPointToAirfield()
     {
         if (homeSlot == null) return transform.position;
         return new Vector3(homeSlot.position.x, flightAltitude, homeSlot.position.z);
     }
 
-    /// <summary>
-    /// Spawns one StrikeMissile projectile at <see cref="firePoint"/>, aimed
-    /// at the target's current chest height. The missile manages its own
-    /// flight, damage application, and impact flash.
-    /// </summary>
-    private void SpawnMissileAt(Health enemy)
-    {
-        Vector3 start = (firePoint != null)
-            ? firePoint.position
-            : transform.position + Vector3.down * 0.3f;
+    // ------------------------------------------------------------------ //
+    // Patrol
+    // ------------------------------------------------------------------ //
 
-        // Build the visual body — a long thin cube along +Z so LookRotation
-        // on the missile points its long axis along its travel vector.
-        GameObject mGO = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        mGO.name                    = "StrikeMissile";
-        mGO.transform.position      = start;
-        mGO.transform.localScale    = new Vector3(0.20f, 0.20f, 1.00f);
-        mGO.layer                   = 2;   // IgnoreRaycast
-
-        // Strip the auto-collider so the missile can't catch raycasts.
-        Collider col = mGO.GetComponent<Collider>();
-        if (col != null) Destroy(col);
-
-        Renderer r = mGO.GetComponent<Renderer>();
-        if (r != null)
-        {
-            Shader shader = Shader.Find("Sprites/Default")
-                         ?? Shader.Find("Universal Render Pipeline/Unlit")
-                         ?? Shader.Find("Unlit/Color")
-                         ?? Shader.Find("Standard");
-            Material m = new Material(shader) { color = missileColor };
-            if (m.HasProperty("_BaseColor"))
-                m.SetColor("_BaseColor", missileColor);
-            if (m.HasProperty("_EmissionColor"))
-            {
-                m.EnableKeyword("_EMISSION");
-                m.SetColor("_EmissionColor", missileColor * 1.4f);
-            }
-            r.sharedMaterial    = m;
-            r.shadowCastingMode = ShadowCastingMode.Off;
-            r.receiveShadows    = false;
-        }
-
-        StrikeMissile missile = mGO.AddComponent<StrikeMissile>();
-        missile.Launch(start, enemy, missileDamage, damageType,
-                       missileProjectileSpeed, impactFlashDuration, missileColor);
-    }
-
-    /// <summary>
-    /// Cruise toward <see cref="patrolCenter"/> at altitude. Hands off to
-    /// <see cref="UpdatePatrollingPoint"/> once we enter the circle.
-    /// </summary>
     private void UpdateFlyingToPoint()
     {
+        UseProfile(cruiseProfile);
+
         Vector3 wantedXZ = new Vector3(patrolCenter.x, flightAltitude, patrolCenter.z);
         Vector3 dir      = wantedXZ - transform.position;
         float   distXZ   = new Vector2(dir.x, dir.z).magnitude;
 
-        // Within the patrol radius — start circling. Initialise the current
-        // angle from our actual position so the first lap is smooth, not a
-        // sudden teleport onto the rim.
         if (distXZ <= patrolCircleRadius + 0.5f)
         {
             Vector3 fromCenter = transform.position - wantedXZ;
             patrolCurrentAngle = Mathf.Atan2(fromCenter.z, fromCenter.x) * Mathf.Rad2Deg;
             patrolAngleSwept   = 0f;
             lastReportedCircle = 0;
-
             State = FlightState.PatrollingPoint;
             Debug.Log($"[Aircraft:{name}] Reached patrol area");
             return;
         }
 
-        Vector3 step = dir.normalized * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
-        FaceVelocity(step);
+        StepForwardAtAltitude(cruiseProfile);
+        SmoothSteerInAir(wantedXZ, cruiseProfile.turnRateDegrees);
     }
 
-    /// <summary>
-    /// Fly a circular pattern around <see cref="patrolCenter"/> at altitude.
-    /// Counts laps and returns home after <see cref="patrolCircleCount"/>.
-    /// </summary>
     private void UpdatePatrollingPoint()
     {
-        // Advance the angle. Counter-clockwise (positive) by math convention;
-        // the tangent at angle θ is (-sin θ, cos θ), used for facing direction.
+        UseProfile(holdingProfile);
+
         float deltaAngle = patrolAngularSpeed * Time.deltaTime;
         patrolCurrentAngle += deltaAngle;
         patrolAngleSwept   += deltaAngle;
 
-        float rad           = patrolCurrentAngle * Mathf.Deg2Rad;
+        float   rad         = patrolCurrentAngle * Mathf.Deg2Rad;
         Vector3 centreAtAlt = new Vector3(patrolCenter.x, flightAltitude, patrolCenter.z);
-        Vector3 offset      = new Vector3(Mathf.Cos(rad) * patrolCircleRadius,
-                                          0f,
+        Vector3 offset      = new Vector3(Mathf.Cos(rad) * patrolCircleRadius, 0f,
                                           Mathf.Sin(rad) * patrolCircleRadius);
         Vector3 wantedPos   = centreAtAlt + offset;
 
-        // Glide toward the next point on the circle at cruise speed. Using
-        // MoveTowards (not direct teleport) keeps the path smooth if the
-        // aircraft drifts inward from a high angular speed setting.
         transform.position = Vector3.MoveTowards(
-            transform.position, wantedPos, cruiseSpeed * Time.deltaTime);
+            transform.position, wantedPos, holdingProfile.speed * Time.deltaTime);
 
         Vector3 tangent = new Vector3(-Mathf.Sin(rad), 0f, Mathf.Cos(rad));
         if (tangent.sqrMagnitude > 0.0001f)
         {
             Quaternion want = Quaternion.LookRotation(tangent);
             transform.rotation = Quaternion.RotateTowards(
-                transform.rotation, want, turnSpeed * Time.deltaTime);
+                transform.rotation, want, holdingProfile.turnRateDegrees * Time.deltaTime);
         }
 
-        // Lap-completion logs — emit once per crossed 360-degree boundary.
         int completedCircles = Mathf.FloorToInt(patrolAngleSwept / 360f);
         if (completedCircles > lastReportedCircle)
         {
@@ -1143,8 +1118,6 @@ public class AirUnitController : MonoBehaviour
             Debug.Log($"[Aircraft:{name}] Patrol circle {completedCircles}/{patrolCircleCount}");
         }
 
-        // Mission complete — go home via the wide arc so the jet doesn't
-        // snap-corner out of its circle tangent into a straight return.
         if (patrolAngleSwept >= 360f * patrolCircleCount)
         {
             Debug.Log($"[Aircraft:{name}] Patrol complete — returning");
@@ -1153,14 +1126,14 @@ public class AirUnitController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Returning to base — fly toward the airfield's <see cref="Airfield.landingApproachPoint"/>
-    /// at altitude. Once close enough, request a landing clearance; the response
-    /// decides whether we proceed to <see cref="FlightState.LandingApproach"/>
-    /// or hold in <see cref="FlightState.WaitingForLandingClearance"/>.
-    /// </summary>
+    // ------------------------------------------------------------------ //
+    // Return → Landing
+    // ------------------------------------------------------------------ //
+
     private void UpdateReturning()
     {
+        UseProfile(cruiseProfile);
+
         if (homeSlot == null)
         {
             Debug.LogWarning($"[Aircraft:{name}] Home slot lost — holding in air.");
@@ -1169,8 +1142,6 @@ public class AirUnitController : MonoBehaviour
         }
 
         Transform approach = HomeAirfield != null ? HomeAirfield.landingApproachPoint : null;
-        // Fallback: no approach marker → aim at the home slot directly, but
-        // we'll still go through the new state pipeline.
         Vector3 wantedXZ = approach != null
             ? new Vector3(approach.position.x, flightAltitude, approach.position.z)
             : new Vector3(homeSlot.position.x, flightAltitude, homeSlot.position.z);
@@ -1180,29 +1151,19 @@ public class AirUnitController : MonoBehaviour
 
         if (distXZ <= landingApproachDistance)
         {
-            // Arrived at the approach point — ask the tower for a slot.
             Debug.Log($"[Aircraft:{name}] Returning to Airfield approach.");
             TryRequestLandingClearance();
             return;
         }
 
-        Vector3 step = dir.normalized * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
-        FaceVelocity(step);
+        StepForwardAtAltitude(cruiseProfile);
+        SmoothSteerInAir(wantedXZ, cruiseProfile.turnRateDegrees);
     }
 
-    /// <summary>
-    /// Asks <see cref="HomeAirfield"/> for landing clearance. If granted we
-    /// proceed straight to <see cref="FlightState.LandingApproach"/>; if
-    /// denied we drop into <see cref="FlightState.WaitingForLandingClearance"/>
-    /// (holding pattern) and retry on a timer.
-    /// </summary>
     private void TryRequestLandingClearance()
     {
         if (HomeAirfield == null)
         {
-            // No airfield — fall through to the legacy descent-to-slot path
-            // so the jet doesn't get stuck in the air.
             landingClearance = null;
             State = FlightState.FinalLanding;
             finalLandingStartXZ = transform.position;
@@ -1211,16 +1172,15 @@ public class AirUnitController : MonoBehaviour
 
         if (HomeAirfield.RequestLandingClearance(this, out Airfield.LandingClearance c))
         {
-            landingClearance = c;
-            State            = FlightState.LandingApproach;
+            landingClearance    = c;
+            State               = FlightState.LandingApproach;
             holdingPatternAngle = 0f;
         }
         else
         {
             State = FlightState.WaitingForLandingClearance;
             landingClearanceRetryTimer = landingClearanceCheckInterval;
-            // Seed the holding-pattern angle from current relative position so
-            // the first lap starts smoothly.
+
             Transform approach = HomeAirfield.landingApproachPoint;
             if (approach != null)
             {
@@ -1231,17 +1191,25 @@ public class AirUnitController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Holding pattern — circle around <see cref="Airfield.landingApproachPoint"/>
-    /// at flight altitude. Periodically re-checks clearance.
-    /// </summary>
     private void UpdateWaitingForLandingClearance()
     {
+        UseProfile(holdingProfile);
+
         if (HomeAirfield == null)
         {
             State = FlightState.FinalLanding;
             finalLandingStartXZ = transform.position;
             return;
+        }
+
+        // Fail-safe: if we've been holding for too long, an orphaned runway
+        // owner may be blocking us. Ask the Airfield to force-release before
+        // the next retry so this aircraft can land instead of looping forever.
+        if (Time.time - stateEnteredTime > landingClearanceTimeout)
+        {
+            Debug.LogWarning($"[Aircraft:{name}] Landing clearance timeout — retrying after force-release.");
+            HomeAirfield.ForceReleaseRunwayIfOrphaned($"holding aircraft '{name}' timeout");
+            stateEnteredTime = Time.time;   // reset the timer so we don't spam every frame
         }
 
         landingClearanceRetryTimer -= Time.deltaTime;
@@ -1259,43 +1227,64 @@ public class AirUnitController : MonoBehaviour
         Transform approach = HomeAirfield.landingApproachPoint;
         if (approach == null) return;
 
-        // Mirror PatrollingPoint's circle math at the approach point.
         float deltaAngle = patrolAngularSpeed * Time.deltaTime;
         holdingPatternAngle += deltaAngle;
 
-        float rad           = holdingPatternAngle * Mathf.Deg2Rad;
+        float   rad         = holdingPatternAngle * Mathf.Deg2Rad;
         Vector3 centreAtAlt = new Vector3(approach.position.x, flightAltitude, approach.position.z);
-        Vector3 offset      = new Vector3(Mathf.Cos(rad) * landingHoldingRadius,
-                                          0f,
+        Vector3 offset      = new Vector3(Mathf.Cos(rad) * landingHoldingRadius, 0f,
                                           Mathf.Sin(rad) * landingHoldingRadius);
         Vector3 wantedPos   = centreAtAlt + offset;
 
         transform.position = Vector3.MoveTowards(
-            transform.position, wantedPos, cruiseSpeed * Time.deltaTime);
+            transform.position, wantedPos, holdingProfile.speed * Time.deltaTime);
 
         Vector3 tangent = new Vector3(-Mathf.Sin(rad), 0f, Mathf.Cos(rad));
         if (tangent.sqrMagnitude > 0.0001f)
         {
             Quaternion want = Quaternion.LookRotation(tangent);
             transform.rotation = Quaternion.RotateTowards(
-                transform.rotation, want, turnSpeed * Time.deltaTime);
+                transform.rotation, want, holdingProfile.turnRateDegrees * Time.deltaTime);
         }
     }
 
     /// <summary>
-    /// Lined up — fly from current position to <see cref="Airfield.LandingClearance.LandingStart"/>
-    /// at altitude. When close enough, hand off to FinalLanding.
+    /// Lined up at altitude — slide onto the LandingStart anchor and align with
+    /// the runway direction so FinalLanding starts the descent on-axis.
+    ///
+    /// IMPORTANT: This used to step-forward at cruise speed + smooth-steer toward
+    /// LandingStart, which created an orbit-overshoot bug: at cruise 14 / turn
+    /// 85 deg/s the minimum turn radius (~9.4u) was larger than the 0.4u arrival
+    /// threshold, so any approach geometry where the jet wasn't already pointed
+    /// at LandingStart caused it to circle forever. The deadlock then bled into
+    /// the Airfield because activeLandingJet stayed set.
+    ///
+    /// New behaviour: clamp-move toward LandingStart at landingProfile.speed
+    /// (guarantees arrival regardless of incoming angle) and rotate toward the
+    /// runway-axis direction (Start → End). FinalLanding takes over from here
+    /// once the XZ distance is within the landing arrival threshold.
     /// </summary>
     private void UpdateLandingApproach()
     {
+        UseProfile(landingProfile);
+
         Transform start = landingClearance?.LandingStart;
         if (start == null)
         {
-            // No landing-start marker — go straight to FinalLanding so we
-            // don't strand the jet.
             finalLandingStartXZ = transform.position;
             State = FlightState.FinalLanding;
             Debug.Log($"[Aircraft:{name}] Final landing started.");
+            return;
+        }
+
+        // Fail-safe: even with MoveTowards the state can stall (e.g. missing
+        // markers, time-scale 0). Snap to FinalLanding from the current
+        // position if we've been here too long.
+        if (Time.time - stateEnteredTime > landingApproachTimeout)
+        {
+            Debug.LogWarning($"[Aircraft:{name}] LandingApproach timeout — snapping to FinalLanding.");
+            finalLandingStartXZ = transform.position;
+            State = FlightState.FinalLanding;
             return;
         }
 
@@ -1303,7 +1292,7 @@ public class AirUnitController : MonoBehaviour
         Vector3 dir      = wantedXZ - transform.position;
         float   distXZ   = new Vector2(dir.x, dir.z).magnitude;
 
-        if (distXZ <= landingArrivalThreshold)
+        if (distXZ <= landingProfile.arrivalThreshold)
         {
             finalLandingStartXZ = transform.position;
             State = FlightState.FinalLanding;
@@ -1311,22 +1300,41 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        Vector3 step = dir.normalized * cruiseSpeed * Time.deltaTime;
-        transform.position += step;
-        FaceVelocity(step);
+        // Direct clamped move — guarantees arrival, no orbit overshoot.
+        transform.position = Vector3.MoveTowards(
+            transform.position, wantedXZ, landingProfile.speed * Time.deltaTime);
+
+        // Align with the runway axis (Start → End direction) so by the time
+        // we touch down we're flying straight down the lane.
+        Transform end = landingClearance?.LandingEnd;
+        Vector3 runwayDir = (end != null)
+            ? (end.position - start.position)
+            : (wantedXZ - transform.position);
+        runwayDir.y = 0f;
+        if (runwayDir.sqrMagnitude > 0.0001f)
+        {
+            Quaternion want = Quaternion.LookRotation(runwayDir.normalized);
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation, want, landingProfile.turnRateDegrees * Time.deltaTime);
+        }
     }
 
-    /// <summary>
-    /// Glide down the runway from LandingStart to LandingEnd. Y descends
-    /// linearly with XZ progress so the touchdown happens at LandingEnd
-    /// regardless of runway length.
-    /// </summary>
     private void UpdateFinalLanding()
     {
+        UseProfile(landingProfile);
+
+        // Fail-safe: force-touchdown at current position if descent stalls.
+        if (Time.time - stateEnteredTime > finalLandingTimeout)
+        {
+            Debug.LogWarning($"[Aircraft:{name}] FinalLanding timeout — force-touchdown at current XZ.");
+            Vector3 stuck = transform.position; stuck.y = GetGroundY(); transform.position = stuck;
+            EnterTaxiingToSlot();
+            return;
+        }
+
         Transform end = landingClearance?.LandingEnd;
         if (end == null)
         {
-            // No end marker — drop straight down to ground and continue.
             Vector3 fallback = transform.position;
             fallback.y = GetGroundY();
             transform.position = fallback;
@@ -1334,17 +1342,16 @@ public class AirUnitController : MonoBehaviour
             return;
         }
 
-        // XZ motion toward LandingEnd at landingRollSpeed.
-        Vector3 endXZ = new Vector3(end.position.x, transform.position.y, end.position.z);
-        Vector3 dir   = endXZ - transform.position;
+        Vector3 endXZ  = new Vector3(end.position.x, transform.position.y, end.position.z);
+        Vector3 dir    = endXZ - transform.position;
         Vector2 distXZ = new Vector2(dir.x, dir.z);
 
         Vector3 step = (distXZ.sqrMagnitude > 0.0001f
-            ? new Vector3(dir.x, 0f, dir.z).normalized * landingRollSpeed * Time.deltaTime
+            ? new Vector3(dir.x, 0f, dir.z).normalized * landingProfile.speed * Time.deltaTime
             : Vector3.zero);
         transform.position += step;
 
-        // Altitude descent — linear by XZ-progress along the path.
+        // Altitude descent — linear by XZ progress along the path.
         float totalDist = Vector2.Distance(
             new Vector2(finalLandingStartXZ.x, finalLandingStartXZ.z),
             new Vector2(end.position.x,        end.position.z));
@@ -1353,63 +1360,54 @@ public class AirUnitController : MonoBehaviour
             new Vector2(transform.position.x,  transform.position.z));
         float t = totalDist > 0.01f ? Mathf.Clamp01(coveredDist / totalDist) : 1f;
 
-        float groundY    = GetGroundY();
-        float targetY    = Mathf.Lerp(flightAltitude, groundY, t);
-        // Also clamp by descent rate so very-short runways don't divebomb.
+        float groundY = GetGroundY();
+        float targetY = Mathf.Lerp(flightAltitude, groundY, t);
         targetY = Mathf.MoveTowards(transform.position.y, targetY,
-                                    landingDescentSpeed * Time.deltaTime);
+                                    landingProfile.verticalSpeed * Time.deltaTime);
 
-        Vector3 pos = transform.position;
-        pos.y = targetY;
-        transform.position = pos;
+        Vector3 pos = transform.position; pos.y = targetY; transform.position = pos;
 
-        // Face the landing direction.
         Vector3 face = new Vector3(dir.x, 0f, dir.z);
         if (face.sqrMagnitude > 0.0001f)
         {
             Quaternion want = Quaternion.LookRotation(face);
             transform.rotation = Quaternion.RotateTowards(
-                transform.rotation, want, turnSpeed * Time.deltaTime);
+                transform.rotation, want, landingProfile.turnRateDegrees * Time.deltaTime);
         }
 
-        // Touchdown — XZ within threshold AND altitude on the ground.
-        if (distXZ.magnitude <= landingArrivalThreshold && targetY <= groundY + 0.01f)
+        if (distXZ.magnitude <= landingProfile.arrivalThreshold && targetY <= groundY + 0.01f)
         {
             Debug.Log($"[Aircraft:{name}] Touchdown.");
             EnterTaxiingToSlot();
         }
     }
 
-    /// <summary>
-    /// Switch from FinalLanding to TaxiingToSlot. Releases the shared runway
-    /// lock so other aircraft can use it.
-    /// </summary>
     private void EnterTaxiingToSlot()
     {
-        if (HomeAirfield != null)
-            HomeAirfield.ReleaseLandingRunway(this);
+        if (HomeAirfield != null) HomeAirfield.ReleaseLandingRunway(this);
 
-        taxiBackRoute = landingClearance?.TaxiBackRoute ?? new Transform[0];
-        taxiBackIndex = 0;
+        taxiBackRoute    = landingClearance?.TaxiBackRoute ?? new Transform[0];
+        taxiBackIndex    = 0;
         landingClearance = null;
 
-        // Snap altitude to the ground so the rest of the taxi runs flat.
-        Vector3 pos = transform.position;
-        pos.y = GetGroundY();
-        transform.position = pos;
+        Vector3 pos = transform.position; pos.y = GetGroundY(); transform.position = pos;
 
         State = FlightState.TaxiingToSlot;
         Debug.Log($"[Aircraft:{name}] Taxiing back to slot.");
     }
 
-    /// <summary>
-    /// Taxi the aircraft along <see cref="taxiBackRoute"/> (LandingExit →
-    /// per-slot taxi point → slot) at <see cref="taxiBackSpeed"/>. On
-    /// arrival at the final waypoint the jet is snapped to the slot and
-    /// flagged Parked so the reload timer can start.
-    /// </summary>
     private void UpdateTaxiingToSlot()
     {
+        UseProfile(taxiProfile);
+
+        // Fail-safe: if a waypoint is unreachable for any reason, snap to slot.
+        if (Time.time - stateEnteredTime > taxiToSlotTimeout)
+        {
+            Debug.LogWarning($"[Aircraft:{name}] TaxiingToSlot timeout — snapping to home slot.");
+            ParkAtHomeSlot();
+            return;
+        }
+
         if (taxiBackRoute == null || taxiBackIndex >= taxiBackRoute.Length)
         {
             ParkAtHomeSlot();
@@ -1420,32 +1418,26 @@ public class AirUnitController : MonoBehaviour
         if (wp == null) { taxiBackIndex++; return; }
 
         float groundY = GetGroundY();
-        Vector3 target = wp.position;
-        target.y = groundY;
+        Vector3 wpPos = wp.position; wpPos.y = groundY;
 
-        Vector3 dir   = target - transform.position;
+        Vector3 dir   = wpPos - transform.position;
         Vector2 distXZ = new Vector2(dir.x, dir.z);
 
-        if (distXZ.magnitude <= landingArrivalThreshold)
+        if (distXZ.magnitude <= landingProfile.arrivalThreshold)
         {
             taxiBackIndex++;
-            if (taxiBackIndex >= taxiBackRoute.Length)
-                ParkAtHomeSlot();
+            if (taxiBackIndex >= taxiBackRoute.Length) ParkAtHomeSlot();
             return;
         }
 
-        Vector3 step = dir.normalized * taxiBackSpeed * Time.deltaTime;
+        Vector3 step = dir.normalized * taxiProfile.speed * Time.deltaTime;
         if (step.magnitude > dir.magnitude) step = dir;
         transform.position += step;
 
-        Vector3 pos = transform.position;
-        pos.y = groundY;
-        transform.position = pos;
-
-        FaceVelocity(step);
+        Vector3 pos = transform.position; pos.y = groundY; transform.position = pos;
+        FaceVelocity(step, taxiProfile.turnRateDegrees);
     }
 
-    /// <summary>Final snap to the home slot, reset reload, mark as parked.</summary>
     private void ParkAtHomeSlot()
     {
         if (homeSlot != null)
@@ -1454,7 +1446,6 @@ public class AirUnitController : MonoBehaviour
             transform.rotation = homeSlot.rotation;
         }
         target           = null;
-        reloadTimer      = 0f;
         taxiBackRoute    = null;
         taxiBackIndex    = 0;
         State            = FlightState.Parked;
@@ -1462,16 +1453,120 @@ public class AirUnitController : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
-    // Helpers
+    // Movement helpers
     // ------------------------------------------------------------------ //
 
-    private void FaceVelocity(Vector3 step)
+    /// <summary>Move forward at the profile's speed and re-lock altitude to <see cref="flightAltitude"/>.</summary>
+    private void StepForwardAtAltitude(FlightProfile profile)
+    {
+        Vector3 step = transform.forward * profile.speed * Time.deltaTime;
+        transform.position += step;
+
+        Vector3 pos = transform.position;
+        pos.y = flightAltitude;
+        transform.position = pos;
+    }
+
+    /// <summary>Rotate to face <paramref name="step"/>'s XZ direction at <paramref name="turnRate"/> deg/sec.</summary>
+    private void FaceVelocity(Vector3 step, float turnRate)
     {
         Vector3 flat = new Vector3(step.x, 0f, step.z);
         if (flat.sqrMagnitude < 0.0001f) return;
 
         Quaternion want = Quaternion.LookRotation(flat);
-        transform.rotation = Quaternion.RotateTowards(transform.rotation, want, turnSpeed * Time.deltaTime);
+        transform.rotation = Quaternion.RotateTowards(transform.rotation, want, turnRate * Time.deltaTime);
     }
 
+    /// <summary>Yaw toward an XZ world position at <paramref name="turnRate"/> deg/sec. Only flat direction is used.</summary>
+    private void SmoothSteerInAir(Vector3 wantedWorldPos, float turnRate)
+    {
+        Vector3 to = wantedWorldPos - transform.position;
+        to.y = 0f;
+        if (to.sqrMagnitude < 0.0001f) return;
+
+        Quaternion want = Quaternion.LookRotation(to.normalized);
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation, want, turnRate * Time.deltaTime);
+    }
+
+    /// <summary>Logs a single line on actual profile switches; cheap on repeat calls.</summary>
+    private void UseProfile(FlightProfile p)
+    {
+        if (p == lastLoggedProfile) return;
+        lastLoggedProfile = p;
+        Debug.Log($"[Aircraft:{name}] Using profile: {p.name}");
+    }
+
+    // ------------------------------------------------------------------ //
+    // Approach validation
+    // ------------------------------------------------------------------ //
+
+    private enum ApproachQuality
+    {
+        Good,
+        TooClose,
+        TooFar,
+        BadAngle,
+        Behind,
+        NoTarget,
+    }
+
+    private ApproachQuality EvaluateApproach(out float distXZ, out float forwardDot)
+    {
+        distXZ     = 0f;
+        forwardDot = 0f;
+        if (target == null) return ApproachQuality.NoTarget;
+
+        Vector3 toTarget   = target.transform.position - transform.position;
+        Vector3 toTargetXZ = new Vector3(toTarget.x, 0f, toTarget.z);
+        distXZ = toTargetXZ.magnitude;
+
+        Vector3 fwdXZ = transform.forward; fwdXZ.y = 0f;
+        if (fwdXZ.sqrMagnitude < 0.0001f) fwdXZ = Vector3.forward;
+        fwdXZ.Normalize();
+
+        Vector3 dirNorm = (distXZ > 0.0001f) ? toTargetXZ / distXZ : fwdXZ;
+        forwardDot = Vector3.Dot(fwdXZ, dirNorm);
+        float angleToTarget = Vector3.Angle(fwdXZ, dirNorm);
+
+        if (forwardDot < 0f)                    return ApproachQuality.Behind;
+        if (distXZ < minAttackApproachDistance) return ApproachQuality.TooClose;
+        if (forwardDot < minAttackForwardDot)   return ApproachQuality.BadAngle;
+        if (angleToTarget > minAttackAngle)     return ApproachQuality.BadAngle;
+        if (distXZ > attackRange)               return ApproachQuality.TooFar;
+
+        return ApproachQuality.Good;
+    }
+
+    /// <summary>
+    /// Enter RepositioningForAttack — unless we've exhausted
+    /// <see cref="maxRepositionAttempts"/>, in which case commit to a relaxed
+    /// attack run (any forward direction, within max range) instead of looping.
+    /// The weapon's TryFire still gates the actual missile spawn.
+    /// </summary>
+    private void EnterRepositioning(ApproachQuality reason, float forwardDot, float distXZ)
+    {
+        repositionAttempts++;
+
+        if (repositionAttempts > maxRepositionAttempts)
+        {
+            if (forwardDot >= 0f && weapon != null && distXZ <= weapon.maxReleaseDistance)
+            {
+                Debug.Log($"[Aircraft:{name}] Relaxed attack rules after reposition.");
+                BeginAttackRun();
+            }
+            else
+            {
+                Debug.Log($"[Aircraft:{name}] Reposition attempts spent — abandoning pass.");
+                target = null;
+                EnterWideReturnTurn();
+            }
+            return;
+        }
+
+        repositionStartTime = Time.time;
+        State               = FlightState.RepositioningForAttack;
+        Debug.Log($"[Aircraft:{name}] Repositioning for better approach " +
+                  $"(attempt {repositionAttempts}/{maxRepositionAttempts}, reason: {reason}).");
+    }
 }

@@ -373,6 +373,7 @@ GameObject:
   - component: {fileID: 8066804301865168270}
   - component: {fileID: 3232870494432379038}
   - component: {fileID: 7395276002122610000}
+  - component: {fileID: 9027973089648668517}
   - component: {fileID: 6148407789625793867}
   m_Layer: 6
   m_Name: StrikeJetPrefab
@@ -468,6 +469,29 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitCategory
   category: 3
+--- !u!114 &9027973089648668517
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5477634759810098689}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c3666eb595538f040a025d2fe627c220, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::AircraftWeapon
+  maxAmmo: 2
+  reloadSecondsPerMissile: 3
+  missileDamage: 120
+  damageType: 2
+  missileProjectileSpeed: 30
+  missileColor: {r: 1, g: 0.45, b: 0.1, a: 1}
+  impactFlashDuration: 0.2
+  missileFireDelay: 0.75
+  minReleaseDistance: 3.5
+  maxReleaseDistance: 24
+  forwardConeDegrees: 90
 --- !u!114 &6148407789625793867
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -480,43 +504,83 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3f4b17583cf8fef4fb3a88086e2b83fe, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AirUnitController
+  taxiProfile:
+    name: Taxi
+    speed: 4
+    turnRateDegrees: 180
+    verticalSpeed: 0
+    acceleration: 0
+    minSpeed: 0
+    arrivalThreshold: 0.3
+  takeoffProfile:
+    name: Takeoff
+    speed: 10
+    turnRateDegrees: 180
+    verticalSpeed: 8
+    acceleration: 0
+    minSpeed: 0
+    arrivalThreshold: 2
+  cruiseProfile:
+    name: Cruise
+    speed: 14
+    turnRateDegrees: 85
+    verticalSpeed: 0
+    acceleration: 0
+    minSpeed: 0
+    arrivalThreshold: 0.5
+  attackRunProfile:
+    name: AttackRun
+    speed: 14
+    turnRateDegrees: 0
+    verticalSpeed: 0
+    acceleration: 0
+    minSpeed: 0
+    arrivalThreshold: 0
+  landingProfile:
+    name: Landing
+    speed: 7
+    turnRateDegrees: 180
+    verticalSpeed: 5
+    acceleration: 0
+    minSpeed: 0
+    arrivalThreshold: 0.4
+  holdingProfile:
+    name: Holding
+    speed: 14
+    turnRateDegrees: 180
+    verticalSpeed: 0
+    acceleration: 0
+    minSpeed: 0
+    arrivalThreshold: 0.4
   flightAltitude: 12
-  cruiseSpeed: 14
-  verticalSpeed: 6
-  turnSpeed: 180
-  landingApproachThreshold: 0.5
-  landingApproachDistance: 25
-  landingHoldingRadius: 14
-  landingClearanceCheckInterval: 0.5
-  landingRollSpeed: 7
-  landingDescentSpeed: 5
-  taxiBackSpeed: 4
-  landingArrivalThreshold: 0.4
-  taxiSpeed: 4
-  takeoffRollSpeed: 10
-  climbSpeed: 8
-  taxiArrivalThreshold: 0.3
-  takeoffEndReleaseDistance: 2
   groundHeightOffset: 0
   takeoffAlignmentTurnSpeed: 90
   takeoffAlignmentAngleThreshold: 3
+  takeoffEndReleaseDistance: 2
+  landingApproachDistance: 25
+  landingHoldingRadius: 14
+  landingClearanceCheckInterval: 0.5
+  landingClearanceTimeout: 12
+  landingApproachTimeout: 8
+  finalLandingTimeout: 15
+  taxiToSlotTimeout: 15
   attackRange: 18
-  maxAmmo: 2
-  missileDamage: 120
-  missileFireDelay: 0.75
-  damageType: 2
-  missileProjectileSpeed: 30
   attackEgressDistance: 15
   attackRunCanRetarget: 0
-  maxTurnRateDegrees: 45
-  returnAlignmentAngle: 8
-  impactFlashDuration: 0.2
-  missileColor: {r: 1, g: 0.45, b: 0.1, a: 1}
-  reloadSecondsPerMissile: 3
   canAttackWithNoAmmo: 0
+  returnAlignmentAngle: 8
+  minAttackApproachDistance: 8
+  minAttackForwardDot: 0.15
+  minAttackAngle: 75
+  approachRepositionDistance: 14
+  reattackOrbitRadius: 14
+  maxRepositionTime: 5
+  maxRepositionAttempts: 2
   patrolCircleRadius: 10
   patrolCircleCount: 2
   patrolAngularSpeed: 60
+  repairWhileParked: 1
+  parkedRepairRate: 10
   firePoint: {fileID: 215776617074400269}
 --- !u!1 &5545922301382905743
 GameObject:
