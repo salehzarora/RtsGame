@@ -48,6 +48,25 @@ public class UnitSelector : MonoBehaviour
     private readonly List<SelectableUnit>     selectedUnits     = new List<SelectableUnit>();
     private readonly List<SelectableAircraft> selectedAircraft  = new List<SelectableAircraft>();
     private SelectableBuilding                selectedBuilding;
+
+    // Monotonically incrementing launch-group ID for multi-aircraft commands.
+    // Static so the value is shared across UnitSelector lifetimes if the
+    // scene reloads — collisions don't matter, only "do these aircraft share
+    // the same id this command?" does.
+    private static long nextLaunchGroupId = 0L;
+
+    /// <summary>
+    /// Returns 0 for a single-aircraft selection (solo command, no batch
+    /// synchronization needed), or a unique non-zero ID shared across every
+    /// aircraft in this multi-select command.
+    /// </summary>
+    private long AllocateAircraftGroupId(int aircraftCount)
+    {
+        if (aircraftCount <= 1) return 0L;
+        long id = ++nextLaunchGroupId;
+        Debug.Log($"[AircraftCommand] Group command issued: {id}, aircraft count: {aircraftCount}");
+        return id;
+    }
     private Camera mainCam;
     private Vector2 dragStartPos;
     private bool isDragging;
@@ -280,8 +299,12 @@ public class UnitSelector : MonoBehaviour
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
 
                 // Aircraft use AirUnitController (takeoff + fly + missile + return).
+                // Multi-aircraft selections share one launch group ID so the
+                // Airfield synchronizes batch pair takeoff. Solo selections
+                // get groupId = 0 (no sync, immediate roll after alignment).
+                long aircraftGroupId = AllocateAircraftGroupId(selectedAircraft.Count);
                 foreach (SelectableAircraft jet in selectedAircraft)
-                    jet.GetComponent<AirUnitController>()?.AttackTarget(targetHealth);
+                    jet.GetComponent<AirUnitController>()?.AttackTarget(targetHealth, aircraftGroupId);
 
                 if (attackMarker != null)
                 {
@@ -314,7 +337,7 @@ public class UnitSelector : MonoBehaviour
             }
         }
 
-        // --- Priority 3: ground → move formation -------------------------
+        // --- Priority 3: ground → move formation / fly-to-point patrol ---
         if (Physics.Raycast(ray, out RaycastHit groundHit, Mathf.Infinity, groundLayer))
         {
             foreach (SelectableUnit unit in selectedUnits)
@@ -328,6 +351,14 @@ public class UnitSelector : MonoBehaviour
             Vector3[] positions = GetFormationPositions(groundHit.point, selectedUnits.Count);
             for (int i = 0; i < selectedUnits.Count; i++)
                 selectedUnits[i].GetComponent<UnitMovement>().MoveTo(positions[i]);
+
+            // Aircraft: fly to the clicked point and circle it before
+            // returning home. AirUnitController ignores the call while mid-
+            // attack, so an active strike isn't interrupted. Group ID matches
+            // the attack path so synchronized batch takeoff still applies.
+            long aircraftPatrolGroupId = AllocateAircraftGroupId(selectedAircraft.Count);
+            foreach (SelectableAircraft jet in selectedAircraft)
+                jet.GetComponent<AirUnitController>()?.FlyToPoint(groundHit.point, aircraftPatrolGroupId);
         }
     }
 

@@ -259,9 +259,27 @@ public class BuildingPlacementManager : MonoBehaviour
             pos.x = Mathf.Round(pos.x / gridSize) * gridSize;
             pos.z = Mathf.Round(pos.z / gridSize) * gridSize;
         }
-        pos.y = hit.point.y + placementHeightOffset;
+        pos.y = hit.point.y + GetActivePlacementOffset();
 
         ghost.transform.position = pos;
+    }
+
+    /// <summary>
+    /// Picks the right Y offset for the currently-active placement. If the
+    /// prefab's Building component sets placementYOffsetOverride ≥ 0 we use
+    /// that; otherwise we fall back to the global <see cref="placementHeightOffset"/>.
+    /// This lets the Airfield place its root at exactly ground level (offset 0)
+    /// while all other buildings keep the original 0.75 lift.
+    /// </summary>
+    private float GetActivePlacementOffset()
+    {
+        if (activePrefab != null)
+        {
+            Building b = activePrefab.GetComponent<Building>();
+            if (b != null && b.placementYOffsetOverride >= 0f)
+                return b.placementYOffsetOverride;
+        }
+        return placementHeightOffset;
     }
 
     private void UpdateGhostColor()

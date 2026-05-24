@@ -35,11 +35,16 @@ public static class CreateStrikeJetPrefab
     private const float MaxHealth     = 260f;
     private const float FlightAltitude = 12f;
     private const float CruiseSpeed   = 14f;
-    private const float AttackRange   = 18f;
-    private const int   MaxAmmo       = 2;
-    private const float MissileDamage = 120f;
-    private const float MissileCooldown = 1.0f;
-    private const float BarHeight     = 2.0f;
+    private const float AttackRange         = 18f;   // missile release range
+    private const int   MaxAmmo             = 2;
+    private const float MissileDamage       = 120f;
+    private const float MissileFireDelay    = 0.75f; // seconds between the two missile releases
+    private const float MissileProjectileSpeed = 30f;
+    private const float AttackEgressDistance   = 15f; // straight forward distance before turning is allowed
+    private const float MaxTurnRateDegrees     = 45f; // smooth recovery arc — wider when home is behind
+    private const float ReturnAlignmentAngle   = 8f;  // angle (deg) below which WideReturnTurn exits
+    private const float ImpactFlashDuration    = 0.2f;
+    private const float BarHeight              = 2.0f;
 
     // Palette
     private static readonly Color FuselageGrey = new Color(0.55f, 0.58f, 0.62f);
@@ -76,8 +81,10 @@ public static class CreateStrikeJetPrefab
             EnsureFolder("Assets/_Game/Prefabs");
             PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
             Debug.Log($"[CreateStrikeJetPrefab] ✓ Saved {PrefabPath}.\n" +
-                      $"  Stats: HP={MaxHealth}, Range={AttackRange}, Damage={MissileDamage}, " +
-                      $"Cooldown={MissileCooldown}, MaxAmmo={MaxAmmo}, FlightAltitude={FlightAltitude}.\n" +
+                      $"  Stats: HP={MaxHealth}, ReleaseRange={AttackRange}, Damage={MissileDamage}, " +
+                      $"FireDelay={MissileFireDelay}, MaxAmmo={MaxAmmo}, " +
+                      $"EgressDistance={AttackEgressDistance}, TurnRate={MaxTurnRateDegrees}deg/s, " +
+                      $"FlightAltitude={FlightAltitude}.\n" +
                       "  Drop into Airfield → Strike Jet Prefab.");
         }
         finally { Object.DestroyImmediate(root); }
@@ -102,14 +109,19 @@ public static class CreateStrikeJetPrefab
         UnitCategory cat = root.AddComponent<UnitCategory>();
         cat.category     = UnitCategory.Category.Aircraft;
 
-        AirUnitController controller = root.AddComponent<AirUnitController>();
-        controller.flightAltitude    = FlightAltitude;
-        controller.cruiseSpeed       = CruiseSpeed;
-        controller.attackRange       = AttackRange;
-        controller.maxAmmo           = MaxAmmo;
-        controller.missileDamage     = MissileDamage;
-        controller.missileCooldown   = MissileCooldown;
-        controller.damageType        = DamageType.Missile;
+        AirUnitController controller    = root.AddComponent<AirUnitController>();
+        controller.flightAltitude       = FlightAltitude;
+        controller.cruiseSpeed          = CruiseSpeed;
+        controller.attackRange          = AttackRange;
+        controller.maxAmmo              = MaxAmmo;
+        controller.missileDamage        = MissileDamage;
+        controller.missileFireDelay     = MissileFireDelay;
+        controller.missileProjectileSpeed = MissileProjectileSpeed;
+        controller.attackEgressDistance = AttackEgressDistance;
+        controller.maxTurnRateDegrees   = MaxTurnRateDegrees;
+        controller.returnAlignmentAngle = ReturnAlignmentAngle;
+        controller.impactFlashDuration  = ImpactFlashDuration;
+        controller.damageType           = DamageType.Missile;
 
         // --- Visual children ------------------------------------------- //
 
@@ -141,28 +153,32 @@ public static class CreateStrikeJetPrefab
               new Vector3(0f, 0.65f, -0.95f),
               new Vector3(0.10f, 0.55f, 0.55f));
 
-        // Missile pods — small dark cubes under each wing
+        // Missile pods — raised slightly so the bottom of the pod (local y
+        // = 0.20 - 0.09 = 0.11) clears the runway top at world y = 0.10
+        // when the aircraft root is at world y = 0.
         Spawn(root, "PodL",
               PrimitiveType.Cube, pod,
-              new Vector3(-1.10f, 0.18f, 0.10f),
+              new Vector3(-1.10f, 0.20f, 0.10f),
               new Vector3(0.18f, 0.18f, 0.85f));
         Spawn(root, "PodR",
               PrimitiveType.Cube, pod,
-              new Vector3( 1.10f, 0.18f, 0.10f),
+              new Vector3( 1.10f, 0.20f, 0.10f),
               new Vector3(0.18f, 0.18f, 0.85f));
 
-        // FirePoint — tracer origin between the pods at the front
+        // FirePoint — tracer origin between the pods at the front (raised
+        // to match the new pod height).
         GameObject firePoint = new GameObject("FirePoint");
         firePoint.transform.SetParent(root.transform, false);
-        firePoint.transform.localPosition = new Vector3(0f, 0.20f, 0.80f);
+        firePoint.transform.localPosition = new Vector3(0f, 0.22f, 0.80f);
         controller.firePoint = firePoint.transform;
 
-        // SelectionCircle — flat cyan disc on the ground plane (visible while
-        // parked; while airborne the aircraft pivot is up at altitude so the
-        // disc is at the aircraft's base, which still reads cleanly).
+        // SelectionCircle — flat cyan disc placed JUST above the runway top.
+        // With the aircraft root at world y = 0 and the runway top at world
+        // y = 0.10, the disc must live at local y >= 0.11 to stay visible
+        // and not be hidden by the concrete.
         GameObject circle = Spawn(root, "SelectionCircle",
               PrimitiveType.Cylinder, ring,
-              new Vector3(0f, 0.02f, 0f),
+              new Vector3(0f, 0.12f, 0f),
               new Vector3(2.6f, 0.02f, 2.6f));
         circle.SetActive(false); // SelectableAircraft.Awake hides it; mirror that
         sel.selectionCircle = circle;
@@ -172,6 +188,13 @@ public static class CreateStrikeJetPrefab
         bar.transform.SetParent(root.transform, false);
         HealthBar hb    = bar.AddComponent<HealthBar>();
         hb.heightOffset = BarHeight;
+
+        // AmmoIndicator — sits a bit higher than the health bar so the dots
+        // don't overlap. Dots are built at runtime by AircraftAmmoIndicator.
+        GameObject ammo = new GameObject("AmmoIndicator");
+        ammo.transform.SetParent(root.transform, false);
+        AircraftAmmoIndicator ai = ammo.AddComponent<AircraftAmmoIndicator>();
+        ai.heightOffset = BarHeight + 0.6f;
 
         SetLayerRecursive(root.transform, unitLayer);
     }

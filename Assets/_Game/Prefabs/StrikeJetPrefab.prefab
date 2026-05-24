@@ -27,7 +27,7 @@ Transform:
   m_GameObject: {fileID: 168403187610412107}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 1.1, y: 0.18, z: 0.1}
+  m_LocalPosition: {x: 1.1, y: 0.2, z: 0.1}
   m_LocalScale: {x: 0.18, y: 0.18, z: 0.85}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -404,6 +404,7 @@ Transform:
   - {fileID: 215776617074400269}
   - {fileID: 2310808081395400143}
   - {fileID: 8103789350135122359}
+  - {fileID: 4354753642406638554}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!65 &4082558216982683691
@@ -484,15 +485,39 @@ MonoBehaviour:
   verticalSpeed: 6
   turnSpeed: 180
   landingApproachThreshold: 0.5
+  landingApproachDistance: 25
+  landingHoldingRadius: 14
+  landingClearanceCheckInterval: 0.5
+  landingRollSpeed: 7
+  landingDescentSpeed: 5
+  taxiBackSpeed: 4
+  landingArrivalThreshold: 0.4
+  taxiSpeed: 4
+  takeoffRollSpeed: 10
+  climbSpeed: 8
+  taxiArrivalThreshold: 0.3
+  takeoffEndReleaseDistance: 2
+  groundHeightOffset: 0
+  takeoffAlignmentTurnSpeed: 90
+  takeoffAlignmentAngleThreshold: 3
   attackRange: 18
   maxAmmo: 2
   missileDamage: 120
-  missileCooldown: 1
+  missileFireDelay: 0.75
   damageType: 2
+  missileProjectileSpeed: 30
+  attackEgressDistance: 15
+  attackRunCanRetarget: 0
+  maxTurnRateDegrees: 45
+  returnAlignmentAngle: 8
+  impactFlashDuration: 0.2
+  missileColor: {r: 1, g: 0.45, b: 0.1, a: 1}
+  reloadSecondsPerMissile: 3
+  canAttackWithNoAmmo: 0
+  patrolCircleRadius: 10
+  patrolCircleCount: 2
+  patrolAngularSpeed: 60
   firePoint: {fileID: 215776617074400269}
-  tracerColor: {r: 1, g: 0.45, b: 0.15, a: 1}
-  tracerDuration: 0.1
-  tracerWidth: 0.08
 --- !u!1 &5545922301382905743
 GameObject:
   m_ObjectHideFlags: 0
@@ -637,6 +662,55 @@ MonoBehaviour:
   highThreshold: 0.75
   midThreshold: 0.35
   hideWhenFull: 0
+--- !u!1 &6907782527935182870
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4354753642406638554}
+  - component: {fileID: 3956691025869494789}
+  m_Layer: 6
+  m_Name: AmmoIndicator
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4354753642406638554
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6907782527935182870}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 7565398833249496579}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3956691025869494789
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6907782527935182870}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0a6a077ee824cd94592c66a6cc35876b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::AircraftAmmoIndicator
+  heightOffset: 2.6
+  dotSize: 0.3
+  dotSpacing: 0.45
+  filledColor: {r: 0.2, g: 0.85, b: 1, a: 1}
+  emptyColor: {r: 0.2, g: 0.2, b: 0.22, a: 1}
 --- !u!1 &6995733599654047175
 GameObject:
   m_ObjectHideFlags: 0
@@ -664,7 +738,7 @@ Transform:
   m_GameObject: {fileID: 6995733599654047175}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.02, z: 0}
+  m_LocalPosition: {x: 0, y: 0.12, z: 0}
   m_LocalScale: {x: 2.6, y: 0.02, z: 2.6}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -844,7 +918,7 @@ Transform:
   m_GameObject: {fileID: 8977108972023667405}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -1.1, y: 0.18, z: 0.1}
+  m_LocalPosition: {x: -1.1, y: 0.2, z: 0.1}
   m_LocalScale: {x: 0.18, y: 0.18, z: 0.85}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -932,7 +1006,7 @@ Transform:
   m_GameObject: {fileID: 9018458114131337696}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.2, z: 0.8}
+  m_LocalPosition: {x: 0, y: 0.22, z: 0.8}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

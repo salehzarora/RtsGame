@@ -18,4 +18,12 @@ public class Building : MonoBehaviour
 
     [Tooltip("Resource cost — should match BuildingPlacementManager.barracksCost")]
     public int cost = 100;
+
+    [Header("Placement Override")]
+    [Tooltip("If ≥ 0, BuildingPlacementManager uses THIS Y offset instead of its " +
+             "global placementHeightOffset when placing this prefab. Set to 0 for " +
+             "buildings whose root pivot should sit exactly at ground level (e.g. " +
+             "Airfield, whose internal runway/apron meshes already supply visual " +
+             "height). Leave negative (default -1) to use the global value.")]
+    public float placementYOffsetOverride = -1f;
 }

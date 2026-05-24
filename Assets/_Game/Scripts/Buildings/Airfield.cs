@@ -1,22 +1,27 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Production + parking management for the Airfield building.
+/// Production + parking + takeoff-queue management for the Airfield building.
 ///
-/// Each Airfield has exactly <see cref="MaxSlots"/> aircraft slots (Transform
-/// children, assigned in the Inspector). Producing a Strike Jet finds the
-/// first free slot, spawns an aircraft there, and binds the aircraft to that
-/// slot via <see cref="AirUnitController.AssignHome"/>. When the aircraft is
-/// destroyed (Unity's overloaded == null catches that), the slot becomes free
-/// again automatically — no event subscription required.
+/// Each Airfield has exactly <see cref="MaxSlots"/> aircraft slots, a 6-entry
+/// taxi-point array (one taxi waypoint per slot), two runway lanes (A/B) with
+/// queue + start + end markers, and a landing approach point.
+///
+/// Aircraft do NOT take off whenever they please — they ask the Airfield for
+/// clearance via <see cref="RequestTakeoffClearance"/>. The Airfield runs a
+/// FIFO queue with at most two concurrent takeoff slots (one per runway lane),
+/// so a six-jet attack order taxis out in three pairs.
 ///
 /// Setup (done automatically by Tools → RTS → Air System → Create Airfield Prefab):
 ///   1. Attach to the Airfield root (alongside Building, SelectableBuilding,
 ///      PowerConsumer, and a Collider).
 ///   2. Drag the Strike Jet prefab into Strike Jet Prefab.
-///   3. Assign 6 child Transforms into Slots[0..5] — each represents one
-///      parking pad on the apron. Their rotation drives the parked direction.
-///   4. Tune costs in the Inspector.
+///   3. Assign six child Transforms into Slots[0..5] (parking pads).
+///   4. Assign six child Transforms into TaxiPoints[0..5] (one taxi waypoint
+///      per slot, aligned with the apron edge).
+///   5. Assign the runway markers: RunwayQueuePoint A/B, TakeoffStart A/B,
+///      TakeoffEnd A/B, LandingApproachPoint.
 ///
 /// Production controls (while the Airfield is selected):
 ///   • Click the Strike Jet button in the bottom-left production panel
@@ -43,7 +48,7 @@ public class Airfield : MonoBehaviour
     public KeyCode produceStrikeJetKey = KeyCode.J;
 
     // ------------------------------------------------------------------ //
-    // Inspector — Slots
+    // Inspector — Parking
     // ------------------------------------------------------------------ //
 
     [Header("Parking Slots (exactly 6)")]
@@ -51,14 +56,141 @@ public class Airfield : MonoBehaviour
              "Their rotation is used as the parked rotation.")]
     public Transform[] slots = new Transform[MaxSlots];
 
+    [Header("Taxi Points (one per slot)")]
+    [Tooltip("First taxi waypoint for each slot — usually a point on the apron " +
+             "just outside the parking pad, facing the runway. Index aligns with Slots.")]
+    public Transform[] taxiPoints = new Transform[MaxSlots];
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Runway Lanes
+    // ------------------------------------------------------------------ //
+
+    [Header("Runway Lane A (left lane, hosts even-index slots)")]
+    [Tooltip("Ordered list of shared taxi waypoints between the per-slot taxi point and the " +
+             "Lane-A runway queue point. Use 1–2 entries to space Lane A jets away from Lane B " +
+             "so their wings don't clip.")]
+    public Transform[] laneATaxiPoints;
+    public Transform runwayQueuePointA;
+    public Transform takeoffStartA;
+    public Transform takeoffEndA;
+
+    [Header("Runway Lane B (right lane, hosts odd-index slots)")]
+    [Tooltip("Ordered list of shared taxi waypoints between the per-slot taxi point and the " +
+             "Lane-B runway queue point. Sits on a different X than Lane A so the two paths " +
+             "stay visually separate.")]
+    public Transform[] laneBTaxiPoints;
+    public Transform runwayQueuePointB;
+    public Transform takeoffStartB;
+    public Transform takeoffEndB;
+
+    [Header("Landing — Lane A (primary)")]
+    [Tooltip("Final-approach waypoint. Returning aircraft fly here at altitude, then " +
+             "request landing clearance.")]
+    public Transform landingApproachPoint;
+
+    [Tooltip("Point on the runway where descent begins. Aircraft transitions to FinalLanding " +
+             "when it arrives here at altitude and begins descending toward LandingEnd_A.")]
+    public Transform landingStartA;
+
+    [Tooltip("Point on the runway where the landing roll ends. Aircraft is on the ground here.")]
+    public Transform landingEndA;
+
+    [Tooltip("Off-runway turn point. Aircraft exits the runway here and begins taxiing back " +
+             "to its assigned parking slot.")]
+    public Transform landingExitA;
+
+    [Header("Landing — Lane B (reserved, not yet used in v1)")]
+    public Transform landingStartB;
+    public Transform landingEndB;
+    public Transform landingExitB;
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Takeoff Queue
+    // ------------------------------------------------------------------ //
+
+    [Header("Takeoff Queue")]
+    [Tooltip("Maximum aircraft that may be in the taxi/roll/climb phase at the " +
+             "same time. Capped to 2 (one per runway lane).")]
+    [Range(1, 2)] public int maxConcurrentTakeoffs = 2;
+
+    [Tooltip("Minimum seconds between two consecutive clearance grants. " +
+             "Prevents two aircraft from sharing the exact same takeoff moment.")]
+    public float takeoffSpacingSeconds = 1.0f;
+
+    [Tooltip("If true, queue events log to the Console (queued / granted / released).")]
+    public bool queueDebugLogs = true;
+
+    [Header("Synchronized Group Takeoff")]
+    [Tooltip("When true, aircraft sharing a non-zero LaunchGroupId wait for their batch " +
+             "partner to be aligned at the runway before both roll together. " +
+             "Single-aircraft commands (LaunchGroupId = 0) always launch immediately.")]
+    public bool synchronizedGroupTakeoff = true;
+
+    [Tooltip("Hard cap on aircraft per synchronized launch batch. Effectively 2 (one per lane).")]
+    [Range(1, 2)] public int maxAircraftPerLaunchBatch = 2;
+
+    [Tooltip("Safety timeout in seconds. A ready aircraft waiting for its batch partner this " +
+             "long is launched solo so the queue cannot deadlock if the partner is destroyed.")]
+    public float batchWaitTimeout = 5f;
+
+    [Tooltip("Optional extra delay between the two aircraft's takeoff-roll start within the " +
+             "same batch. Default 0 — both roll on the same frame.")]
+    public float takeoffPairSpacingSeconds = 0f;
+
+    [Header("Runway Traffic Control")]
+    [Tooltip("If true, takeoffs and landings share one runway lock: an active landing " +
+             "blocks new takeoff clearances, and an active takeoff-roll/pre-roll blocks " +
+             "new landing clearances. v1 uses this single shared lock.")]
+    public bool landingUsesSharedRunway = true;
+
+    [Tooltip("If true, runway-busy / runway-released events log to the Console.")]
+    public bool runwayBusyDebugLogs = true;
+
+    // ------------------------------------------------------------------ //
+    // Public types
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Bundle of waypoints handed to an aircraft when it receives takeoff
+    /// clearance. <see cref="TaxiRoute"/> is the full ordered path the jet
+    /// follows: per-slot pull-out point → lane corridor → runway queue point
+    /// → takeoff start. The last entry is always the takeoff start, so the
+    /// aircraft knows when the taxi is done.
+    ///
+    /// After the taxi ends the aircraft pivots in place toward
+    /// <see cref="TakeoffStart"/> → <see cref="TakeoffEnd"/>, then rolls to
+    /// <see cref="TakeoffEnd"/> and releases the lane.
+    /// </summary>
+    public class TakeoffClearance
+    {
+        public Transform[] TaxiRoute;        // ordered list (per-slot → lane corridor → queue → start)
+        public Transform   TakeoffStart;     // last waypoint of TaxiRoute; also alignment anchor
+        public Transform   TakeoffEnd;       // alignment direction + roll end
+        public int         Lane;             // 0 = A, 1 = B
+    }
+
+    /// <summary>
+    /// Bundle of landing waypoints + taxi-back route handed to an aircraft when
+    /// it receives landing clearance.
+    ///   LandingApproach → LandingStart (descent begins) → LandingEnd (touchdown)
+    ///   → LandingExit (off-runway turn) → TaxiBackRoute (per-slot taxi to home).
+    /// </summary>
+    public class LandingClearance
+    {
+        public Transform   LandingApproach;
+        public Transform   LandingStart;
+        public Transform   LandingEnd;
+        public Transform   LandingExit;
+        public Transform[] TaxiBackRoute;   // exit → slot's taxi point → slot
+        public int         Lane;            // 0 = A (only A in v1)
+    }
+
     // ------------------------------------------------------------------ //
     // Capability flag — used by the HUD
     // ------------------------------------------------------------------ //
 
-    /// <summary>True when this airfield can produce a Strike Jet.</summary>
     public bool CanProduceStrikeJet => strikeJetPrefab != null;
 
-    /// <summary>Number of slots that currently have no aircraft assigned (Unity-null counts as free).</summary>
     public int FreeSlotCount
     {
         get
@@ -71,13 +203,45 @@ public class Airfield : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
-    // Runtime
+    // Runtime — parking
     // ------------------------------------------------------------------ //
 
-    /// <summary>Aircraft currently bound to each slot. Index aligns with <see cref="slots"/>.</summary>
     private readonly GameObject[] parked = new GameObject[MaxSlots];
-
     private PlayerResourceManager resourceManager;
+
+    // ------------------------------------------------------------------ //
+    // Runtime — takeoff queue
+    // ------------------------------------------------------------------ //
+
+    // The jet currently occupying each lane (anywhere in Taxi→Roll→Climb).
+    // Unity-null counts as "lane free" via the overloaded == operator, so a
+    // destroyed jet auto-frees its lane without explicit cleanup.
+    private AirUnitController activeJetA;
+    private AirUnitController activeJetB;
+
+    // FIFO queue of jets waiting for a lane to free up.
+    private readonly Queue<AirUnitController> takeoffQueue = new Queue<AirUnitController>();
+
+    // Earliest time the next clearance grant may fire. Updated on every grant.
+    private float nextClearanceTime;
+
+    // Batch-sync state. readyJetA/B are set when each lane's aircraft has
+    // finished alignment and notified us via NotifyReadyForTakeoffRoll().
+    // jetAReadyTime / jetBReadyTime drive the partner-timeout safety net.
+    private bool  readyJetA;
+    private bool  readyJetB;
+    private float jetAReadyTime;
+    private float jetBReadyTime;
+
+    // Deferred Lane B release if takeoffPairSpacingSeconds > 0.
+    private AirUnitController pendingLaneBJet;
+    private float             pendingLaneBReleaseTime;
+
+    // The aircraft currently using the runway for landing. Non-null while the
+    // jet is in LandingApproach / FinalLanding; cleared when it transitions
+    // to TaxiingToSlot (the runway is then clear even though the jet is still
+    // on the airfield, since taxi-back uses the apron taxiways).
+    private AirUnitController activeLandingJet;
 
     // ------------------------------------------------------------------ //
 
@@ -93,16 +257,32 @@ public class Airfield : MonoBehaviour
             Debug.LogWarning($"Airfield on '{name}': Slots array has {(slots?.Length ?? 0)} entries " +
                              $"(expected {MaxSlots}). Re-run Air System → Validate Airfield Slots.");
         }
+
+        if (taxiPoints == null || taxiPoints.Length != MaxSlots)
+        {
+            Debug.LogWarning($"Airfield on '{name}': TaxiPoints array has {(taxiPoints?.Length ?? 0)} entries " +
+                             $"(expected {MaxSlots}). Re-run Air System → Repair Airfield Layout.");
+        }
+    }
+
+    private void Update()
+    {
+        // Try to dispatch the head of the queue every frame. The method
+        // gates itself on lane availability and the spacing timer.
+        TryGrantFromQueue();
+
+        // Batch-takeoff bookkeeping: deferred Lane B release + partner timeout.
+        TickDeferredLaneBRelease();
+        CheckBatchTimeout();
     }
 
     // ------------------------------------------------------------------ //
-    // Public — called by RTSHUD / UnitSelector
+    // Public — production
     // ------------------------------------------------------------------ //
 
     /// <summary>Spawn one Strike Jet in the first free slot. No-op (logs) on failure.</summary>
     public void ProduceStrikeJet()
     {
-        // --- Capability ---------------------------------------------------
         if (!CanProduceStrikeJet)
         {
             Debug.Log($"[Airfield] '{name}' has no Strike Jet prefab assigned — ignoring.");
@@ -115,7 +295,6 @@ public class Airfield : MonoBehaviour
             return;
         }
 
-        // --- Power --------------------------------------------------------
         PowerConsumer power = GetComponent<PowerConsumer>();
         if (power != null && !power.IsPowered)
         {
@@ -124,7 +303,6 @@ public class Airfield : MonoBehaviour
             return;
         }
 
-        // --- Slot ---------------------------------------------------------
         int slotIndex = FindFreeSlotIndex();
         if (slotIndex < 0)
         {
@@ -139,7 +317,6 @@ public class Airfield : MonoBehaviour
             return;
         }
 
-        // --- Resources ----------------------------------------------------
         if (!resourceManager.CanAfford(strikeJetCost))
         {
             Debug.LogWarning($"[Airfield] Not enough resources to produce Strike Jet. " +
@@ -147,7 +324,6 @@ public class Airfield : MonoBehaviour
             return;
         }
 
-        // --- Instantiate --------------------------------------------------
         GameObject jet = Instantiate(strikeJetPrefab, slot.position, slot.rotation);
         jet.name = $"StrikeJet_{slotIndex}";
 
@@ -171,20 +347,468 @@ public class Airfield : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
-    // Slot bookkeeping
+    // Public — takeoff queue API (called by AirUnitController)
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Returns the index of the first slot whose <see cref="parked"/> entry is
-    /// null (Unity-null counts — destroyed aircraft auto-free their slot).
-    /// Returns -1 if every slot is occupied.
+    /// Aircraft entry point. Returns true and fills <paramref name="clearance"/>
+    /// if a lane is immediately available; otherwise enqueues the aircraft and
+    /// returns false. The Airfield calls back via
+    /// <see cref="AirUnitController.GrantTakeoffClearance"/> once a lane frees.
     /// </summary>
+    public bool RequestTakeoffClearance(AirUnitController jet, out TakeoffClearance clearance)
+    {
+        clearance = null;
+        if (jet == null) return false;
+
+        // Already queued or active — no double-counting.
+        if (activeJetA == jet || activeJetB == jet) return false;
+        foreach (AirUnitController queued in takeoffQueue)
+            if (queued == jet) return false;
+
+        // A landing is using the runway — defer the takeoff.
+        if (landingUsesSharedRunway && activeLandingJet != null)
+        {
+            takeoffQueue.Enqueue(jet);
+            if (queueDebugLogs)
+                Debug.Log($"[Airfield] '{jet.name}' queued — runway busy with landing " +
+                          $"(queue depth {takeoffQueue.Count}).");
+            return false;
+        }
+
+        if (TryAssignLane(jet, out int lane))
+        {
+            clearance = BuildClearance(jet, lane);
+            BindLane(lane, jet);
+            nextClearanceTime = Time.time + takeoffSpacingSeconds;
+            if (queueDebugLogs)
+                Debug.Log($"[Airfield] Takeoff clearance granted to '{jet.name}' on lane " +
+                          $"{(lane == 0 ? "A" : "B")} (immediate).");
+            return true;
+        }
+
+        // No lane right now — queue the aircraft.
+        takeoffQueue.Enqueue(jet);
+        if (queueDebugLogs)
+            Debug.Log($"[Airfield] Aircraft '{jet.name}' queued for takeoff " +
+                      $"(queue depth {takeoffQueue.Count}).");
+        return false;
+    }
+
+    /// <summary>
+    /// Called by the aircraft once it has climbed out and is no longer using
+    /// the runway lane. Frees the lane and triggers the next clearance grant.
+    /// </summary>
+    public void ReleaseTakeoffSlot(AirUnitController jet)
+    {
+        if (jet == null) return;
+
+        // Detect which lane the jet was on BEFORE we null its slot so the
+        // log line correctly names the lane.
+        char laneName = '?';
+        if (activeJetA == jet)
+        {
+            activeJetA = null;
+            readyJetA  = false;   // any stale "ready" flag belonged to this jet
+            laneName   = 'A';
+        }
+        else if (activeJetB == jet)
+        {
+            activeJetB = null;
+            readyJetB  = false;
+            laneName   = 'B';
+        }
+
+        if (pendingLaneBJet == jet) pendingLaneBJet = null;
+
+        if (queueDebugLogs && laneName != '?')
+            Debug.Log($"[Airfield] Lane {laneName} released by '{jet.name}'.");
+    }
+
+    // ------------------------------------------------------------------ //
+    // Landing clearance — called by AirUnitController during return
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Aircraft entry point. Called when a returning jet reaches the airfield
+    /// approach point. Returns true and fills <paramref name="clearance"/>
+    /// (with landing waypoints + taxi-back route to the jet's home slot) when
+    /// the runway is clear; otherwise returns false and the aircraft should
+    /// enter <see cref="AirUnitController.FlightState.WaitingForLandingClearance"/>
+    /// to hold and retry.
+    /// </summary>
+    public bool RequestLandingClearance(AirUnitController jet, out LandingClearance clearance)
+    {
+        clearance = null;
+        if (jet == null) return false;
+
+        // Already cleared — return the same bundle so a re-request mid-approach
+        // doesn't lose progress.
+        if (activeLandingJet == jet)
+        {
+            clearance = BuildLandingClearance(jet);
+            return true;
+        }
+
+        // Another jet is on the runway for landing.
+        if (activeLandingJet != null)
+        {
+            if (runwayBusyDebugLogs)
+                Debug.Log("[Airfield] Runway busy — aircraft holding.");
+            return false;
+        }
+
+        // A takeoff jet is in pre-roll or roll — runway is committed for departure.
+        if (landingUsesSharedRunway && IsTakeoffPreRollOrRollActive())
+        {
+            if (runwayBusyDebugLogs)
+                Debug.Log("[Airfield] Runway busy — aircraft holding.");
+            return false;
+        }
+
+        activeLandingJet = jet;
+        clearance = BuildLandingClearance(jet);
+        Debug.Log("[Airfield] Landing clearance granted.");
+        return true;
+    }
+
+    /// <summary>
+    /// Called by the aircraft once it has touched down and is leaving the
+    /// runway for the taxi-back. Frees the shared runway lock so queued
+    /// takeoffs and other landings can proceed.
+    /// </summary>
+    public void ReleaseLandingRunway(AirUnitController jet)
+    {
+        if (activeLandingJet != jet) return;
+        activeLandingJet = null;
+        if (runwayBusyDebugLogs)
+            Debug.Log("[Airfield] Runway released after landing.");
+    }
+
+    /// <summary>True while a takeoff jet is taxiing onto, aligning at, or rolling on the runway.</summary>
+    private bool IsTakeoffPreRollOrRollActive()
+    {
+        return IsConflictingTakeoffState(activeJetA) || IsConflictingTakeoffState(activeJetB);
+    }
+
+    private static bool IsConflictingTakeoffState(AirUnitController jet)
+    {
+        if (jet == null) return false;
+        var s = jet.State;
+        return s == AirUnitController.FlightState.TaxiingToRunway
+            || s == AirUnitController.FlightState.AligningForTakeoff
+            || s == AirUnitController.FlightState.WaitingForBatchTakeoff
+            || s == AirUnitController.FlightState.TakeoffRoll;
+    }
+
+    private LandingClearance BuildLandingClearance(AirUnitController jet)
+    {
+        int slotIdx       = FindSlotIndexOf(jet);
+        Transform taxiPt  = (slotIdx >= 0 && taxiPoints != null && slotIdx < taxiPoints.Length)
+                            ? taxiPoints[slotIdx] : null;
+        Transform slot    = (slotIdx >= 0 && slots != null      && slotIdx < slots.Length)
+                            ? slots[slotIdx]      : null;
+
+        List<Transform> backRoute = new List<Transform>(3);
+        if (landingExitA != null) backRoute.Add(landingExitA);
+        if (taxiPt       != null) backRoute.Add(taxiPt);
+        if (slot         != null) backRoute.Add(slot);
+
+        return new LandingClearance
+        {
+            LandingApproach = landingApproachPoint,
+            LandingStart    = landingStartA,
+            LandingEnd      = landingEndA,
+            LandingExit     = landingExitA,
+            TaxiBackRoute   = backRoute.ToArray(),
+            Lane            = 0,
+        };
+    }
+
+    // ------------------------------------------------------------------ //
+    // Batch synchronization — called by AirUnitController when alignment ends
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Aircraft entry point. Called when the jet finishes
+    /// <see cref="AirUnitController.FlightState.AligningForTakeoff"/> and is
+    /// holding at the takeoff start. If the jet is part of a synchronized
+    /// launch group with a partner also in pre-roll, we hold; otherwise we
+    /// call <see cref="AirUnitController.BeginTakeoffRoll"/> immediately.
+    /// </summary>
+    public void NotifyReadyForTakeoffRoll(AirUnitController jet)
+    {
+        if (jet == null) return;
+
+        if (jet == activeJetA)
+        {
+            readyJetA     = true;
+            jetAReadyTime = Time.time;
+        }
+        else if (jet == activeJetB)
+        {
+            readyJetB     = true;
+            jetBReadyTime = Time.time;
+        }
+        else
+        {
+            // Unknown jet (shouldn't happen) — just roll, don't deadlock.
+            jet.BeginTakeoffRoll();
+            return;
+        }
+
+        TryReleaseBatch();
+    }
+
+    /// <summary>
+    /// Inspects which jets are ready / in pre-roll / in matching launch
+    /// groups, and releases either a solo aircraft or a synchronized pair.
+    /// </summary>
+    private void TryReleaseBatch()
+    {
+        bool aActive    = activeJetA != null;
+        bool bActive    = activeJetB != null;
+        bool aReady     = readyJetA && aActive;
+        bool bReady     = readyJetB && bActive;
+        bool aPreRoll   = aActive && IsInPreRoll(activeJetA);
+        bool bPreRoll   = bActive && IsInPreRoll(activeJetB);
+
+        if (!aReady && !bReady) return;
+
+        // Sync needed when both lanes hold jets that are still in pre-roll
+        // AND they share a non-zero LaunchGroupId (zero = solo command).
+        long groupA = aActive ? activeJetA.LaunchGroupId : 0L;
+        long groupB = bActive ? activeJetB.LaunchGroupId : 0L;
+        bool needSync = synchronizedGroupTakeoff
+                     && aPreRoll && bPreRoll
+                     && groupA != 0L && groupA == groupB;
+
+        if (needSync)
+        {
+            if (aReady && bReady)
+            {
+                Debug.Log("[Airfield] Batch ready — launching 2 aircraft together.");
+                ReleaseJetForRoll(activeJetA, 'A');
+                // Lane B either rolls immediately or after the configured spacing.
+                if (takeoffPairSpacingSeconds > 0f)
+                {
+                    pendingLaneBJet         = activeJetB;
+                    pendingLaneBReleaseTime = Time.time + takeoffPairSpacingSeconds;
+                }
+                else
+                {
+                    ReleaseJetForRoll(activeJetB, 'B');
+                }
+            }
+            else if (queueDebugLogs)
+            {
+                Debug.Log("[Airfield] Waiting for batch partner.");
+            }
+            return;
+        }
+
+        // Solo path — release whichever jet is ready (independent of the other lane).
+        if (aReady)
+        {
+            if (queueDebugLogs) Debug.Log("[Airfield] Solo aircraft — takeoff without waiting.");
+            ReleaseJetForRoll(activeJetA, 'A');
+        }
+        if (bReady)
+        {
+            if (queueDebugLogs) Debug.Log("[Airfield] Solo aircraft — takeoff without waiting.");
+            ReleaseJetForRoll(activeJetB, 'B');
+        }
+    }
+
+    /// <summary>True when the jet is in any taxi / align / hold pre-roll state.</summary>
+    private static bool IsInPreRoll(AirUnitController jet)
+    {
+        if (jet == null) return false;
+        var s = jet.State;
+        return s == AirUnitController.FlightState.WaitingForTakeoffClearance
+            || s == AirUnitController.FlightState.TaxiingToRunway
+            || s == AirUnitController.FlightState.AligningForTakeoff
+            || s == AirUnitController.FlightState.WaitingForBatchTakeoff;
+    }
+
+    /// <summary>Calls BeginTakeoffRoll on a lane jet and clears its ready flag.</summary>
+    private void ReleaseJetForRoll(AirUnitController jet, char lane)
+    {
+        if (jet == null) return;
+        jet.BeginTakeoffRoll();
+        if (lane == 'A') readyJetA = false;
+        else             readyJetB = false;
+    }
+
+    /// <summary>Drains the deferred Lane B release scheduled by <see cref="TryReleaseBatch"/>.</summary>
+    private void TickDeferredLaneBRelease()
+    {
+        if (pendingLaneBJet == null) return;
+        if (Time.time < pendingLaneBReleaseTime) return;
+
+        // Only release if the jet is still parked at the hold and on Lane B.
+        if (pendingLaneBJet == activeJetB && IsInPreRoll(pendingLaneBJet))
+            ReleaseJetForRoll(pendingLaneBJet, 'B');
+
+        pendingLaneBJet = null;
+    }
+
+    /// <summary>
+    /// Safety net: if a jet has been ready for longer than
+    /// <see cref="batchWaitTimeout"/> and the partner still isn't ready, the
+    /// queue would deadlock — release the ready jet solo.
+    /// </summary>
+    private void CheckBatchTimeout()
+    {
+        if (!synchronizedGroupTakeoff || batchWaitTimeout <= 0f) return;
+
+        if (readyJetA && !readyJetB && activeJetA != null &&
+            Time.time - jetAReadyTime > batchWaitTimeout)
+        {
+            Debug.LogWarning("[Airfield] Batch partner missing/late — launching solo.");
+            ReleaseJetForRoll(activeJetA, 'A');
+        }
+
+        if (readyJetB && !readyJetA && activeJetB != null &&
+            Time.time - jetBReadyTime > batchWaitTimeout)
+        {
+            Debug.LogWarning("[Airfield] Batch partner missing/late — launching solo.");
+            ReleaseJetForRoll(activeJetB, 'B');
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    // Queue internals
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Pops the next jet off the queue if the spacing timer has elapsed and a
+    /// lane is available. Skips Unity-destroyed entries automatically.
+    /// </summary>
+    private void TryGrantFromQueue()
+    {
+        if (takeoffQueue.Count == 0) return;
+        if (Time.time < nextClearanceTime) return;
+
+        // Block takeoffs while a landing owns the runway.
+        if (landingUsesSharedRunway && activeLandingJet != null) return;
+
+        // Skip dead queue entries (jet destroyed while waiting).
+        while (takeoffQueue.Count > 0 && takeoffQueue.Peek() == null)
+            takeoffQueue.Dequeue();
+
+        if (takeoffQueue.Count == 0) return;
+
+        AirUnitController next = takeoffQueue.Peek();
+        if (!TryAssignLane(next, out int lane)) return; // both lanes busy
+
+        takeoffQueue.Dequeue();
+        TakeoffClearance c = BuildClearance(next, lane);
+        BindLane(lane, next);
+        nextClearanceTime = Time.time + takeoffSpacingSeconds;
+
+        if (queueDebugLogs)
+            Debug.Log($"[Airfield] Takeoff clearance granted to '{next.name}' on lane " +
+                      $"{(lane == 0 ? "A" : "B")} (from queue, depth now {takeoffQueue.Count}).");
+
+        next.GrantTakeoffClearance(c);
+    }
+
+    /// <summary>
+    /// Picks a lane for <paramref name="jet"/>, preferring the lane that
+    /// matches its slot parity (even → A, odd → B) so paired slots taxi out
+    /// side-by-side. Falls back to the other lane if the preferred one is
+    /// busy. Returns false when both lanes are occupied.
+    /// </summary>
+    private bool TryAssignLane(AirUnitController jet, out int lane)
+    {
+        int slotIdx = FindSlotIndexOf(jet);
+        int preferred = (slotIdx >= 0 && slotIdx % 2 == 1) ? 1 : 0;
+
+        if (preferred == 0)
+        {
+            if (activeJetA == null) { lane = 0; return true; }
+            if (activeJetB == null) { lane = 1; return true; }
+        }
+        else
+        {
+            if (activeJetB == null) { lane = 1; return true; }
+            if (activeJetA == null) { lane = 0; return true; }
+        }
+
+        lane = -1;
+        return false;
+    }
+
+    private void BindLane(int lane, AirUnitController jet)
+    {
+        if (lane == 0) activeJetA = jet;
+        else           activeJetB = jet;
+    }
+
+    /// <summary>Returns the slot index for <paramref name="jet"/>, or -1 if not parked here.</summary>
+    private int FindSlotIndexOf(AirUnitController jet)
+    {
+        if (jet == null) return -1;
+        Transform jetHome = jet.HomeSlot;
+        if (jetHome == null) return -1;
+        for (int i = 0; i < slots.Length; i++)
+            if (slots[i] == jetHome) return i;
+        return -1;
+    }
+
+    /// <summary>
+    /// Builds the full taxi route for a jet on the given lane:
+    ///   per-slot pull-out → lane corridor waypoints → runway queue → takeoff start.
+    /// Skips any null markers so a partially-configured Airfield still
+    /// produces a (shorter) usable route.
+    /// </summary>
+    private TakeoffClearance BuildClearance(AirUnitController jet, int lane)
+    {
+        int slotIdx = FindSlotIndexOf(jet);
+
+        Transform[]  laneCorridor = lane == 0 ? laneATaxiPoints   : laneBTaxiPoints;
+        Transform    queue        = lane == 0 ? runwayQueuePointA : runwayQueuePointB;
+        Transform    start        = lane == 0 ? takeoffStartA     : takeoffStartB;
+        Transform    end          = lane == 0 ? takeoffEndA       : takeoffEndB;
+
+        List<Transform> route = new List<Transform>(8);
+
+        // 1. Personal pull-out from the parking slot.
+        if (slotIdx >= 0 && taxiPoints != null && slotIdx < taxiPoints.Length && taxiPoints[slotIdx] != null)
+            route.Add(taxiPoints[slotIdx]);
+
+        // 2. Shared lane corridor — keeps Lane A jets clear of Lane B jets.
+        if (laneCorridor != null)
+            foreach (Transform wp in laneCorridor)
+                if (wp != null) route.Add(wp);
+
+        // 3. Runway hold-short point.
+        if (queue != null) route.Add(queue);
+
+        // 4. Final waypoint — takeoff start. The aircraft transitions to
+        //    AligningForTakeoff once it arrives here.
+        if (start != null) route.Add(start);
+
+        return new TakeoffClearance
+        {
+            TaxiRoute    = route.ToArray(),
+            TakeoffStart = start,
+            TakeoffEnd   = end,
+            Lane         = lane,
+        };
+    }
+
+    // ------------------------------------------------------------------ //
+    // Slot bookkeeping
+    // ------------------------------------------------------------------ //
+
     private int FindFreeSlotIndex()
     {
         for (int i = 0; i < parked.Length; i++)
         {
-            if (slots[i] == null) continue;          // unassigned slot Transform — skip
-            if (parked[i] == null) return i;          // Unity-null aircraft or never-assigned
+            if (slots[i] == null) continue;
+            if (parked[i] == null) return i;
         }
         return -1;
     }
@@ -192,14 +816,55 @@ public class Airfield : MonoBehaviour
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
-        if (slots == null) return;
-        Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.6f);
-        for (int i = 0; i < slots.Length; i++)
+        // Slot pads
+        if (slots != null)
         {
-            if (slots[i] == null) continue;
-            Gizmos.DrawWireCube(slots[i].position, new Vector3(2f, 0.1f, 2f));
-            UnityEditor.Handles.Label(slots[i].position + Vector3.up * 0.5f, $"Slot {i}");
+            Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.6f);
+            for (int i = 0; i < slots.Length; i++)
+            {
+                if (slots[i] == null) continue;
+                Gizmos.DrawWireCube(slots[i].position, new Vector3(2f, 0.1f, 2f));
+                UnityEditor.Handles.Label(slots[i].position + Vector3.up * 0.5f, $"Slot {i}");
+            }
         }
+
+        // Taxi points
+        if (taxiPoints != null)
+        {
+            Gizmos.color = new Color(1f, 0.85f, 0.2f, 0.6f);
+            for (int i = 0; i < taxiPoints.Length; i++)
+            {
+                if (taxiPoints[i] == null) continue;
+                Gizmos.DrawWireSphere(taxiPoints[i].position, 0.4f);
+                UnityEditor.Handles.Label(taxiPoints[i].position + Vector3.up * 0.4f, $"Taxi {i}");
+            }
+        }
+
+        // Lane endpoints
+        DrawRunwayPoint(runwayQueuePointA, "Queue A", new Color(1f, 0.4f, 0.1f));
+        DrawRunwayPoint(takeoffStartA,     "Start A", new Color(0.2f, 1f, 0.2f));
+        DrawRunwayPoint(takeoffEndA,       "End A",   new Color(1f, 0.2f, 0.2f));
+        DrawRunwayPoint(runwayQueuePointB, "Queue B", new Color(1f, 0.4f, 0.1f));
+        DrawRunwayPoint(takeoffStartB,     "Start B", new Color(0.2f, 1f, 0.2f));
+        DrawRunwayPoint(takeoffEndB,       "End B",   new Color(1f, 0.2f, 0.2f));
+        DrawRunwayPoint(landingApproachPoint, "Landing", new Color(0.5f, 0.6f, 1f));
+
+        // Lane corridor waypoints — separate colour per lane so the two
+        // paths are obvious in the Scene view.
+        if (laneATaxiPoints != null)
+            for (int i = 0; i < laneATaxiPoints.Length; i++)
+                DrawRunwayPoint(laneATaxiPoints[i], $"Lane A · {i}", new Color(0.3f, 0.8f, 1f));
+        if (laneBTaxiPoints != null)
+            for (int i = 0; i < laneBTaxiPoints.Length; i++)
+                DrawRunwayPoint(laneBTaxiPoints[i], $"Lane B · {i}", new Color(1f, 0.7f, 0.3f));
+    }
+
+    private void DrawRunwayPoint(Transform t, string label, Color color)
+    {
+        if (t == null) return;
+        Gizmos.color = color;
+        Gizmos.DrawWireSphere(t.position, 0.6f);
+        UnityEditor.Handles.Label(t.position + Vector3.up * 0.6f, label);
     }
 #endif
 }
