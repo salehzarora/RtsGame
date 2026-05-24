@@ -45,8 +45,9 @@ public class UnitSelector : MonoBehaviour
 
     // ------------------------------------------------------------------ //
 
-    private readonly List<SelectableUnit> selectedUnits = new List<SelectableUnit>();
-    private SelectableBuilding selectedBuilding;
+    private readonly List<SelectableUnit>     selectedUnits     = new List<SelectableUnit>();
+    private readonly List<SelectableAircraft> selectedAircraft  = new List<SelectableAircraft>();
+    private SelectableBuilding                selectedBuilding;
     private Camera mainCam;
     private Vector2 dragStartPos;
     private bool isDragging;
@@ -115,13 +116,14 @@ public class UnitSelector : MonoBehaviour
         bool wPressed = Input.GetKeyDown(KeyCode.W);
         bool hPressed = Input.GetKeyDown(KeyCode.H);
         bool tPressed = Input.GetKeyDown(KeyCode.T);
-        if (!sPressed && !wPressed && !hPressed && !tPressed) return;
+        bool jPressed = Input.GetKeyDown(KeyCode.J);
+        if (!sPressed && !wPressed && !hPressed && !tPressed && !jPressed) return;
 
         if (selectedBuilding == null)
         {
-            string pressed = sPressed ? "S" : wPressed ? "W" : hPressed ? "H" : "T";
+            string pressed = sPressed ? "S" : wPressed ? "W" : hPressed ? "H" : tPressed ? "T" : "J";
             Debug.LogWarning($"[UnitSelector] Pressed {pressed} but no building is selected. " +
-                             "Click a Barracks (S), CommandCenter (W), or VehicleFactory (H/T) first.");
+                             "Click a Barracks (S), CommandCenter (W), VehicleFactory (H/T), or Airfield (J) first.");
             return;
         }
 
@@ -151,6 +153,13 @@ public class UnitSelector : MonoBehaviour
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
             if (vp != null && vp.CanProduceArtilleryTank) vp.ProduceArtilleryTank();
+        }
+
+        // J → Strike Jet (Airfield only). Silent no-op otherwise.
+        if (jPressed)
+        {
+            Airfield af = selectedBuilding.GetComponent<Airfield>();
+            if (af != null && af.CanProduceStrikeJet) af.ProduceStrikeJet();
         }
     }
 
@@ -254,7 +263,7 @@ public class UnitSelector : MonoBehaviour
     {
         if (!Input.GetMouseButtonDown(1)) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-        if (selectedUnits.Count == 0) return;
+        if (selectedUnits.Count == 0 && selectedAircraft.Count == 0) return;
 
         Ray ray = mainCam.ScreenPointToRay(Input.mousePosition);
 
@@ -266,8 +275,13 @@ public class UnitSelector : MonoBehaviour
 
             if (targetHealth != null && targetHealth.team == Health.Team.Enemy)
             {
+                // Ground units use UnitCombat (chase + shoot on NavMesh).
                 foreach (SelectableUnit unit in selectedUnits)
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
+
+                // Aircraft use AirUnitController (takeoff + fly + missile + return).
+                foreach (SelectableAircraft jet in selectedAircraft)
+                    jet.GetComponent<AirUnitController>()?.AttackTarget(targetHealth);
 
                 if (attackMarker != null)
                 {
@@ -338,6 +352,18 @@ public class UnitSelector : MonoBehaviour
                 AddToSelection(unit);
                 return;
             }
+
+            // Aircraft live on the Unit layer too but use SelectableAircraft.
+            SelectableAircraft aircraft = unitHit.collider.GetComponent<SelectableAircraft>()
+                ?? unitHit.collider.GetComponentInParent<SelectableAircraft>();
+
+            if (aircraft != null)
+            {
+                DeselectBuilding();
+                DeselectAll();
+                AddAircraftToSelection(aircraft);
+                return;
+            }
         }
 
         // --- Priority 2: building ---------------------------------------
@@ -370,10 +396,12 @@ public class UnitSelector : MonoBehaviour
         UnitProducer           soldierProd = building.GetComponent<UnitProducer>();
         CommandCenterProducer  workerProd  = building.GetComponent<CommandCenterProducer>();
         VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
-        bool canSoldier = soldierProd != null && soldierProd.CanProduceSoldier;
-        bool canWorker  = workerProd  != null && workerProd.CanProduceWorker;
-        bool canHumvee  = vehicleProd != null && vehicleProd.CanProduceHumvee;
-        bool canTank    = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        Airfield               airfield    = building.GetComponent<Airfield>();
+        bool canSoldier   = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool canWorker    = workerProd  != null && workerProd.CanProduceWorker;
+        bool canHumvee    = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool canTank      = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool canStrikeJet = airfield    != null && airfield.CanProduceStrikeJet;
 
         string hint;
         if (canSoldier)                     hint = " (press S or click the Soldier button).";
@@ -381,14 +409,15 @@ public class UnitSelector : MonoBehaviour
         else if (canHumvee && canTank)      hint = " (press H/T or click the Humvee/Artillery Tank button).";
         else if (canHumvee)                 hint = " (press H or click the Humvee button).";
         else if (canTank)                   hint = " (press T or click the Artillery Tank button).";
+        else if (canStrikeJet)              hint = $" (press J or click the Strike Jet button; free slots: {airfield.FreeSlotCount}/{Airfield.MaxSlots}).";
         else                                hint = " (no production options attached).";
 
         Debug.Log($"[UnitSelector] Building selected: '{building.name}'{hint}");
 
         if (hud != null)
         {
-            if (canSoldier || canWorker || canHumvee || canTank) hud.ShowProductionFor(building);
-            else                                                  hud.HideProductionPanel();
+            if (canSoldier || canWorker || canHumvee || canTank || canStrikeJet) hud.ShowProductionFor(building);
+            else                                                                  hud.HideProductionPanel();
         }
     }
 
@@ -407,16 +436,24 @@ public class UnitSelector : MonoBehaviour
         DeselectBuilding();
         DeselectAll();
 
-        // Unity 6 API — no allocation warning like FindObjectsOfType
+        // Ground units
         SelectableUnit[] allUnits =
             FindObjectsByType<SelectableUnit>(FindObjectsSortMode.None);
-
         foreach (SelectableUnit unit in allUnits)
         {
-            // WorldToScreenPoint returns z < 0 when behind the camera
             Vector3 screenPos = mainCam.WorldToScreenPoint(unit.transform.position);
             if (screenPos.z > 0f && screenRect.Contains(screenPos))
                 AddToSelection(unit);
+        }
+
+        // Aircraft — same drag-box rules so the player can multi-select jets.
+        SelectableAircraft[] allAircraft =
+            FindObjectsByType<SelectableAircraft>(FindObjectsSortMode.None);
+        foreach (SelectableAircraft jet in allAircraft)
+        {
+            Vector3 screenPos = mainCam.WorldToScreenPoint(jet.transform.position);
+            if (screenPos.z > 0f && screenRect.Contains(screenPos))
+                AddAircraftToSelection(jet);
         }
     }
 
@@ -427,11 +464,22 @@ public class UnitSelector : MonoBehaviour
         unit.Select();
     }
 
+    private void AddAircraftToSelection(SelectableAircraft aircraft)
+    {
+        if (selectedAircraft.Contains(aircraft)) return;
+        selectedAircraft.Add(aircraft);
+        aircraft.Select();
+    }
+
     private void DeselectAll()
     {
         foreach (SelectableUnit unit in selectedUnits)
             unit.Deselect();
         selectedUnits.Clear();
+
+        foreach (SelectableAircraft jet in selectedAircraft)
+            jet.Deselect();
+        selectedAircraft.Clear();
 
         // Clearing the selection cancels the player's intent to attack —
         // hide the marker even though the units already in flight will

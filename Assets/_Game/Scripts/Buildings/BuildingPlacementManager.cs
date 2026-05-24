@@ -44,6 +44,11 @@ public class BuildingPlacementManager : MonoBehaviour
     [Tooltip("Resource cost for placing a VehicleFactory")]
     public int vehicleFactoryCost = 300;
 
+    [Tooltip("The Airfield prefab — Building + SelectableBuilding + PowerConsumer + Airfield. Hotkey: F")]
+    public GameObject airfieldPrefab;
+    [Tooltip("Resource cost for placing an Airfield")]
+    public int airfieldCost = 600;
+
     [Tooltip("Y offset so the building sits on the ground surface (half the building's world height)")]
     public float placementHeightOffset = 0.75f;
 
@@ -124,6 +129,8 @@ public class BuildingPlacementManager : MonoBehaviour
                 TryEnterPlacementMode(powerPlantPrefab,     powerPlantCost,     "PowerPlant");
             else if (Input.GetKeyDown(KeyCode.V))
                 TryEnterPlacementMode(vehicleFactoryPrefab, vehicleFactoryCost, "VehicleFactory");
+            else if (Input.GetKeyDown(KeyCode.F))
+                TryEnterPlacementMode(airfieldPrefab,       airfieldCost,       "Airfield");
             return;
         }
 
@@ -168,6 +175,13 @@ public class BuildingPlacementManager : MonoBehaviour
     {
         if (!IsPlacing)
             TryEnterPlacementMode(vehicleFactoryPrefab, vehicleFactoryCost, "VehicleFactory");
+    }
+
+    /// <summary>Starts Airfield ghost placement. Safe to call from UI buttons.</summary>
+    public void StartAirfieldPlacement()
+    {
+        if (!IsPlacing)
+            TryEnterPlacementMode(airfieldPrefab, airfieldCost, "Airfield");
     }
 
     // ------------------------------------------------------------------ //

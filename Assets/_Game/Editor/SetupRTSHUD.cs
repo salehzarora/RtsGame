@@ -38,10 +38,12 @@ public static class SetupRTSHUD
     private static readonly Color BtnBarracksColor      = new Color(0.18f, 0.45f, 0.82f, 1.00f); // steel blue
     private static readonly Color BtnPowerColor         = new Color(0.82f, 0.60f, 0.08f, 1.00f); // amber
     private static readonly Color BtnVehicleFactoryColor = new Color(0.40f, 0.40f, 0.45f, 1.00f); // gunmetal
+    private static readonly Color BtnAirfieldColor      = new Color(0.32f, 0.50f, 0.70f, 1.00f); // sky-blue grey
     private static readonly Color BtnSoldierColor       = new Color(0.30f, 0.65f, 0.30f, 1.00f); // green
     private static readonly Color BtnWorkerColor        = new Color(0.78f, 0.50f, 0.18f, 1.00f); // tan/orange
     private static readonly Color BtnHumveeColor        = new Color(0.28f, 0.36f, 0.22f, 1.00f); // olive drab
     private static readonly Color BtnTankColor          = new Color(0.18f, 0.28f, 0.16f, 1.00f); // dark olive
+    private static readonly Color BtnStrikeJetColor     = new Color(0.45f, 0.55f, 0.65f, 1.00f); // air-force blue
 
     // ------------------------------------------------------------------ //
     // Entry point
@@ -99,31 +101,38 @@ public static class SetupRTSHUD
         buildPanel.anchorMax        = new Vector2(1f, 0f);
         buildPanel.pivot            = new Vector2(1f, 0f);
         buildPanel.anchoredPosition = new Vector2(-25f,  25f);
-        buildPanel.sizeDelta        = new Vector2(250f, 210f);
+        buildPanel.sizeDelta        = new Vector2(250f, 270f);
         buildPanel.localScale       = Vector3.one;
         buildPanel.gameObject.SetActive(true);
-        Debug.Log("[SetupRTSHUD] ✓ BuildPanel created (250x210, bottom-right, offset -25,25)");
+        Debug.Log("[SetupRTSHUD] ✓ BuildPanel created (250x270, bottom-right, offset -25,25)");
 
-        // Three buttons stacked inside the BuildPanel (50px tall, 10px gap):
-        //   BtnBarracks       y = +60
-        //   BtnPowerPlant     y =   0
-        //   BtnVehicleFactory y = -60
+        // Four buttons stacked inside the BuildPanel (50px tall, 10px gap):
+        //   BtnBarracks       y = +90
+        //   BtnPowerPlant     y = +30
+        //   BtnVehicleFactory y = -30
+        //   BtnAirfield       y = -90
         Button btnBarracks = CreateButton(
             buildPanel, "BtnBarracks", "Barracks",
             BtnBarracksColor,
-            anchoredPos: new Vector2(0f,  60f),
+            anchoredPos: new Vector2(0f,  90f),
             size:        new Vector2(220f, 50f));
 
         Button btnPowerPlant = CreateButton(
             buildPanel, "BtnPowerPlant", "Power Plant",
             BtnPowerColor,
-            anchoredPos: new Vector2(0f,   0f),
+            anchoredPos: new Vector2(0f,  30f),
             size:        new Vector2(220f, 50f));
 
         Button btnVehicleFactory = CreateButton(
             buildPanel, "BtnVehicleFactory", "Vehicle Factory",
             BtnVehicleFactoryColor,
-            anchoredPos: new Vector2(0f, -60f),
+            anchoredPos: new Vector2(0f, -30f),
+            size:        new Vector2(220f, 50f));
+
+        Button btnAirfield = CreateButton(
+            buildPanel, "BtnAirfield", "Airfield",
+            BtnAirfieldColor,
+            anchoredPos: new Vector2(0f, -90f),
             size:        new Vector2(220f, 50f));
 
         // ── 4b. ProductionPanel (bottom-left) ─────────────────────────── //
@@ -132,37 +141,43 @@ public static class SetupRTSHUD
         productionPanel.anchorMax        = new Vector2(0f, 0f);
         productionPanel.pivot            = new Vector2(0f, 0f);
         productionPanel.anchoredPosition = new Vector2( 25f, 25f);
-        productionPanel.sizeDelta        = new Vector2(250f, 270f);
+        productionPanel.sizeDelta        = new Vector2(250f, 330f);
         productionPanel.localScale       = Vector3.one;
         productionPanel.gameObject.SetActive(false); // hidden until a producer is selected
-        Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x270, bottom-left, hidden by default)");
+        Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x330, bottom-left, hidden by default)");
 
-        // Four buttons stacked inside the ProductionPanel (50px tall, 10px gap).
+        // Five buttons stacked inside the ProductionPanel (50px tall, 10px gap).
         // RTSHUD.ShowProductionFor toggles each one based on the selected
         // building's producer capabilities — VehicleFactory shows Humvee + Tank
-        // together, Barracks/CC show only their own button.
+        // together, Airfield shows only Strike Jet, etc.
         Button btnSoldier = CreateButton(
             productionPanel, "BtnSoldier", "Soldier - 50",
             BtnSoldierColor,
-            anchoredPos: new Vector2(0f,  90f),
+            anchoredPos: new Vector2(0f, 120f),
             size:        new Vector2(220f, 50f));
 
         Button btnWorker = CreateButton(
             productionPanel, "BtnWorker", "Worker - 75",
             BtnWorkerColor,
-            anchoredPos: new Vector2(0f,  30f),
+            anchoredPos: new Vector2(0f,  60f),
             size:        new Vector2(220f, 50f));
 
         Button btnHumvee = CreateButton(
             productionPanel, "BtnHumvee", "Humvee - 150",
             BtnHumveeColor,
-            anchoredPos: new Vector2(0f, -30f),
+            anchoredPos: new Vector2(0f,   0f),
             size:        new Vector2(220f, 50f));
 
         Button btnTank = CreateButton(
             productionPanel, "BtnArtilleryTank", "Artillery Tank - 350",
             BtnTankColor,
-            anchoredPos: new Vector2(0f, -90f),
+            anchoredPos: new Vector2(0f, -60f),
+            size:        new Vector2(220f, 50f));
+
+        Button btnStrikeJet = CreateButton(
+            productionPanel, "BtnStrikeJet", "Strike Jet - 450",
+            BtnStrikeJetColor,
+            anchoredPos: new Vector2(0f,-120f),
             size:        new Vector2(220f, 50f));
 
         // ── 5. GameManager + RTSHUD ───────────────────────────────────── //
@@ -189,17 +204,22 @@ public static class SetupRTSHUD
         hud.humveeButtonLabel   = btnHumvee.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.tankButton          = btnTank.gameObject;
         hud.tankButtonLabel     = btnTank.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.strikeJetButton     = btnStrikeJet.gameObject;
+        hud.strikeJetButtonLabel = btnStrikeJet.GetComponentInChildren<TextMeshProUGUI>(true);
         EditorUtility.SetDirty(hud);
 
         // Wire buttons to RTSHUD callback methods
         WireButton(btnBarracks,       hud, nameof(RTSHUD.OnClickBuildBarracks));
         WireButton(btnPowerPlant,     hud, nameof(RTSHUD.OnClickBuildPowerPlant));
         WireButton(btnVehicleFactory, hud, nameof(RTSHUD.OnClickBuildVehicleFactory));
+        WireButton(btnAirfield,       hud, nameof(RTSHUD.OnClickBuildAirfield));
         WireButton(btnSoldier,        hud, nameof(RTSHUD.OnClickProduceSoldier));
         WireButton(btnWorker,         hud, nameof(RTSHUD.OnClickProduceWorker));
         WireButton(btnHumvee,         hud, nameof(RTSHUD.OnClickProduceHumvee));
         WireButton(btnTank,           hud, nameof(RTSHUD.OnClickProduceArtilleryTank));
-        Debug.Log("[SetupRTSHUD] ✓ Buttons wired — Build: Barracks+PowerPlant+VehicleFactory, Production: Soldier+Worker+Humvee+ArtilleryTank");
+        WireButton(btnStrikeJet,      hud, nameof(RTSHUD.OnClickProduceStrikeJet));
+        Debug.Log("[SetupRTSHUD] ✓ Buttons wired — Build: Barracks+PowerPlant+VehicleFactory+Airfield, " +
+                  "Production: Soldier+Worker+Humvee+ArtilleryTank+StrikeJet");
 
         // Ensure the HUD renders on top of any other scene UI
         canvas.transform.SetAsLastSibling();

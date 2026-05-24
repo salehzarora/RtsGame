@@ -78,6 +78,14 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI tankButtonLabel;
 
+    [Tooltip("Strike Jet button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected Airfield.CanProduceStrikeJet).")]
+    public GameObject strikeJetButton;
+
+    [Tooltip("The TMP label inside the Strike Jet button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI strikeJetButtonLabel;
+
     // ------------------------------------------------------------------ //
     // Private references — found at runtime
     // ------------------------------------------------------------------ //
@@ -91,6 +99,7 @@ public class RTSHUD : MonoBehaviour
     private UnitProducer           currentSoldierProducer;
     private CommandCenterProducer  currentWorkerProducer;
     private VehicleFactoryProducer currentVehicleProducer;
+    private Airfield               currentAirfield;
 
     // ------------------------------------------------------------------ //
 
@@ -173,6 +182,13 @@ public class RTSHUD : MonoBehaviour
         placementManager.StartVehicleFactoryPlacement();
     }
 
+    /// <summary>Called by the Airfield button. Starts Airfield placement mode.</summary>
+    public void OnClickBuildAirfield()
+    {
+        if (placementManager == null) return;
+        placementManager.StartAirfieldPlacement();
+    }
+
     // ------------------------------------------------------------------ //
     // Production panel — driven by UnitSelector when buildings are selected
     // ------------------------------------------------------------------ //
@@ -194,13 +210,15 @@ public class RTSHUD : MonoBehaviour
         UnitProducer           soldierProd = building.GetComponent<UnitProducer>();
         CommandCenterProducer  workerProd  = building.GetComponent<CommandCenterProducer>();
         VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
+        Airfield               airfield    = building.GetComponent<Airfield>();
 
-        bool showSoldier = soldierProd != null && soldierProd.CanProduceSoldier;
-        bool showWorker  = workerProd  != null && workerProd.CanProduceWorker;
-        bool showHumvee  = vehicleProd != null && vehicleProd.CanProduceHumvee;
-        bool showTank    = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool showSoldier   = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool showWorker    = workerProd  != null && workerProd.CanProduceWorker;
+        bool showHumvee    = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool showTank      = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool showStrikeJet = airfield    != null && airfield.CanProduceStrikeJet;
 
-        if (!showSoldier && !showWorker && !showHumvee && !showTank)
+        if (!showSoldier && !showWorker && !showHumvee && !showTank && !showStrikeJet)
         {
             HideProductionPanel();
             return;
@@ -210,6 +228,7 @@ public class RTSHUD : MonoBehaviour
         currentWorkerProducer  = showWorker               ? workerProd  : null;
         // Vehicle producer is bound when either of its outputs is available.
         currentVehicleProducer = (showHumvee || showTank) ? vehicleProd : null;
+        currentAirfield        = showStrikeJet            ? airfield    : null;
 
         if (productionPanel != null)
             productionPanel.SetActive(true);
@@ -241,6 +260,13 @@ public class RTSHUD : MonoBehaviour
 
         if (showTank && tankButtonLabel != null)
             tankButtonLabel.text = $"Artillery Tank - {vehicleProd.artilleryTankCost}";
+
+        // --- Strike Jet button ----------------------------------------- //
+        if (strikeJetButton != null)
+            strikeJetButton.SetActive(showStrikeJet);
+
+        if (showStrikeJet && strikeJetButtonLabel != null)
+            strikeJetButtonLabel.text = $"Strike Jet - {airfield.strikeJetCost}";
     }
 
     /// <summary>Hides the production panel and forgets the bound producers.</summary>
@@ -249,6 +275,7 @@ public class RTSHUD : MonoBehaviour
         currentSoldierProducer = null;
         currentWorkerProducer  = null;
         currentVehicleProducer = null;
+        currentAirfield        = null;
 
         if (productionPanel != null)
             productionPanel.SetActive(false);
@@ -304,5 +331,18 @@ public class RTSHUD : MonoBehaviour
         }
 
         currentVehicleProducer.ProduceArtilleryTank();
+    }
+
+    /// <summary>Called by the Strike Jet button. Produces from the bound Airfield.</summary>
+    public void OnClickProduceStrikeJet()
+    {
+        if (currentAirfield == null)
+        {
+            Debug.LogWarning("[RTSHUD] Strike Jet button clicked but no Airfield is selected. " +
+                             "Select an Airfield first.");
+            return;
+        }
+
+        currentAirfield.ProduceStrikeJet();
     }
 }

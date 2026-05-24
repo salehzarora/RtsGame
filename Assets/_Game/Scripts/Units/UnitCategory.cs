@@ -7,7 +7,8 @@ using UnityEngine;
 public enum DamageType
 {
     Bullet,   // Soldier rifle / Humvee machine gun — strong vs infantry
-    Cannon    // Artillery Tank cannon shell — strong vs vehicles and buildings
+    Cannon,   // Artillery Tank cannon shell — strong vs vehicles and buildings
+    Missile   // Strike Jet air-to-ground missile — strong vs vehicles and buildings, weak vs infantry
 }
 
 /// <summary>
@@ -33,7 +34,8 @@ public class UnitCategory : MonoBehaviour
     {
         Infantry,
         Vehicle,
-        Building
+        Building,
+        Aircraft
     }
 
     [Header("Target Category")]
@@ -46,8 +48,9 @@ public class UnitCategory : MonoBehaviour
 /// Damage-type × target-category modifier table. Pure static helper — no state,
 /// no dependencies. Add a new <see cref="DamageType"/> by extending the switch.
 ///
-///   Bullet vs (Infantry, Vehicle, Building) = 1.00 / 0.35 / 0.25
-///   Cannon vs (Infantry, Vehicle, Building) = 0.25 / 1.00 / 1.20
+///   Bullet vs (Infantry, Vehicle, Building, Aircraft) = 1.00 / 0.35 / 0.25 / 0.20
+///   Cannon vs (Infantry, Vehicle, Building, Aircraft) = 0.25 / 1.00 / 1.20 / 0.10
+///   Missile vs (Infantry, Vehicle, Building, Aircraft) = 0.80 / 1.00 / 1.20 / 1.00
 /// </summary>
 public static class DamageRules
 {
@@ -61,6 +64,7 @@ public static class DamageRules
                     case UnitCategory.Category.Infantry: return 1.00f;
                     case UnitCategory.Category.Vehicle:  return 0.35f;
                     case UnitCategory.Category.Building: return 0.25f;
+                    case UnitCategory.Category.Aircraft: return 0.20f;
                 }
                 break;
 
@@ -70,6 +74,17 @@ public static class DamageRules
                     case UnitCategory.Category.Infantry: return 0.25f;
                     case UnitCategory.Category.Vehicle:  return 1.00f;
                     case UnitCategory.Category.Building: return 1.20f;
+                    case UnitCategory.Category.Aircraft: return 0.10f;
+                }
+                break;
+
+            case DamageType.Missile:
+                switch (cat)
+                {
+                    case UnitCategory.Category.Infantry: return 0.80f;
+                    case UnitCategory.Category.Vehicle:  return 1.00f;
+                    case UnitCategory.Category.Building: return 1.20f;
+                    case UnitCategory.Category.Aircraft: return 1.00f;
                 }
                 break;
         }
