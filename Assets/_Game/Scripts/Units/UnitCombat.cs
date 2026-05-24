@@ -46,11 +46,15 @@ public class UnitCombat : MonoBehaviour
     [Tooltip("World-unit radius within which this unit can hit its target")]
     public float attackRange = 8f;
 
-    [Tooltip("Damage dealt per hit")]
+    [Tooltip("Base damage dealt per hit, before the category modifier in DamageRules.")]
     public float attackDamage = 10f;
 
     [Tooltip("Seconds between hits")]
     public float attackCooldown = 0.4f;
+
+    [Tooltip("Damage type. Bullet → strong vs Infantry, weak vs Vehicle/Building. " +
+             "Cannon → strong vs Vehicle/Building, weak vs Infantry. See DamageRules.")]
+    public DamageType damageType = DamageType.Bullet;
 
     [Header("Ranged Setup")]
     [Tooltip("Marks this unit as ranged. Reserved for future logic (e.g. enemy AI " +
@@ -138,7 +142,7 @@ public class UnitCombat : MonoBehaviour
             attackTimer -= Time.deltaTime;
             if (attackTimer <= 0f)
             {
-                target.TakeDamage(attackDamage);
+                ApplyDamage();
                 ShowTracer(target.transform.position);
                 attackTimer = attackCooldown;
 
@@ -192,6 +196,24 @@ public class UnitCombat : MonoBehaviour
         Quaternion want = Quaternion.LookRotation(toTarget);
         transform.rotation = Quaternion.RotateTowards(
             transform.rotation, want, rotationSpeed * Time.deltaTime);
+    }
+
+    /// <summary>
+    /// Resolves the target's category, looks up the damage modifier for our
+    /// <see cref="damageType"/>, applies the scaled damage, and logs the hit.
+    /// Logs are one line per hit and gated by the attack cooldown, so they
+    /// stay readable even with several attackers in play.
+    /// </summary>
+    private void ApplyDamage()
+    {
+        UnitCategory.Category cat = DamageRules.Resolve(target.gameObject);
+        float modifier            = DamageRules.Modifier(damageType, cat);
+        float finalDamage         = attackDamage * modifier;
+
+        target.TakeDamage(finalDamage);
+
+        Debug.Log($"[Combat] {name} hit {target.name} ({cat}): " +
+                  $"base {attackDamage}, {damageType} ×{modifier:F2}, final {finalDamage:F1}");
     }
 
     // ------------------------------------------------------------------ //

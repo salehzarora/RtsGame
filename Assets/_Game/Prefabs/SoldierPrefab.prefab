@@ -808,6 +808,7 @@ GameObject:
   - component: {fileID: 3205472671008666460}
   - component: {fileID: 4009610691626825348}
   - component: {fileID: 8049170332246212668}
+  - component: {fileID: 5550201078226710090}
   m_Layer: 6
   m_Name: SoldierPrefab
   m_TagString: Untagged
@@ -989,13 +990,27 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::UnitCombat
   attackRange: 8
   attackDamage: 10
-  attackCooldown: 0.4
+  attackCooldown: 0.5
+  damageType: 0
   isRanged: 1
   firePoint: {fileID: 8671456757506517560}
   rotationSpeed: 540
   tracerColor: {r: 1, g: 0.85, b: 0.3, a: 1}
   tracerDuration: 0.06
   tracerWidth: 0.05
+--- !u!114 &5550201078226710090
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6067435896608983967}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bb09c17ea0367c14baa3bc3a19955301, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::UnitCategory
+  category: 0
 --- !u!1 &6132738001858159055
 GameObject:
   m_ObjectHideFlags: 0

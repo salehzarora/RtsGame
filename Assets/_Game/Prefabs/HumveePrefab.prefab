@@ -820,6 +820,7 @@ GameObject:
   - component: {fileID: 7816777508155997930}
   - component: {fileID: 4722083356781949466}
   - component: {fileID: 7109208735776049404}
+  - component: {fileID: 6623930013077882469}
   m_Layer: 6
   m_Name: HumveePrefab
   m_TagString: Untagged
@@ -951,12 +952,26 @@ MonoBehaviour:
   attackRange: 10
   attackDamage: 8
   attackCooldown: 0.25
+  damageType: 0
   isRanged: 1
   firePoint: {fileID: 8303333016830170607}
   rotationSpeed: 240
   tracerColor: {r: 1, g: 0.85, b: 0.3, a: 1}
   tracerDuration: 0.05
   tracerWidth: 0.045
+--- !u!114 &6623930013077882469
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8095608060732401746}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bb09c17ea0367c14baa3bc3a19955301, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::UnitCategory
+  category: 1
 --- !u!1 &8227739870178863476
 GameObject:
   m_ObjectHideFlags: 0

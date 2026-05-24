@@ -70,6 +70,14 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI humveeButtonLabel;
 
+    [Tooltip("Artillery Tank button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected VehicleFactoryProducer.CanProduceArtilleryTank).")]
+    public GameObject tankButton;
+
+    [Tooltip("The TMP label inside the Artillery Tank button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI tankButtonLabel;
+
     // ------------------------------------------------------------------ //
     // Private references — found at runtime
     // ------------------------------------------------------------------ //
@@ -190,16 +198,18 @@ public class RTSHUD : MonoBehaviour
         bool showSoldier = soldierProd != null && soldierProd.CanProduceSoldier;
         bool showWorker  = workerProd  != null && workerProd.CanProduceWorker;
         bool showHumvee  = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool showTank    = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
 
-        if (!showSoldier && !showWorker && !showHumvee)
+        if (!showSoldier && !showWorker && !showHumvee && !showTank)
         {
             HideProductionPanel();
             return;
         }
 
-        currentSoldierProducer = showSoldier ? soldierProd : null;
-        currentWorkerProducer  = showWorker  ? workerProd  : null;
-        currentVehicleProducer = showHumvee  ? vehicleProd : null;
+        currentSoldierProducer = showSoldier              ? soldierProd : null;
+        currentWorkerProducer  = showWorker               ? workerProd  : null;
+        // Vehicle producer is bound when either of its outputs is available.
+        currentVehicleProducer = (showHumvee || showTank) ? vehicleProd : null;
 
         if (productionPanel != null)
             productionPanel.SetActive(true);
@@ -224,6 +234,13 @@ public class RTSHUD : MonoBehaviour
 
         if (showHumvee && humveeButtonLabel != null)
             humveeButtonLabel.text = $"Humvee - {vehicleProd.humveeCost}";
+
+        // --- Artillery Tank button ------------------------------------- //
+        if (tankButton != null)
+            tankButton.SetActive(showTank);
+
+        if (showTank && tankButtonLabel != null)
+            tankButtonLabel.text = $"Artillery Tank - {vehicleProd.artilleryTankCost}";
     }
 
     /// <summary>Hides the production panel and forgets the bound producers.</summary>
@@ -274,5 +291,18 @@ public class RTSHUD : MonoBehaviour
         }
 
         currentVehicleProducer.ProduceHumvee();
+    }
+
+    /// <summary>Called by the Artillery Tank button. Produces from the bound VehicleFactoryProducer.</summary>
+    public void OnClickProduceArtilleryTank()
+    {
+        if (currentVehicleProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] Artillery Tank button clicked but no Vehicle producer is selected. " +
+                             "Select a VehicleFactory first.");
+            return;
+        }
+
+        currentVehicleProducer.ProduceArtilleryTank();
     }
 }

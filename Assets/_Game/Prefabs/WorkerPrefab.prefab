@@ -808,6 +808,7 @@ GameObject:
   - component: {fileID: 3205472671008666460}
   - component: {fileID: 4009610691626825348}
   - component: {fileID: 8697405200582759181}
+  - component: {fileID: 3323199303602187603}
   m_Layer: 6
   m_Name: WorkerPrefab
   m_TagString: Untagged
@@ -989,7 +990,22 @@ MonoBehaviour:
   gatherTime: 1.5
   arrivalThreshold: 1.5
   baseArrivalThreshold: 4
+  autoFindNewResource: 1
+  resourceSearchRadius: 40
   commandCenter: {fileID: 0}
+--- !u!114 &3323199303602187603
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6067435896608983967}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bb09c17ea0367c14baa3bc3a19955301, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::UnitCategory
+  category: 0
 --- !u!1 &6132738001858159055
 GameObject:
   m_ObjectHideFlags: 0

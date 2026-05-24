@@ -114,13 +114,14 @@ public class UnitSelector : MonoBehaviour
         bool sPressed = Input.GetKeyDown(KeyCode.S);
         bool wPressed = Input.GetKeyDown(KeyCode.W);
         bool hPressed = Input.GetKeyDown(KeyCode.H);
-        if (!sPressed && !wPressed && !hPressed) return;
+        bool tPressed = Input.GetKeyDown(KeyCode.T);
+        if (!sPressed && !wPressed && !hPressed && !tPressed) return;
 
         if (selectedBuilding == null)
         {
-            string pressed = sPressed ? "S" : wPressed ? "W" : "H";
+            string pressed = sPressed ? "S" : wPressed ? "W" : hPressed ? "H" : "T";
             Debug.LogWarning($"[UnitSelector] Pressed {pressed} but no building is selected. " +
-                             "Click a Barracks (S), CommandCenter (W), or VehicleFactory (H) first.");
+                             "Click a Barracks (S), CommandCenter (W), or VehicleFactory (H/T) first.");
             return;
         }
 
@@ -143,6 +144,13 @@ public class UnitSelector : MonoBehaviour
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
             if (vp != null && vp.CanProduceHumvee) vp.ProduceHumvee();
+        }
+
+        // T → Artillery Tank (VehicleFactory only). Silent no-op otherwise.
+        if (tPressed)
+        {
+            VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
+            if (vp != null && vp.CanProduceArtilleryTank) vp.ProduceArtilleryTank();
         }
     }
 
@@ -365,19 +373,22 @@ public class UnitSelector : MonoBehaviour
         bool canSoldier = soldierProd != null && soldierProd.CanProduceSoldier;
         bool canWorker  = workerProd  != null && workerProd.CanProduceWorker;
         bool canHumvee  = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool canTank    = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
 
         string hint;
-        if (canSoldier)      hint = " (press S or click the Soldier button).";
-        else if (canWorker)  hint = " (press W or click the Worker button).";
-        else if (canHumvee)  hint = " (press H or click the Humvee button).";
-        else                 hint = " (no production options attached).";
+        if (canSoldier)                     hint = " (press S or click the Soldier button).";
+        else if (canWorker)                 hint = " (press W or click the Worker button).";
+        else if (canHumvee && canTank)      hint = " (press H/T or click the Humvee/Artillery Tank button).";
+        else if (canHumvee)                 hint = " (press H or click the Humvee button).";
+        else if (canTank)                   hint = " (press T or click the Artillery Tank button).";
+        else                                hint = " (no production options attached).";
 
         Debug.Log($"[UnitSelector] Building selected: '{building.name}'{hint}");
 
         if (hud != null)
         {
-            if (canSoldier || canWorker || canHumvee) hud.ShowProductionFor(building);
-            else                                       hud.HideProductionPanel();
+            if (canSoldier || canWorker || canHumvee || canTank) hud.ShowProductionFor(building);
+            else                                                  hud.HideProductionPanel();
         }
     }
 

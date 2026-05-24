@@ -44,6 +44,16 @@ public class VehicleFactoryProducer : MonoBehaviour
     [Tooltip("Keyboard shortcut to produce a Humvee (UnitSelector hardcodes H)")]
     public KeyCode produceHumveeKey = KeyCode.H;
 
+    [Header("Artillery Tank Production")]
+    [Tooltip("The Artillery Tank prefab to instantiate")]
+    public GameObject artilleryTankPrefab;
+
+    [Tooltip("Resource cost per Artillery Tank")]
+    public int artilleryTankCost = 350;
+
+    [Tooltip("Keyboard shortcut to produce an Artillery Tank (UnitSelector hardcodes T)")]
+    public KeyCode produceTankKey = KeyCode.T;
+
     // ------------------------------------------------------------------ //
     // Inspector — Shared spawn location
     // ------------------------------------------------------------------ //
@@ -64,6 +74,9 @@ public class VehicleFactoryProducer : MonoBehaviour
 
     /// <summary>True when this producer has a Humvee prefab assigned.</summary>
     public bool CanProduceHumvee => humveePrefab != null;
+
+    /// <summary>True when this producer has an Artillery Tank prefab assigned.</summary>
+    public bool CanProduceArtilleryTank => artilleryTankPrefab != null;
 
     // ------------------------------------------------------------------ //
     // Private
@@ -94,6 +107,17 @@ public class VehicleFactoryProducer : MonoBehaviour
             return;
         }
         SpawnUnit(humveePrefab, humveeCost, "Humvee");
+    }
+
+    /// <summary>Spawn one Artillery Tank. No-op (logs info) if no Tank prefab is assigned.</summary>
+    public void ProduceArtilleryTank()
+    {
+        if (!CanProduceArtilleryTank)
+        {
+            Debug.Log($"[VehicleFactory] '{name}' has no Artillery Tank prefab assigned — ignoring.");
+            return;
+        }
+        SpawnUnit(artilleryTankPrefab, artilleryTankCost, "Artillery Tank");
     }
 
     // ------------------------------------------------------------------ //
