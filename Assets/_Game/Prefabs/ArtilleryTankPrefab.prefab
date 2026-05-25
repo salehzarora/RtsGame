@@ -641,6 +641,7 @@ GameObject:
   - component: {fileID: 3602393899260785284}
   - component: {fileID: 1851921996125716627}
   - component: {fileID: 1856207582002445912}
+  - component: {fileID: 2299888454212288620}
   m_Layer: 6
   m_Name: ArtilleryTankPrefab
   m_TagString: Untagged
@@ -788,3 +789,24 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitCategory
   category: 1
+--- !u!114 &2299888454212288620
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7339278035214007323}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fc1c491cb1c95f446876195e3c83555e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GroundAutoAttackController
+  autoAttackEnabled: 1
+  detectionRadius: 12
+  scanInterval: 0.35
+  targetLoseRadiusMultiplier: 1.2
+  targetLayerMask:
+    serializedVersion: 2
+    m_Bits: 0
+  debugDrawRadius: 0
+  autoAttackPausedAfterManualMoveSeconds: 1

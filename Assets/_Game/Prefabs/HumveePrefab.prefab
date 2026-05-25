@@ -821,6 +821,7 @@ GameObject:
   - component: {fileID: 4722083356781949466}
   - component: {fileID: 7109208735776049404}
   - component: {fileID: 6623930013077882469}
+  - component: {fileID: 7977784470709816416}
   m_Layer: 6
   m_Name: HumveePrefab
   m_TagString: Untagged
@@ -972,6 +973,27 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitCategory
   category: 1
+--- !u!114 &7977784470709816416
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8095608060732401746}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fc1c491cb1c95f446876195e3c83555e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GroundAutoAttackController
+  autoAttackEnabled: 1
+  detectionRadius: 12
+  scanInterval: 0.35
+  targetLoseRadiusMultiplier: 1.2
+  targetLayerMask:
+    serializedVersion: 2
+    m_Bits: 0
+  debugDrawRadius: 0
+  autoAttackPausedAfterManualMoveSeconds: 1
 --- !u!1 &8227739870178863476
 GameObject:
   m_ObjectHideFlags: 0

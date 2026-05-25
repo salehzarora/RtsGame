@@ -306,10 +306,13 @@ public class UnitSelector : MonoBehaviour
                 // Ground units use UnitCombat (chase + shoot on NavMesh) OR
                 // RocketCombat (chase + fire RocketProjectile). A given unit
                 // only has one of the two — null-conditional skips the other.
+                // Also notify the auto-attack controller so it marks this as
+                // a manual target and stops trying to override it.
                 foreach (SelectableUnit unit in selectedUnits)
                 {
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
                     unit.GetComponent<RocketCombat>()?.SetTarget(targetHealth);
+                    unit.GetComponent<GroundAutoAttackController>()?.NotifyManualAttack(targetHealth);
                 }
 
                 // Aircraft use AirUnitController (takeoff + fly + missile + return).
@@ -363,9 +366,16 @@ public class UnitSelector : MonoBehaviour
 
             attackMarker?.Hide();
 
+            // Compute formation slots, dispatch MoveTo + tell the auto-attack
+            // controller this is the unit's new guard position so it scans
+            // around the move destination, not its old spawn point.
             Vector3[] positions = GetFormationPositions(groundHit.point, selectedUnits.Count);
             for (int i = 0; i < selectedUnits.Count; i++)
-                selectedUnits[i].GetComponent<UnitMovement>().MoveTo(positions[i]);
+            {
+                SelectableUnit unit = selectedUnits[i];
+                unit.GetComponent<UnitMovement>().MoveTo(positions[i]);
+                unit.GetComponent<GroundAutoAttackController>()?.NotifyManualMove(positions[i]);
+            }
 
             // Aircraft: fly to the clicked point and circle it before
             // returning home. AirUnitController ignores the call while mid-
