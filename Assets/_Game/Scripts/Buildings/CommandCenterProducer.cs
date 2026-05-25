@@ -41,6 +41,17 @@ public class CommandCenterProducer : MonoBehaviour
     [Tooltip("Keyboard shortcut to produce a Worker (UnitSelector hardcodes W)")]
     public KeyCode produceWorkerKey = KeyCode.W;
 
+    [Header("Dozer Production")]
+    [Tooltip("The Dozer prefab to instantiate. Dozer is the only unit that can " +
+             "construct buildings via BuildingPlacementManager.StartDozerBuildingPlacement.")]
+    public GameObject dozerPrefab;
+
+    [Tooltip("Resource cost per Dozer.")]
+    public int dozerCost = 150;
+
+    [Tooltip("Keyboard shortcut to produce a Dozer (UnitSelector hardcodes D).")]
+    public KeyCode produceDozerKey = KeyCode.D;
+
     [Header("Spawn Location")]
     [Tooltip("Explicit spawn point (child Transform). Leave empty to use spawnOffset.")]
     public Transform spawnPoint;
@@ -57,6 +68,9 @@ public class CommandCenterProducer : MonoBehaviour
 
     /// <summary>True when this producer has a Worker prefab assigned.</summary>
     public bool CanProduceWorker => workerPrefab != null;
+
+    /// <summary>True when this producer has a Dozer prefab assigned.</summary>
+    public bool CanProduceDozer => dozerPrefab != null;
 
     // ------------------------------------------------------------------ //
     // Private
@@ -87,6 +101,21 @@ public class CommandCenterProducer : MonoBehaviour
             return;
         }
         SpawnUnit(workerPrefab, workerCost, "Worker");
+    }
+
+    /// <summary>
+    /// Spawn one Dozer. No-op (logs info) if no Dozer prefab is assigned. Run
+    /// Tools → RTS → Construction → Repair Construction System to wire it up.
+    /// </summary>
+    public void ProduceDozer()
+    {
+        if (!CanProduceDozer)
+        {
+            Debug.Log($"[CommandCenter] '{name}' has no Dozer prefab assigned — ignoring. " +
+                      "Run Tools → RTS → Construction → Repair Construction System.");
+            return;
+        }
+        SpawnUnit(dozerPrefab, dozerCost, "Dozer");
     }
 
     // ------------------------------------------------------------------ //

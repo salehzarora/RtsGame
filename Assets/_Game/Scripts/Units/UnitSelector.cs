@@ -133,18 +133,19 @@ public class UnitSelector : MonoBehaviour
     {
         bool sPressed = Input.GetKeyDown(KeyCode.S);
         bool wPressed = Input.GetKeyDown(KeyCode.W);
+        bool dPressed = Input.GetKeyDown(KeyCode.D);
         bool hPressed = Input.GetKeyDown(KeyCode.H);
         bool tPressed = Input.GetKeyDown(KeyCode.T);
         bool jPressed = Input.GetKeyDown(KeyCode.J);
         bool rPressed = Input.GetKeyDown(KeyCode.R);
-        if (!sPressed && !wPressed && !hPressed && !tPressed && !jPressed && !rPressed) return;
+        if (!sPressed && !wPressed && !dPressed && !hPressed && !tPressed && !jPressed && !rPressed) return;
 
         if (selectedBuilding == null)
         {
-            string pressed = sPressed ? "S" : wPressed ? "W" : hPressed ? "H" :
+            string pressed = sPressed ? "S" : wPressed ? "W" : dPressed ? "D" : hPressed ? "H" :
                              tPressed ? "T" : jPressed ? "J" : "R";
             Debug.LogWarning($"[UnitSelector] Pressed {pressed} but no building is selected. " +
-                             "Click a Barracks (S/R), CommandCenter (W), VehicleFactory (H/T), or Airfield (J) first.");
+                             "Click a Barracks (S/R), CommandCenter (W/D), VehicleFactory (H/T), or Airfield (J) first.");
             return;
         }
 
@@ -167,6 +168,13 @@ public class UnitSelector : MonoBehaviour
         {
             CommandCenterProducer wp = selectedBuilding.GetComponent<CommandCenterProducer>();
             if (wp != null && wp.CanProduceWorker) wp.ProduceWorker();
+        }
+
+        // D → Dozer (CommandCenter only). Silent no-op otherwise.
+        if (dPressed)
+        {
+            CommandCenterProducer wp = selectedBuilding.GetComponent<CommandCenterProducer>();
+            if (wp != null && wp.CanProduceDozer) wp.ProduceDozer();
         }
 
         // H → Humvee (VehicleFactory only). Silent no-op otherwise.
@@ -295,6 +303,39 @@ public class UnitSelector : MonoBehaviour
 
         Ray ray = mainCam.ScreenPointToRay(Input.mousePosition);
 
+        // --- Priority 0: construction site → dozer resume build ----------
+        // Building-layer click that hits a ConstructionSite re-assigns any
+        // selected Dozer(s) to that site. We do this BEFORE the attack /
+        // resource / move branches so a half-built site doesn't get treated
+        // like an enemy or a movement target.
+        if (Physics.Raycast(ray, out RaycastHit siteHit, Mathf.Infinity, buildingLayer))
+        {
+            ConstructionSite site = siteHit.collider.GetComponent<ConstructionSite>()
+                ?? siteHit.collider.GetComponentInParent<ConstructionSite>();
+
+            if (site != null && site.IsAlive)
+            {
+                bool anyDozer = false;
+                foreach (SelectableUnit unit in selectedUnits)
+                {
+                    DozerBuilder d = unit.GetComponent<DozerBuilder>();
+                    if (d != null)
+                    {
+                        d.AssignBuildOrder(site);
+                        anyDozer = true;
+                    }
+                }
+
+                if (anyDozer)
+                {
+                    attackMarker?.Hide();
+                    return;
+                }
+                // No dozer in selection — fall through so normal selection
+                // can attack-move / move past the site if appropriate.
+            }
+        }
+
         // --- Priority 1: enemy unit → attack -----------------------------
         if (Physics.Raycast(ray, out RaycastHit unitHit, Mathf.Infinity, unitLayer))
         {
@@ -313,6 +354,9 @@ public class UnitSelector : MonoBehaviour
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
                     unit.GetComponent<RocketCombat>()?.SetTarget(targetHealth);
                     unit.GetComponent<GroundAutoAttackController>()?.NotifyManualAttack(targetHealth);
+                    // Dozer is unarmed but if it's in the selection, abandon its
+                    // current build assignment so it follows the new order.
+                    unit.GetComponent<DozerBuilder>()?.ReleaseBuildAssignment();
                 }
 
                 // Aircraft use AirUnitController (takeoff + fly + missile + return).
@@ -362,6 +406,10 @@ public class UnitSelector : MonoBehaviour
                 unit.GetComponent<UnitCombat>()?.ClearTarget();
                 unit.GetComponent<RocketCombat>()?.ClearTarget();
                 unit.GetComponent<WorkerGatherer>()?.CancelGathering();
+                // Manual move abandons the Dozer's current build assignment.
+                // The construction site itself is NOT destroyed — the player
+                // can right-click it later to resume.
+                unit.GetComponent<DozerBuilder>()?.ReleaseBuildAssignment();
             }
 
             attackMarker?.Hide();
@@ -475,6 +523,9 @@ public class UnitSelector : MonoBehaviour
 
         if (hud != null)
         {
+            // Selecting a building never shows the Dozer-build panel.
+            hud.HideDozerBuildPanel();
+
             if (canSoldier || canRPGSoldier || canWorker || canHumvee || canTank || canStrikeJet)
                 hud.ShowProductionFor(building);
             else
@@ -523,6 +574,7 @@ public class UnitSelector : MonoBehaviour
         if (selectedUnits.Contains(unit)) return;
         selectedUnits.Add(unit);
         unit.Select();
+        RefreshDozerBuildPanel();
     }
 
     private void AddAircraftToSelection(SelectableAircraft aircraft)
@@ -546,6 +598,42 @@ public class UnitSelector : MonoBehaviour
         // hide the marker even though the units already in flight will
         // continue their current command.
         attackMarker?.Hide();
+
+        // No units means no dozer — collapse the dozer build panel too.
+        RefreshDozerBuildPanel();
+    }
+
+    // ------------------------------------------------------------------ //
+    // Dozer-aware HUD glue
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Returns the primary Dozer in the current selection (first SelectableUnit
+    /// that carries a <see cref="DozerBuilder"/>), or null. With multiple Dozers
+    /// selected, build orders go to whichever one was added first — extending
+    /// to multi-builder support is a later milestone.
+    /// </summary>
+    private DozerBuilder GetPrimarySelectedDozer()
+    {
+        foreach (SelectableUnit u in selectedUnits)
+        {
+            if (u == null) continue;
+            DozerBuilder d = u.GetComponent<DozerBuilder>();
+            if (d != null) return d;
+        }
+        return null;
+    }
+
+    /// <summary>Re-evaluate the Dozer build panel after any selection change.</summary>
+    private void RefreshDozerBuildPanel()
+    {
+        if (hud == null) return;
+
+        DozerBuilder dozer = GetPrimarySelectedDozer();
+        if (dozer != null)
+            hud.ShowDozerBuildPanel(dozer);
+        else
+            hud.HideDozerBuildPanel();
     }
 
     // ------------------------------------------------------------------ //

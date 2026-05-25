@@ -70,6 +70,14 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI workerButtonLabel;
 
+    [Tooltip("Dozer button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected CommandCenter's CanProduceDozer).")]
+    public GameObject dozerButton;
+
+    [Tooltip("The TMP label inside the Dozer button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI dozerButtonLabel;
+
     [Tooltip("Humvee button GameObject. Visibility is toggled per producer " +
              "(visible only when the selected building's VehicleFactoryProducer.CanProduceHumvee).")]
     public GameObject humveeButton;
@@ -94,6 +102,27 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI strikeJetButtonLabel;
 
+    [Header("Dozer Build Panel (shown when a Dozer is selected)")]
+    [Tooltip("Bottom-left panel container shown ONLY when one or more selected units " +
+             "carry the DozerBuilder component. Holds the four construction buttons.")]
+    public GameObject dozerBuildPanel;
+
+    [Tooltip("Construction button — Barracks. Wired to OnClickDozerBuildBarracks.")]
+    public GameObject dozerBuildBarracksButton;
+    public TextMeshProUGUI dozerBuildBarracksLabel;
+
+    [Tooltip("Construction button — Power Plant. Wired to OnClickDozerBuildPowerPlant.")]
+    public GameObject dozerBuildPowerPlantButton;
+    public TextMeshProUGUI dozerBuildPowerPlantLabel;
+
+    [Tooltip("Construction button — Vehicle Factory. Wired to OnClickDozerBuildVehicleFactory.")]
+    public GameObject dozerBuildVehicleFactoryButton;
+    public TextMeshProUGUI dozerBuildVehicleFactoryLabel;
+
+    [Tooltip("Construction button — Airfield. Wired to OnClickDozerBuildAirfield.")]
+    public GameObject dozerBuildAirfieldButton;
+    public TextMeshProUGUI dozerBuildAirfieldLabel;
+
     // ------------------------------------------------------------------ //
     // Private references — found at runtime
     // ------------------------------------------------------------------ //
@@ -108,6 +137,11 @@ public class RTSHUD : MonoBehaviour
     private CommandCenterProducer  currentWorkerProducer;
     private VehicleFactoryProducer currentVehicleProducer;
     private Airfield               currentAirfield;
+
+    // Currently bound Dozer — the "primary" dozer in a multi-select. Set by
+    // UnitSelector via ShowDozerBuildPanel. The Dozer build panel is hidden
+    // when this reference is null OR when the dozer's GameObject is destroyed.
+    private DozerBuilder           currentDozer;
 
     // ------------------------------------------------------------------ //
 
@@ -127,6 +161,10 @@ public class RTSHUD : MonoBehaviour
         // Production panel is hidden until a producer is selected
         if (productionPanel != null)
             productionPanel.SetActive(false);
+
+        // Dozer build panel is hidden until a dozer unit is selected
+        if (dozerBuildPanel != null)
+            dozerBuildPanel.SetActive(false);
     }
 
     private void LateUpdate()
@@ -223,11 +261,12 @@ public class RTSHUD : MonoBehaviour
         bool showSoldier    = soldierProd != null && soldierProd.CanProduceSoldier;
         bool showRPGSoldier = soldierProd != null && soldierProd.CanProduceRPGSoldier;
         bool showWorker     = workerProd  != null && workerProd.CanProduceWorker;
+        bool showDozer      = workerProd  != null && workerProd.CanProduceDozer;
         bool showHumvee     = vehicleProd != null && vehicleProd.CanProduceHumvee;
         bool showTank       = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
         bool showStrikeJet  = airfield    != null && airfield.CanProduceStrikeJet;
 
-        if (!showSoldier && !showRPGSoldier && !showWorker && !showHumvee && !showTank && !showStrikeJet)
+        if (!showSoldier && !showRPGSoldier && !showWorker && !showDozer && !showHumvee && !showTank && !showStrikeJet)
         {
             HideProductionPanel();
             return;
@@ -235,7 +274,8 @@ public class RTSHUD : MonoBehaviour
 
         // Soldier producer drives both Soldier and RPG Soldier buttons.
         currentSoldierProducer = (showSoldier || showRPGSoldier) ? soldierProd : null;
-        currentWorkerProducer  = showWorker                       ? workerProd  : null;
+        // CommandCenter producer drives both Worker and Dozer buttons.
+        currentWorkerProducer  = (showWorker  || showDozer)       ? workerProd  : null;
         // Vehicle producer is bound when either of its outputs is available.
         currentVehicleProducer = (showHumvee || showTank)         ? vehicleProd : null;
         currentAirfield        = showStrikeJet                    ? airfield    : null;
@@ -263,6 +303,13 @@ public class RTSHUD : MonoBehaviour
 
         if (showWorker && workerButtonLabel != null)
             workerButtonLabel.text = $"Worker - {workerProd.workerCost}";
+
+        // --- Dozer button ---------------------------------------------- //
+        if (dozerButton != null)
+            dozerButton.SetActive(showDozer);
+
+        if (showDozer && dozerButtonLabel != null)
+            dozerButtonLabel.text = $"Dozer - {workerProd.dozerCost}";
 
         // --- Humvee button --------------------------------------------- //
         if (humveeButton != null)
@@ -337,6 +384,19 @@ public class RTSHUD : MonoBehaviour
         currentWorkerProducer.ProduceWorker();
     }
 
+    /// <summary>Called by the Dozer button. Produces from the bound CommandCenterProducer.</summary>
+    public void OnClickProduceDozer()
+    {
+        if (currentWorkerProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] Dozer button clicked but no CommandCenter is selected. " +
+                             "Select a CommandCenter first.");
+            return;
+        }
+
+        currentWorkerProducer.ProduceDozer();
+    }
+
     /// <summary>Called by the Humvee button. Produces from the bound VehicleFactoryProducer.</summary>
     public void OnClickProduceHumvee()
     {
@@ -374,5 +434,96 @@ public class RTSHUD : MonoBehaviour
         }
 
         currentAirfield.ProduceStrikeJet();
+    }
+
+    // ================================================================== //
+    // Dozer build panel — shown when a Dozer unit is selected
+    // ================================================================== //
+
+    /// <summary>
+    /// Shows the construction-build panel for <paramref name="dozer"/> (the
+    /// primary selected Dozer). Hides the building production panel so the
+    /// two never overlap visually. Called by UnitSelector when a Dozer is
+    /// added to the selection.
+    /// </summary>
+    public void ShowDozerBuildPanel(DozerBuilder dozer)
+    {
+        if (dozer == null)
+        {
+            HideDozerBuildPanel();
+            return;
+        }
+
+        currentDozer = dozer;
+
+        // Hide the building production panel while the Dozer panel is up — the
+        // two share the bottom-left corner and the player can't have both
+        // selections active at once (building OR unit selection).
+        HideProductionPanel();
+
+        if (dozerBuildPanel != null)
+            dozerBuildPanel.SetActive(true);
+
+        // Refresh labels from BPM costs so they stay in sync if the player
+        // tunes them in the inspector.
+        if (placementManager != null)
+        {
+            if (dozerBuildBarracksLabel       != null) dozerBuildBarracksLabel.text       = $"Barracks - {placementManager.barracksCost}";
+            if (dozerBuildPowerPlantLabel     != null) dozerBuildPowerPlantLabel.text     = $"Power Plant - {placementManager.powerPlantCost}";
+            if (dozerBuildVehicleFactoryLabel != null) dozerBuildVehicleFactoryLabel.text = $"Vehicle Factory - {placementManager.vehicleFactoryCost}";
+            if (dozerBuildAirfieldLabel       != null) dozerBuildAirfieldLabel.text       = $"Airfield - {placementManager.airfieldCost}";
+        }
+    }
+
+    /// <summary>Hides the Dozer build panel and forgets the bound Dozer.</summary>
+    public void HideDozerBuildPanel()
+    {
+        currentDozer = null;
+        if (dozerBuildPanel != null)
+            dozerBuildPanel.SetActive(false);
+    }
+
+    /// <summary>Called by the Dozer-build Barracks button.</summary>
+    public void OnClickDozerBuildBarracks()
+    {
+        if (!ValidateDozerBuildClick("Barracks")) return;
+        placementManager.StartDozerBuildBarracks(currentDozer);
+    }
+
+    /// <summary>Called by the Dozer-build Power Plant button.</summary>
+    public void OnClickDozerBuildPowerPlant()
+    {
+        if (!ValidateDozerBuildClick("Power Plant")) return;
+        placementManager.StartDozerBuildPowerPlant(currentDozer);
+    }
+
+    /// <summary>Called by the Dozer-build Vehicle Factory button.</summary>
+    public void OnClickDozerBuildVehicleFactory()
+    {
+        if (!ValidateDozerBuildClick("Vehicle Factory")) return;
+        placementManager.StartDozerBuildVehicleFactory(currentDozer);
+    }
+
+    /// <summary>Called by the Dozer-build Airfield button.</summary>
+    public void OnClickDozerBuildAirfield()
+    {
+        if (!ValidateDozerBuildClick("Airfield")) return;
+        placementManager.StartDozerBuildAirfield(currentDozer);
+    }
+
+    private bool ValidateDozerBuildClick(string label)
+    {
+        if (currentDozer == null)
+        {
+            Debug.LogWarning($"[RTSHUD] {label} build clicked but no Dozer is selected. " +
+                             "Select a Dozer first.");
+            return false;
+        }
+        if (placementManager == null)
+        {
+            Debug.LogWarning($"[RTSHUD] {label} build clicked but no BuildingPlacementManager is in the scene.");
+            return false;
+        }
+        return true;
     }
 }
