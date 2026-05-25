@@ -1,33 +1,30 @@
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 /// <summary>
 /// One-click repair for Vehicle Factory production + the damage-category system.
 ///
-/// Menu: Tools → RTS → Repair Vehicle Factory Production
+/// Menu: Tools → RTS → Vehicles → Repair VehicleFactory Production
 ///
 /// What it does (idempotent — safe to re-run):
-///   1. Ensures HumveePrefab and ArtilleryTankPrefab assets exist; runs their
-///      respective builders if missing.
-///   2. Loads VehicleFactoryPrefab and wires BOTH outputs into its
-///      VehicleFactoryProducer (humveePrefab + artilleryTankPrefab) with the
-///      spec'd costs (150 / 350) if either is unassigned. Existing user
-///      assignments are preserved.
-///   3. Stamps every standard prefab with the correct UnitCategory:
-///         SoldierPrefab          → Infantry
-///         WorkerPrefab           → Infantry
-///         HumveePrefab           → Vehicle
-///         ArtilleryTankPrefab    → Vehicle
-///         Barracks               → Building
-///         PowerPlantPrefab       → Building
-///         VehicleFactoryPrefab   → Building
-///      Existing UnitCategory components are updated in place (no duplicate).
-///   4. Patches the Soldier's UnitCombat cooldown to the spec value 0.5s
-///      (older builds set 0.4).
+///   1. Ensures HumveePrefab, ArtilleryTankPrefab, and MissileLauncherPrefab
+///      assets exist; runs their respective builders if missing.
+///   2. Loads VehicleFactoryPrefab and wires all three outputs into its
+///      VehicleFactoryProducer (humveePrefab + artilleryTankPrefab +
+///      missileLauncherPrefab) with the spec'd costs (150 / 350 / 1100) if
+///      any is unassigned. Existing user assignments are preserved.
+///   3. Walks every in-scene VehicleFactoryProducer and applies the same
+///      assignments so factories already built by a Dozer pick up Missile
+///      Launcher production without needing to be re-built.
+///   4. Stamps every standard prefab with the correct UnitCategory.
+///   5. Patches the Soldier's UnitCombat cooldown to the spec value 0.5s.
+///   6. If the in-scene RTSHUD is missing the Missile Launcher button, re-runs
+///      Tools → RTS → Setup HUD so the production panel rebuilds with all
+///      eight buttons.
 ///
 /// What it does NOT touch:
-///   - HUD / RTSHUD (use Tools → RTS → Setup HUD).
 ///   - BuildingPlacementManager scene wiring (use
 ///     Tools → RTS → Repair Prefabs And Building Placement).
 ///   - CommandCenter scene object (it's a scene-only object, not a prefab —
@@ -35,7 +32,7 @@ using UnityEngine;
 /// </summary>
 public static class RepairVehicleFactoryProduction
 {
-    [MenuItem("Tools/RTS/Repair Vehicle Factory Production")]
+    [MenuItem("Tools/RTS/Vehicles/Repair VehicleFactory Production")]
     public static void Repair()
     {
         Debug.Log("[RepairVehicleFactoryProduction] ── Running ──");
@@ -55,6 +52,14 @@ public static class RepairVehicleFactoryProduction
             Debug.Log("[RepairVehicleFactoryProduction]   ArtilleryTankPrefab missing — running Tank builder.");
             CreateArtilleryTankPrefab.Create();
             tank = LoadPrefab("ArtilleryTankPrefab");
+        }
+
+        GameObject missile = LoadPrefab("MissileLauncherPrefab");
+        if (missile == null)
+        {
+            Debug.Log("[RepairVehicleFactoryProduction]   MissileLauncherPrefab missing — running builder.");
+            CreateMissileLauncherPrefab.Create();
+            missile = LoadPrefab("MissileLauncherPrefab");
         }
 
         // ── 2. Wire VehicleFactoryProducer ───────────────────────────── //
@@ -87,28 +92,136 @@ public static class RepairVehicleFactoryProduction
                 }
                 if (vfp.artilleryTankCost <= 0) vfp.artilleryTankCost = 350;
 
+                if (vfp.missileLauncherPrefab == null && missile != null)
+                {
+                    vfp.missileLauncherPrefab = missile;
+                    Debug.Log("[RepairVehicleFactoryProduction]   ✓ Assigned missileLauncherPrefab.");
+                }
+                if (vfp.missileLauncherCost <= 0) vfp.missileLauncherCost = 1100;
+
                 PrefabUtility.SaveAsPrefabAsset(root, path);
                 Debug.Log($"[RepairVehicleFactoryProduction] ✓ VehicleFactoryPrefab wired " +
-                          $"(humvee {(vfp.humveePrefab!=null?"OK":"NULL")}, tank {(vfp.artilleryTankPrefab!=null?"OK":"NULL")}).");
+                          $"(humvee {(vfp.humveePrefab!=null?"OK":"NULL")}, " +
+                          $"tank {(vfp.artilleryTankPrefab!=null?"OK":"NULL")}, " +
+                          $"missile {(vfp.missileLauncherPrefab!=null?"OK":"NULL")}).");
             }
             finally { PrefabUtility.UnloadPrefabContents(root); }
         }
 
-        // ── 3. UnitCategory on every standard prefab ───────────────── //
+        // ── 3. Patch every in-scene VehicleFactory instance ──────────── //
+        // Factories already built by a Dozer keep their own copy of
+        // VehicleFactoryProducer; patching just the prefab on disk won't reach
+        // them. Walk the scene and assign any missing field.
+        PatchInSceneVehicleFactories(humvee, tank, missile);
+
+        // ── 4. UnitCategory on every standard prefab ───────────────── //
         StampCategory("SoldierPrefab",        UnitCategory.Category.Infantry);
         StampCategory("WorkerPrefab",         UnitCategory.Category.Infantry);
-        StampCategory("HumveePrefab",         UnitCategory.Category.Vehicle);
-        StampCategory("ArtilleryTankPrefab",  UnitCategory.Category.Vehicle);
+        StampCategory("HumveePrefab",          UnitCategory.Category.Vehicle);
+        StampCategory("ArtilleryTankPrefab",   UnitCategory.Category.Vehicle);
+        StampCategory("MissileLauncherPrefab", UnitCategory.Category.Vehicle);
         StampCategory("Barracks",             UnitCategory.Category.Building);
         StampCategory("PowerPlantPrefab",     UnitCategory.Category.Building);
         StampCategory("VehicleFactoryPrefab", UnitCategory.Category.Building);
 
-        // ── 4. Soldier cooldown to spec (0.5) ────────────────────────── //
+        // ── 5. Soldier cooldown to spec (0.5) ────────────────────────── //
         PatchSoldierCooldown();
 
+        // ── 6. Re-run Setup HUD if the missile-launcher button is missing //
+        EnsureHUDHasMissileLauncherButton();
+
         AssetDatabase.SaveAssets();
-        Debug.Log("[RepairVehicleFactoryProduction] ✓ Done. Re-run Tools → RTS → Setup HUD if " +
-                  "the Artillery Tank button is missing from the production panel.");
+        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        Debug.Log("[RepairVehicleFactoryProduction] ✓ Done. Production panel: " +
+                  "Humvee (150), Artillery Tank (350), Missile Launcher (1100).");
+    }
+
+    // ------------------------------------------------------------------ //
+    // 3. In-scene patches — factories already built by a Dozer
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Walks every <see cref="VehicleFactoryProducer"/> in the open scene and
+    /// assigns the three vehicle prefabs + costs where they're missing.
+    /// Idempotent: existing assignments are preserved.
+    /// </summary>
+    private static void PatchInSceneVehicleFactories(GameObject humvee, GameObject tank, GameObject missile)
+    {
+        VehicleFactoryProducer[] inScene =
+            Object.FindObjectsByType<VehicleFactoryProducer>(FindObjectsSortMode.None);
+
+        if (inScene.Length == 0)
+        {
+            Debug.Log("[RepairVehicleFactoryProduction]   = No in-scene VehicleFactory — skipping scene patch.");
+            return;
+        }
+
+        int patched = 0;
+        foreach (VehicleFactoryProducer vfp in inScene)
+        {
+            bool dirty = false;
+
+            if (vfp.humveePrefab == null && humvee != null)
+            {
+                vfp.humveePrefab = humvee;
+                dirty = true;
+            }
+            if (vfp.humveeCost <= 0) { vfp.humveeCost = 150; dirty = true; }
+
+            if (vfp.artilleryTankPrefab == null && tank != null)
+            {
+                vfp.artilleryTankPrefab = tank;
+                dirty = true;
+            }
+            if (vfp.artilleryTankCost <= 0) { vfp.artilleryTankCost = 350; dirty = true; }
+
+            if (vfp.missileLauncherPrefab == null && missile != null)
+            {
+                vfp.missileLauncherPrefab = missile;
+                dirty = true;
+            }
+            if (vfp.missileLauncherCost <= 0) { vfp.missileLauncherCost = 1100; dirty = true; }
+
+            if (dirty)
+            {
+                EditorUtility.SetDirty(vfp);
+                patched++;
+            }
+        }
+
+        Debug.Log($"[RepairVehicleFactoryProduction]   ✓ In-scene VehicleFactory instances: " +
+                  $"{patched}/{inScene.Length} updated.");
+    }
+
+    // ------------------------------------------------------------------ //
+    // 6. HUD button check + auto-rerun
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Detects whether the in-scene <see cref="RTSHUD"/> has a wired
+    /// <c>missileLauncherButton</c>. If not, re-runs Tools → RTS → Setup HUD
+    /// to rebuild the production panel with all eight buttons. SetupRTSHUD
+    /// fully rebuilds the HUDCanvas so stale layouts are wiped cleanly.
+    /// </summary>
+    private static void EnsureHUDHasMissileLauncherButton()
+    {
+        RTSHUD hud = Object.FindAnyObjectByType<RTSHUD>(FindObjectsInactive.Include);
+        if (hud == null)
+        {
+            Debug.LogWarning("[RepairVehicleFactoryProduction] ⚠ No RTSHUD in the scene — " +
+                             "run Tools → RTS → Setup HUD to create one.");
+            return;
+        }
+
+        if (hud.missileLauncherButton != null)
+        {
+            Debug.Log("[RepairVehicleFactoryProduction]   = HUD already has the Missile Launcher button.");
+            return;
+        }
+
+        Debug.Log("[RepairVehicleFactoryProduction]   Re-running Tools → RTS → Setup HUD to add " +
+                  "the Missile Launcher button.");
+        SetupRTSHUD.SetupHUD();
     }
 
     // ------------------------------------------------------------------ //

@@ -94,6 +94,14 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI tankButtonLabel;
 
+    [Tooltip("Missile Launcher button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected VehicleFactoryProducer.CanProduceMissileLauncher).")]
+    public GameObject missileLauncherButton;
+
+    [Tooltip("The TMP label inside the Missile Launcher button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI missileLauncherButtonLabel;
+
     [Tooltip("Strike Jet button GameObject. Visibility is toggled per producer " +
              "(visible only when the selected Airfield.CanProduceStrikeJet).")]
     public GameObject strikeJetButton;
@@ -262,15 +270,17 @@ public class RTSHUD : MonoBehaviour
         VehicleFactoryProducer vehicleProd = building.GetComponent<VehicleFactoryProducer>();
         Airfield               airfield    = building.GetComponent<Airfield>();
 
-        bool showSoldier    = soldierProd != null && soldierProd.CanProduceSoldier;
-        bool showRPGSoldier = soldierProd != null && soldierProd.CanProduceRPGSoldier;
-        bool showWorker     = workerProd  != null && workerProd.CanProduceWorker;
-        bool showDozer      = workerProd  != null && workerProd.CanProduceDozer;
-        bool showHumvee     = vehicleProd != null && vehicleProd.CanProduceHumvee;
-        bool showTank       = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
-        bool showStrikeJet  = airfield    != null && airfield.CanProduceStrikeJet;
+        bool showSoldier         = soldierProd != null && soldierProd.CanProduceSoldier;
+        bool showRPGSoldier      = soldierProd != null && soldierProd.CanProduceRPGSoldier;
+        bool showWorker          = workerProd  != null && workerProd.CanProduceWorker;
+        bool showDozer           = workerProd  != null && workerProd.CanProduceDozer;
+        bool showHumvee          = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool showTank            = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool showMissileLauncher = vehicleProd != null && vehicleProd.CanProduceMissileLauncher;
+        bool showStrikeJet       = airfield    != null && airfield.CanProduceStrikeJet;
 
-        if (!showSoldier && !showRPGSoldier && !showWorker && !showDozer && !showHumvee && !showTank && !showStrikeJet)
+        if (!showSoldier && !showRPGSoldier && !showWorker && !showDozer
+            && !showHumvee && !showTank && !showMissileLauncher && !showStrikeJet)
         {
             HideProductionPanel();
             return;
@@ -280,8 +290,8 @@ public class RTSHUD : MonoBehaviour
         currentSoldierProducer = (showSoldier || showRPGSoldier) ? soldierProd : null;
         // CommandCenter producer drives both Worker and Dozer buttons.
         currentWorkerProducer  = (showWorker  || showDozer)       ? workerProd  : null;
-        // Vehicle producer is bound when either of its outputs is available.
-        currentVehicleProducer = (showHumvee || showTank)         ? vehicleProd : null;
+        // Vehicle producer is bound when any of its outputs is available.
+        currentVehicleProducer = (showHumvee || showTank || showMissileLauncher) ? vehicleProd : null;
         currentAirfield        = showStrikeJet                    ? airfield    : null;
 
         if (productionPanel != null)
@@ -328,6 +338,13 @@ public class RTSHUD : MonoBehaviour
 
         if (showTank && tankButtonLabel != null)
             tankButtonLabel.text = $"Artillery Tank - {vehicleProd.artilleryTankCost}";
+
+        // --- Missile Launcher button ----------------------------------- //
+        if (missileLauncherButton != null)
+            missileLauncherButton.SetActive(showMissileLauncher);
+
+        if (showMissileLauncher && missileLauncherButtonLabel != null)
+            missileLauncherButtonLabel.text = $"Missile Launcher - {vehicleProd.missileLauncherCost}";
 
         // --- Strike Jet button ----------------------------------------- //
         if (strikeJetButton != null)
@@ -425,6 +442,19 @@ public class RTSHUD : MonoBehaviour
         }
 
         currentVehicleProducer.ProduceArtilleryTank();
+    }
+
+    /// <summary>Called by the Missile Launcher button. Produces from the bound VehicleFactoryProducer.</summary>
+    public void OnClickProduceMissileLauncher()
+    {
+        if (currentVehicleProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] Missile Launcher button clicked but no Vehicle producer is selected. " +
+                             "Select a VehicleFactory first.");
+            return;
+        }
+
+        currentVehicleProducer.ProduceMissileLauncher();
     }
 
     /// <summary>Called by the Strike Jet button. Produces from the bound Airfield.</summary>

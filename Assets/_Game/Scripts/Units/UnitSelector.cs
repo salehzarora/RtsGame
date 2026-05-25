@@ -143,7 +143,9 @@ public class UnitSelector : MonoBehaviour
         bool tPressed = Input.GetKeyDown(KeyCode.T);
         bool jPressed = Input.GetKeyDown(KeyCode.J);
         bool rPressed = Input.GetKeyDown(KeyCode.R);
-        if (!sPressed && !wPressed && !dPressed && !hPressed && !tPressed && !jPressed && !rPressed) return;
+        bool mPressed = Input.GetKeyDown(KeyCode.M);
+        if (!sPressed && !wPressed && !dPressed && !hPressed && !tPressed
+            && !jPressed && !rPressed && !mPressed) return;
 
         if (selectedBuilding == null)
         {
@@ -194,6 +196,13 @@ public class UnitSelector : MonoBehaviour
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
             if (vp != null && vp.CanProduceArtilleryTank) vp.ProduceArtilleryTank();
+        }
+
+        // M → Missile Launcher (VehicleFactory only). Silent no-op otherwise.
+        if (mPressed)
+        {
+            VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
+            if (vp != null && vp.CanProduceMissileLauncher) vp.ProduceMissileLauncher();
         }
 
         // J → Strike Jet (Airfield only). Silent no-op otherwise.
@@ -368,6 +377,7 @@ public class UnitSelector : MonoBehaviour
                 {
                     unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
                     unit.GetComponent<RocketCombat>()?.SetTarget(targetHealth);
+                    unit.GetComponent<MissileLauncherCombat>()?.SetTarget(targetHealth);
                     unit.GetComponent<GroundAutoAttackController>()?.NotifyManualAttack(targetHealth);
                     // Dozer is unarmed but if it's in the selection, abandon its
                     // current build assignment so it follows the new order.
@@ -420,6 +430,7 @@ public class UnitSelector : MonoBehaviour
             {
                 unit.GetComponent<UnitCombat>()?.ClearTarget();
                 unit.GetComponent<RocketCombat>()?.ClearTarget();
+                unit.GetComponent<MissileLauncherCombat>()?.ClearTarget();
                 unit.GetComponent<WorkerGatherer>()?.CancelGathering();
                 // Manual move abandons the Dozer's current build assignment.
                 // The construction site itself is NOT destroyed — the player
@@ -521,18 +532,21 @@ public class UnitSelector : MonoBehaviour
         bool canWorker     = workerProd  != null && workerProd.CanProduceWorker;
         bool canHumvee     = vehicleProd != null && vehicleProd.CanProduceHumvee;
         bool canTank       = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
+        bool canMissile    = vehicleProd != null && vehicleProd.CanProduceMissileLauncher;
         bool canStrikeJet  = airfield    != null && airfield.CanProduceStrikeJet;
 
         string hint;
-        if (canSoldier && canRPGSoldier)    hint = " (press S/R or click the Soldier/RPG Soldier button).";
-        else if (canSoldier)                hint = " (press S or click the Soldier button).";
-        else if (canRPGSoldier)             hint = " (press R or click the RPG Soldier button).";
-        else if (canWorker)                 hint = " (press W or click the Worker button).";
-        else if (canHumvee && canTank)      hint = " (press H/T or click the Humvee/Artillery Tank button).";
-        else if (canHumvee)                 hint = " (press H or click the Humvee button).";
-        else if (canTank)                   hint = " (press T or click the Artillery Tank button).";
-        else if (canStrikeJet)              hint = $" (press J or click the Strike Jet button; free slots: {airfield.FreeSlotCount}/{Airfield.MaxSlots}).";
-        else                                hint = " (no production options attached).";
+        if (canSoldier && canRPGSoldier)            hint = " (press S/R or click the Soldier/RPG Soldier button).";
+        else if (canSoldier)                        hint = " (press S or click the Soldier button).";
+        else if (canRPGSoldier)                     hint = " (press R or click the RPG Soldier button).";
+        else if (canWorker)                         hint = " (press W or click the Worker button).";
+        else if (canHumvee && canTank && canMissile)hint = " (press H/T/M or click the Humvee/Artillery Tank/Missile Launcher button).";
+        else if (canHumvee && canTank)              hint = " (press H/T or click the Humvee/Artillery Tank button).";
+        else if (canHumvee)                         hint = " (press H or click the Humvee button).";
+        else if (canTank)                           hint = " (press T or click the Artillery Tank button).";
+        else if (canMissile)                        hint = " (press M or click the Missile Launcher button).";
+        else if (canStrikeJet)                      hint = $" (press J or click the Strike Jet button; free slots: {airfield.FreeSlotCount}/{Airfield.MaxSlots}).";
+        else                                        hint = " (no production options attached).";
 
         Debug.Log($"[UnitSelector] Building selected: '{building.name}'{hint}");
 

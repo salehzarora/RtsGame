@@ -665,6 +665,9 @@ MonoBehaviour:
   artilleryTankPrefab: {fileID: 7339278035214007323, guid: d8cbc43226899ad41bc541727f2481ce, type: 3}
   artilleryTankCost: 350
   produceTankKey: 116
+  missileLauncherPrefab: {fileID: 661519337422071430, guid: 683d5d23e7ef7c3409306f75f0cb88bf, type: 3}
+  missileLauncherCost: 1100
+  produceMissileLauncherKey: 109
   spawnPoint: {fileID: 0}
   spawnOffset: {x: 5, y: 0, z: 0}
   navMeshSnapRadius: 6

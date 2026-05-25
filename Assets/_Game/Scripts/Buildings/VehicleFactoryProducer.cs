@@ -54,6 +54,18 @@ public class VehicleFactoryProducer : MonoBehaviour
     [Tooltip("Keyboard shortcut to produce an Artillery Tank (UnitSelector hardcodes T)")]
     public KeyCode produceTankKey = KeyCode.T;
 
+    [Header("Missile Launcher Production")]
+    [Tooltip("The Missile Launcher prefab — long-range artillery truck with " +
+             "MissileLauncherCombat. Created by Tools → RTS → Vehicles → Create " +
+             "Missile Launcher Prefab.")]
+    public GameObject missileLauncherPrefab;
+
+    [Tooltip("Resource cost per Missile Launcher")]
+    public int missileLauncherCost = 1100;
+
+    [Tooltip("Keyboard shortcut to produce a Missile Launcher (UnitSelector hardcodes M)")]
+    public KeyCode produceMissileLauncherKey = KeyCode.M;
+
     // ------------------------------------------------------------------ //
     // Inspector — Shared spawn location
     // ------------------------------------------------------------------ //
@@ -77,6 +89,9 @@ public class VehicleFactoryProducer : MonoBehaviour
 
     /// <summary>True when this producer has an Artillery Tank prefab assigned.</summary>
     public bool CanProduceArtilleryTank => artilleryTankPrefab != null;
+
+    /// <summary>True when this producer has a Missile Launcher prefab assigned.</summary>
+    public bool CanProduceMissileLauncher => missileLauncherPrefab != null;
 
     // ------------------------------------------------------------------ //
     // Private
@@ -118,6 +133,18 @@ public class VehicleFactoryProducer : MonoBehaviour
             return;
         }
         SpawnUnit(artilleryTankPrefab, artilleryTankCost, "Artillery Tank");
+    }
+
+    /// <summary>Spawn one Missile Launcher. No-op (logs info) if no prefab is assigned.</summary>
+    public void ProduceMissileLauncher()
+    {
+        if (!CanProduceMissileLauncher)
+        {
+            Debug.Log($"[VehicleFactory] '{name}' has no Missile Launcher prefab assigned — ignoring. " +
+                      "Run Tools → RTS → Vehicles → Create Missile Launcher Prefab.");
+            return;
+        }
+        SpawnUnit(missileLauncherPrefab, missileLauncherCost, "Missile Launcher");
     }
 
     // ------------------------------------------------------------------ //

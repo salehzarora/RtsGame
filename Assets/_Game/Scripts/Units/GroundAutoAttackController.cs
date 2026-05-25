@@ -164,8 +164,9 @@ public class GroundAutoAttackController : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     private Health        ownHealth;
-    private UnitCombat    unitCombat;     // null on RPG units
-    private RocketCombat  rocketCombat;   // null on rifle / cannon units
+    private UnitCombat            unitCombat;     // null on RPG / missile launcher units
+    private RocketCombat          rocketCombat;   // null on rifle / cannon units
+    private MissileLauncherCombat missileCombat;  // null on all but the Missile Launcher
     private UnitMovement  movement;       // used for ReturningToGuard MoveTo
     private UnityEngine.AI.NavMeshAgent agent;  // for transit-fire motion check
 
@@ -204,8 +205,9 @@ public class GroundAutoAttackController : MonoBehaviour
     private void Awake()
     {
         ownHealth    = GetComponent<Health>();
-        unitCombat   = GetComponent<UnitCombat>();
-        rocketCombat = GetComponent<RocketCombat>();
+        unitCombat    = GetComponent<UnitCombat>();
+        rocketCombat  = GetComponent<RocketCombat>();
+        missileCombat = GetComponent<MissileLauncherCombat>();
         movement     = GetComponent<UnitMovement>();
         agent        = GetComponent<UnityEngine.AI.NavMeshAgent>();
 
@@ -351,8 +353,9 @@ public class GroundAutoAttackController : MonoBehaviour
             currentAutoTarget = next;
             state             = AutoState.AutoChasing;   // for state-machine compat when we stop
 
-            if (unitCombat   != null) unitCombat.SetTarget(next);
-            if (rocketCombat != null) rocketCombat.SetTarget(next);
+            if (unitCombat    != null) unitCombat.SetTarget(next);
+            if (rocketCombat  != null) rocketCombat.SetTarget(next);
+            if (missileCombat != null) missileCombat.SetTarget(next);
 
             Debug.Log($"[VehicleAutoFire:{name}] Firing while continuing move order.");
         }
@@ -367,7 +370,7 @@ public class GroundAutoAttackController : MonoBehaviour
     private bool TryAcquireTransitTarget(out Health best)
     {
         best = null;
-        if (unitCombat == null && rocketCombat == null) return false;
+        if (unitCombat == null && rocketCombat == null && missileCombat == null) return false;
 
         float bestDist = float.PositiveInfinity;
 
@@ -423,7 +426,8 @@ public class GroundAutoAttackController : MonoBehaviour
         if (rocketCombat != null)
             return cat == UnitCategory.Category.Aircraft ? rocketCombat.antiAirRange : rocketCombat.attackRange;
 
-        if (unitCombat != null) return unitCombat.attackRange;
+        if (missileCombat != null) return missileCombat.attackRange;
+        if (unitCombat    != null) return unitCombat.attackRange;
         return 0f;
     }
 
@@ -625,7 +629,7 @@ public class GroundAutoAttackController : MonoBehaviour
     /// </summary>
     private void TryAcquireTarget()
     {
-        if (unitCombat == null && rocketCombat == null)
+        if (unitCombat == null && rocketCombat == null && missileCombat == null)
         {
             if (!noCombatWarned)
             {
@@ -690,7 +694,7 @@ public class GroundAutoAttackController : MonoBehaviour
     private bool TryAcquireContinuationTarget(out Health best)
     {
         best = null;
-        if (unitCombat == null && rocketCombat == null) return false;
+        if (unitCombat == null && rocketCombat == null && missileCombat == null) return false;
 
         float bestDist     = float.PositiveInfinity;
         float searchRadius = Mathf.Max(leashRadius + leashTolerance, continueFightRadius);
@@ -760,16 +764,18 @@ public class GroundAutoAttackController : MonoBehaviour
         currentAutoTarget = target;
         state             = AutoState.AutoChasing;
 
-        if (unitCombat   != null) unitCombat.SetTarget(target);
-        if (rocketCombat != null) rocketCombat.SetTarget(target);
+        if (unitCombat    != null) unitCombat.SetTarget(target);
+        if (rocketCombat  != null) rocketCombat.SetTarget(target);
+        if (missileCombat != null) missileCombat.SetTarget(target);
 
         Debug.Log($"[AutoAttack:{name}] Acquired target inside guard radius: {target.name}.");
     }
 
     private void ClearAutoTargetOnCombat()
     {
-        if (unitCombat   != null) unitCombat.ClearTarget();
-        if (rocketCombat != null) rocketCombat.ClearTarget();
+        if (unitCombat    != null) unitCombat.ClearTarget();
+        if (rocketCombat  != null) rocketCombat.ClearTarget();
+        if (missileCombat != null) missileCombat.ClearTarget();
     }
 
     /// <summary>
@@ -778,8 +784,9 @@ public class GroundAutoAttackController : MonoBehaviour
     /// </summary>
     private bool CombatIsIdle()
     {
-        if (unitCombat   != null) return unitCombat.IsIdle;
-        if (rocketCombat != null) return rocketCombat.IsIdle;
+        if (unitCombat    != null) return unitCombat.IsIdle;
+        if (rocketCombat  != null) return rocketCombat.IsIdle;
+        if (missileCombat != null) return missileCombat.IsIdle;
         return true;
     }
 
@@ -793,7 +800,12 @@ public class GroundAutoAttackController : MonoBehaviour
     private bool CanEngageCategory(UnitCategory.Category cat)
     {
         if (rocketCombat != null) return true;
-        if (unitCombat   == null) return false;
+
+        // Missile launcher is ground-only — never auto-acquire aircraft.
+        if (missileCombat != null)
+            return cat != UnitCategory.Category.Aircraft;
+
+        if (unitCombat == null) return false;
 
         if (cat == UnitCategory.Category.Aircraft)
             return unitCombat.damageType == DamageType.Missile

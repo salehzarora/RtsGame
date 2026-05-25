@@ -10,7 +10,8 @@ public enum DamageType
     Cannon,     // Artillery Tank cannon shell — strong vs vehicles and buildings
     Missile,    // Strike Jet air-to-ground missile — strong vs vehicles and buildings, weak vs infantry
     Rocket,     // RPG Soldier shoulder-fired rocket — strong vs vehicles, decent vs buildings/aircraft, weak vs infantry
-    MachineGun  // MG turret heavy machine gun — dominant vs infantry, decent vs aircraft, weak vs vehicles/buildings
+    MachineGun, // MG turret heavy machine gun — dominant vs infantry, decent vs aircraft, weak vs vehicles/buildings
+    Artillery   // Missile Launcher truck — long-range splash; strong vs vehicles/buildings, medium vs infantry groups, NO aircraft
 }
 
 /// <summary>
@@ -55,6 +56,7 @@ public class UnitCategory : MonoBehaviour
 ///   Missile     vs (Infantry, Vehicle, Building, Aircraft) = 0.80 / 1.00 / 1.20 / 1.00
 ///   Rocket      vs (Infantry, Vehicle, Building, Aircraft) = 0.35 / 1.00 / 0.80 / 0.75
 ///   MachineGun  vs (Infantry, Vehicle, Building, Aircraft) = 1.00 / 0.25 / 0.10 / 0.55
+///   Artillery   vs (Infantry, Vehicle, Building, Aircraft) = 0.65 / 1.00 / 1.10 / 0.00
 /// </summary>
 public static class DamageRules
 {
@@ -109,6 +111,16 @@ public static class DamageRules
                     case UnitCategory.Category.Vehicle:  return 0.25f;   // chips light vehicles, weak vs armor
                     case UnitCategory.Category.Building: return 0.10f;   // poor vs buildings
                     case UnitCategory.Category.Aircraft: return 0.55f;   // decent anti-air — chip damage on high RoF
+                }
+                break;
+
+            case DamageType.Artillery:
+                switch (cat)
+                {
+                    case UnitCategory.Category.Infantry: return 0.65f;   // medium splash — strong vs groups, not insta-wipe vs singles
+                    case UnitCategory.Category.Vehicle:  return 1.00f;   // strong vs light + heavy ground vehicles
+                    case UnitCategory.Category.Building: return 1.10f;   // solid siege weapon
+                    case UnitCategory.Category.Aircraft: return 0.00f;   // physically cannot hit aircraft (combat code also gates)
                 }
                 break;
         }

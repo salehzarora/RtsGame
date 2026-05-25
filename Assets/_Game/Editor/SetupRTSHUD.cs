@@ -58,6 +58,7 @@ public static class SetupRTSHUD
     private static readonly Color BtnDozerColor         = new Color(0.92f, 0.72f, 0.12f, 1.00f); // dozer yellow
     private static readonly Color BtnHumveeColor        = new Color(0.28f, 0.36f, 0.22f, 1.00f); // olive drab
     private static readonly Color BtnTankColor          = new Color(0.18f, 0.28f, 0.16f, 1.00f); // dark olive
+    private static readonly Color BtnMissileLauncherColor = new Color(0.32f, 0.38f, 0.20f, 1.00f); // olive-tan launcher truck
     private static readonly Color BtnStrikeJetColor     = new Color(0.45f, 0.55f, 0.65f, 1.00f); // air-force blue
 
     // ------------------------------------------------------------------ //
@@ -168,12 +169,12 @@ public static class SetupRTSHUD
         productionPanel.anchorMax        = new Vector2(0f, 0f);
         productionPanel.pivot            = new Vector2(0f, 0f);
         productionPanel.anchoredPosition = new Vector2( 25f, 25f);
-        productionPanel.sizeDelta        = new Vector2(250f, 450f);
+        productionPanel.sizeDelta        = new Vector2(250f, 510f);
         productionPanel.localScale       = Vector3.one;
         productionPanel.gameObject.SetActive(false); // hidden until a producer is selected
-        Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x450, bottom-left, hidden by default)");
+        Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x510, bottom-left, hidden by default)");
 
-        // Seven buttons stacked inside the ProductionPanel (50px tall, 10px gap).
+        // Eight buttons stacked inside the ProductionPanel (50px tall, 10px gap).
         // RTSHUD.ShowProductionFor toggles each one based on the selected
         // building's producer capabilities — Barracks shows Soldier + RPG Soldier
         // together, CommandCenter shows Worker + Dozer, VehicleFactory shows
@@ -181,43 +182,49 @@ public static class SetupRTSHUD
         Button btnSoldier = CreateButton(
             productionPanel, "BtnSoldier", "Soldier - 50",
             BtnSoldierColor,
-            anchoredPos: new Vector2(0f, 180f),
+            anchoredPos: new Vector2(0f, 210f),
             size:        new Vector2(220f, 50f));
 
         Button btnRPGSoldier = CreateButton(
             productionPanel, "BtnRPGSoldier", "RPG Soldier - 120",
             BtnRPGSoldierColor,
-            anchoredPos: new Vector2(0f, 120f),
+            anchoredPos: new Vector2(0f, 150f),
             size:        new Vector2(220f, 50f));
 
         Button btnWorker = CreateButton(
             productionPanel, "BtnWorker", "Worker - 75",
             BtnWorkerColor,
-            anchoredPos: new Vector2(0f,  60f),
+            anchoredPos: new Vector2(0f,  90f),
             size:        new Vector2(220f, 50f));
 
         Button btnDozer = CreateButton(
             productionPanel, "BtnDozer", "Dozer - 150",
             BtnDozerColor,
-            anchoredPos: new Vector2(0f,   0f),
+            anchoredPos: new Vector2(0f,  30f),
             size:        new Vector2(220f, 50f));
 
         Button btnHumvee = CreateButton(
             productionPanel, "BtnHumvee", "Humvee - 150",
             BtnHumveeColor,
-            anchoredPos: new Vector2(0f, -60f),
+            anchoredPos: new Vector2(0f, -30f),
             size:        new Vector2(220f, 50f));
 
         Button btnTank = CreateButton(
             productionPanel, "BtnArtilleryTank", "Artillery Tank - 350",
             BtnTankColor,
-            anchoredPos: new Vector2(0f, -120f),
+            anchoredPos: new Vector2(0f, -90f),
+            size:        new Vector2(220f, 50f));
+
+        Button btnMissileLauncher = CreateButton(
+            productionPanel, "BtnMissileLauncher", "Missile Launcher - 1100",
+            BtnMissileLauncherColor,
+            anchoredPos: new Vector2(0f,-150f),
             size:        new Vector2(220f, 50f));
 
         Button btnStrikeJet = CreateButton(
             productionPanel, "BtnStrikeJet", "Strike Jet - 450",
             BtnStrikeJetColor,
-            anchoredPos: new Vector2(0f,-180f),
+            anchoredPos: new Vector2(0f,-210f),
             size:        new Vector2(220f, 50f));
 
         // ── 4c. Dozer Build Panel (bottom-left, shown when Dozer selected) ─ //
@@ -288,10 +295,12 @@ public static class SetupRTSHUD
         hud.dozerButtonLabel    = btnDozer.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.humveeButton        = btnHumvee.gameObject;
         hud.humveeButtonLabel   = btnHumvee.GetComponentInChildren<TextMeshProUGUI>(true);
-        hud.tankButton          = btnTank.gameObject;
-        hud.tankButtonLabel     = btnTank.GetComponentInChildren<TextMeshProUGUI>(true);
-        hud.strikeJetButton     = btnStrikeJet.gameObject;
-        hud.strikeJetButtonLabel = btnStrikeJet.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.tankButton                = btnTank.gameObject;
+        hud.tankButtonLabel           = btnTank.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.missileLauncherButton      = btnMissileLauncher.gameObject;
+        hud.missileLauncherButtonLabel = btnMissileLauncher.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.strikeJetButton           = btnStrikeJet.gameObject;
+        hud.strikeJetButtonLabel      = btnStrikeJet.GetComponentInChildren<TextMeshProUGUI>(true);
 
         // Dozer build panel — separate panel shown when a Dozer unit is selected.
         hud.dozerBuildPanel                  = dozerBuildPanel.gameObject;
@@ -323,6 +332,7 @@ public static class SetupRTSHUD
         WireButton(btnDozer,          hud, nameof(RTSHUD.OnClickProduceDozer));
         WireButton(btnHumvee,         hud, nameof(RTSHUD.OnClickProduceHumvee));
         WireButton(btnTank,           hud, nameof(RTSHUD.OnClickProduceArtilleryTank));
+        WireButton(btnMissileLauncher, hud, nameof(RTSHUD.OnClickProduceMissileLauncher));
         WireButton(btnStrikeJet,      hud, nameof(RTSHUD.OnClickProduceStrikeJet));
         WireButton(btnDozerBuildBarracks,       hud, nameof(RTSHUD.OnClickDozerBuildBarracks));
         WireButton(btnDozerBuildPower,          hud, nameof(RTSHUD.OnClickDozerBuildPowerPlant));
@@ -333,7 +343,7 @@ public static class SetupRTSHUD
             ? "Build(DEBUG): Barracks+PowerPlant+VehicleFactory+Airfield, "
             : "Build: <disabled>, ";
         Debug.Log("[SetupRTSHUD] ✓ Buttons wired — " + buildSegment +
-                  "Production: Soldier+RPGSoldier+Worker+Dozer+Humvee+ArtilleryTank+StrikeJet, " +
+                  "Production: Soldier+RPGSoldier+Worker+Dozer+Humvee+ArtilleryTank+MissileLauncher+StrikeJet, " +
                   "DozerBuild: Barracks+PowerPlant+VehicleFactory+Airfield+MGDefense");
 
         // Ensure the HUD renders on top of any other scene UI
