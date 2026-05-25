@@ -180,6 +180,11 @@ public static class SetupCleanMatchMap
         // its singleton lookup doesn't care where the component lives.
         EnsureEnemyResourceManager(mm.gameObject);
 
+        // 6c. Wire EnemyBuildAI to its prefab references (creating any missing
+        // dress-building prefabs on the fly). Runs LAST among the gameplay
+        // setup steps so the in-scene EnemyBuildAI exists when it's wired.
+        RepairEnemyBuilderAI.Run();
+
         // 7. Camera ----------------------------------------------------------
         AimCameraAtPlayerStart();
 
@@ -583,6 +588,12 @@ public static class SetupCleanMatchMap
 
         enemyCC.AddComponent<EnemyCommandCenter>();
 
+        // Attach the build bot. It auto-starts on Play, spends from
+        // EnemyResourceManager, and drops the three set-dressing buildings
+        // around the CC. Toggle off via the component's enemyBuildAIEnabled
+        // field in the Inspector for clean economy-only tests.
+        enemyCC.AddComponent<EnemyBuildAI>();
+
         Health hp = enemyCC.AddComponent<Health>();
         hp.team   = Health.Team.Enemy;
         hp.maxHealth = 1500f;
@@ -610,6 +621,11 @@ public static class SetupCleanMatchMap
         {
             Debug.LogWarning("[MatchSetup]   WorkerPrefab.prefab missing — no enemy worker spawned.");
         }
+
+        // NOTE: NO Enemy Dozer at match start. EnemyBuildAI must EARN 150
+        // resources via EnemyWorkerAI gathering, then produce its own Dozer
+        // before any construction begins. Same code path handles replacement
+        // after the dozer is destroyed.
 
         return enemyCC;
     }

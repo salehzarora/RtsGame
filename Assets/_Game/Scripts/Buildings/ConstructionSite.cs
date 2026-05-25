@@ -52,6 +52,13 @@ public class ConstructionSite : MonoBehaviour
              "to this value. Match to the bar background's X scale set by the prefab tool.")]
     public float progressBarMaxScaleX = 1.6f;
 
+    [Header("Ownership")]
+    [Tooltip("Which team commissioned this site. Player sites default to Player and are " +
+             "the only ones the player can right-click to resume building. Enemy sites are " +
+             "set by EnemyBuildAI and ignored by player right-click. The final building " +
+             "carries its own team via its prefab's Health.team.")]
+    public Health.Team ownerTeam = Health.Team.Player;
+
     // ------------------------------------------------------------------ //
     // Public read-only runtime state
     // ------------------------------------------------------------------ //
@@ -80,6 +87,14 @@ public class ConstructionSite : MonoBehaviour
     /// <summary>The dozer currently working on this site, or null if abandoned.</summary>
     public DozerBuilder AssignedDozer { get; private set; }
 
+    /// <summary>
+    /// Fires once when construction completes, immediately before this site
+    /// destroys itself. The argument is the freshly spawned final building
+    /// instance. Used by enemy AI (and any future code) to parent / decorate
+    /// the placed building without coupling back into ConstructionSite.
+    /// </summary>
+    public event System.Action<GameObject> OnComplete;
+
     // ------------------------------------------------------------------ //
     // Private
     // ------------------------------------------------------------------ //
@@ -97,11 +112,24 @@ public class ConstructionSite : MonoBehaviour
     /// </summary>
     public void Initialise(GameObject finalPrefab, int cost, float buildTime, string label, Quaternion rotation)
     {
+        Initialise(finalPrefab, cost, buildTime, label, rotation, Health.Team.Player);
+    }
+
+    /// <summary>
+    /// Team-aware overload used by enemy build code. The base building's team
+    /// is determined by its prefab's Health.team; <paramref name="team"/> only
+    /// records which side commissioned the site so UnitSelector can ignore
+    /// right-click resume on enemy sites.
+    /// </summary>
+    public void Initialise(GameObject finalPrefab, int cost, float buildTime,
+                           string label, Quaternion rotation, Health.Team team)
+    {
         FinalBuildingPrefab = finalPrefab;
         BuildCost           = cost;
         BuildTime           = Mathf.Max(0.05f, buildTime);
         BuildingLabel       = string.IsNullOrEmpty(label) ? "Building" : label;
         finalRotation       = rotation;
+        ownerTeam           = team;
 
         // Reset the progress bar visual to zero.
         RefreshProgressVisual();
@@ -185,6 +213,10 @@ public class ConstructionSite : MonoBehaviour
             AssignedDozer.ReleaseBuildAssignment();
             AssignedDozer = null;
         }
+
+        // Notify subscribers (e.g. EnemyBuildAI) before we destroy ourselves —
+        // they may want to parent / decorate the placed building.
+        OnComplete?.Invoke(placed);
 
         Destroy(gameObject);
     }

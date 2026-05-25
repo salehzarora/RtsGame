@@ -318,7 +318,10 @@ public class UnitSelector : MonoBehaviour
             ConstructionSite site = siteHit.collider.GetComponent<ConstructionSite>()
                 ?? siteHit.collider.GetComponentInParent<ConstructionSite>();
 
-            if (site != null && site.IsAlive)
+            // Only the player's own sites can be right-click resumed. Enemy
+            // sites fall through so the right-click ends up doing whatever the
+            // selection normally would (move / attack-move).
+            if (site != null && site.IsAlive && site.ownerTeam == Health.Team.Player)
             {
                 bool anyDozer = false;
                 foreach (SelectableUnit unit in selectedUnits)
