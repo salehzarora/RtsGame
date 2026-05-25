@@ -117,6 +117,11 @@ public class UnitSelector : MonoBehaviour
 
     private void Update()
     {
+        // Yield input while the main menu is still up (game not yet started).
+        // GameStateManager.IsPlaying returns true if no manager is in the scene,
+        // so scenes without the menu keep working.
+        if (!GameStateManager.IsPlaying) return;
+
         // Yield all input to the placement system while a building is being placed
         if (BuildingPlacementManager.IsPlacing) return;
 

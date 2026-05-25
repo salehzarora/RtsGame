@@ -31,6 +31,18 @@ using UnityEngine.UI;
 public static class SetupRTSHUD
 {
     // ------------------------------------------------------------------ //
+    // Debug switch — legacy global Build panel
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// When false (the default), the legacy bottom-right "BuildPanel" with the
+    /// Barracks / PowerPlant / VehicleFactory / Airfield instant-build buttons
+    /// is NOT created. Normal gameplay routes all construction through a Dozer.
+    /// Flip to true only for debugging, then re-run Tools → RTS → Setup HUD.
+    /// </summary>
+    private const bool DebugInstantBuildEnabled = false;
+
+    // ------------------------------------------------------------------ //
     // Palette
     // ------------------------------------------------------------------ //
 
@@ -95,47 +107,59 @@ public static class SetupRTSHUD
             alignment:   TextAlignmentOptions.MidlineLeft);
         Debug.Log("[SetupRTSHUD] ✓ PowerText assigned (pos 460,0, size 320x45, 26pt)");
 
-        // ── 4. BuildPanel ────────────────────────────────────────────── //
-        RectTransform buildPanel = CreatePanel(canvas.transform, "BuildPanel", PanelBg);
+        // ── 4. BuildPanel (LEGACY — instant build, gated on debug flag) ── //
+        // Default: NOT created. Normal gameplay routes building construction
+        // through the Dozer. Flip DebugInstantBuildEnabled to bring back the
+        // bottom-right global build buttons.
+        RectTransform buildPanel       = null;
+        Button        btnBarracks      = null;
+        Button        btnPowerPlant    = null;
+        Button        btnVehicleFactory = null;
+        Button        btnAirfield      = null;
 
-        // Anchor: bottom-right corner, pivot bottom-right so offset is from corner
-        buildPanel.anchorMin        = new Vector2(1f, 0f);
-        buildPanel.anchorMax        = new Vector2(1f, 0f);
-        buildPanel.pivot            = new Vector2(1f, 0f);
-        buildPanel.anchoredPosition = new Vector2(-25f,  25f);
-        buildPanel.sizeDelta        = new Vector2(250f, 270f);
-        buildPanel.localScale       = Vector3.one;
-        buildPanel.gameObject.SetActive(true);
-        Debug.Log("[SetupRTSHUD] ✓ BuildPanel created (250x270, bottom-right, offset -25,25)");
+        if (DebugInstantBuildEnabled)
+        {
+            buildPanel = CreatePanel(canvas.transform, "BuildPanel", PanelBg);
 
-        // Four buttons stacked inside the BuildPanel (50px tall, 10px gap):
-        //   BtnBarracks       y = +90
-        //   BtnPowerPlant     y = +30
-        //   BtnVehicleFactory y = -30
-        //   BtnAirfield       y = -90
-        Button btnBarracks = CreateButton(
-            buildPanel, "BtnBarracks", "Barracks",
-            BtnBarracksColor,
-            anchoredPos: new Vector2(0f,  90f),
-            size:        new Vector2(220f, 50f));
+            // Anchor: bottom-right corner, pivot bottom-right so offset is from corner
+            buildPanel.anchorMin        = new Vector2(1f, 0f);
+            buildPanel.anchorMax        = new Vector2(1f, 0f);
+            buildPanel.pivot            = new Vector2(1f, 0f);
+            buildPanel.anchoredPosition = new Vector2(-25f,  25f);
+            buildPanel.sizeDelta        = new Vector2(250f, 270f);
+            buildPanel.localScale       = Vector3.one;
+            buildPanel.gameObject.SetActive(true);
+            Debug.Log("[SetupRTSHUD] ✓ BuildPanel created (DEBUG — instant build, 250x270, bottom-right)");
 
-        Button btnPowerPlant = CreateButton(
-            buildPanel, "BtnPowerPlant", "Power Plant",
-            BtnPowerColor,
-            anchoredPos: new Vector2(0f,  30f),
-            size:        new Vector2(220f, 50f));
+            // Four buttons stacked inside the BuildPanel (50px tall, 10px gap).
+            btnBarracks = CreateButton(
+                buildPanel, "BtnBarracks", "Barracks",
+                BtnBarracksColor,
+                anchoredPos: new Vector2(0f,  90f),
+                size:        new Vector2(220f, 50f));
 
-        Button btnVehicleFactory = CreateButton(
-            buildPanel, "BtnVehicleFactory", "Vehicle Factory",
-            BtnVehicleFactoryColor,
-            anchoredPos: new Vector2(0f, -30f),
-            size:        new Vector2(220f, 50f));
+            btnPowerPlant = CreateButton(
+                buildPanel, "BtnPowerPlant", "Power Plant",
+                BtnPowerColor,
+                anchoredPos: new Vector2(0f,  30f),
+                size:        new Vector2(220f, 50f));
 
-        Button btnAirfield = CreateButton(
-            buildPanel, "BtnAirfield", "Airfield",
-            BtnAirfieldColor,
-            anchoredPos: new Vector2(0f, -90f),
-            size:        new Vector2(220f, 50f));
+            btnVehicleFactory = CreateButton(
+                buildPanel, "BtnVehicleFactory", "Vehicle Factory",
+                BtnVehicleFactoryColor,
+                anchoredPos: new Vector2(0f, -30f),
+                size:        new Vector2(220f, 50f));
+
+            btnAirfield = CreateButton(
+                buildPanel, "BtnAirfield", "Airfield",
+                BtnAirfieldColor,
+                anchoredPos: new Vector2(0f, -90f),
+                size:        new Vector2(220f, 50f));
+        }
+        else
+        {
+            Debug.Log("[RTSHUD] Global instant build panel disabled.");
+        }
 
         // ── 4b. ProductionPanel (bottom-left) ─────────────────────────── //
         RectTransform productionPanel = CreatePanel(canvas.transform, "ProductionPanel", PanelBg);
@@ -274,11 +298,16 @@ public static class SetupRTSHUD
         hud.dozerBuildAirfieldLabel          = btnDozerBuildAirfield.GetComponentInChildren<TextMeshProUGUI>(true);
         EditorUtility.SetDirty(hud);
 
-        // Wire buttons to RTSHUD callback methods
-        WireButton(btnBarracks,       hud, nameof(RTSHUD.OnClickBuildBarracks));
-        WireButton(btnPowerPlant,     hud, nameof(RTSHUD.OnClickBuildPowerPlant));
-        WireButton(btnVehicleFactory, hud, nameof(RTSHUD.OnClickBuildVehicleFactory));
-        WireButton(btnAirfield,       hud, nameof(RTSHUD.OnClickBuildAirfield));
+        // Wire buttons to RTSHUD callback methods.
+        // Legacy instant-build buttons are only wired when the panel exists
+        // (i.e. DebugInstantBuildEnabled = true).
+        if (DebugInstantBuildEnabled)
+        {
+            WireButton(btnBarracks,       hud, nameof(RTSHUD.OnClickBuildBarracks));
+            WireButton(btnPowerPlant,     hud, nameof(RTSHUD.OnClickBuildPowerPlant));
+            WireButton(btnVehicleFactory, hud, nameof(RTSHUD.OnClickBuildVehicleFactory));
+            WireButton(btnAirfield,       hud, nameof(RTSHUD.OnClickBuildAirfield));
+        }
         WireButton(btnSoldier,        hud, nameof(RTSHUD.OnClickProduceSoldier));
         WireButton(btnRPGSoldier,     hud, nameof(RTSHUD.OnClickProduceRPGSoldier));
         WireButton(btnWorker,         hud, nameof(RTSHUD.OnClickProduceWorker));
@@ -290,7 +319,10 @@ public static class SetupRTSHUD
         WireButton(btnDozerBuildPower,          hud, nameof(RTSHUD.OnClickDozerBuildPowerPlant));
         WireButton(btnDozerBuildVF,             hud, nameof(RTSHUD.OnClickDozerBuildVehicleFactory));
         WireButton(btnDozerBuildAirfield,       hud, nameof(RTSHUD.OnClickDozerBuildAirfield));
-        Debug.Log("[SetupRTSHUD] ✓ Buttons wired — Build: Barracks+PowerPlant+VehicleFactory+Airfield, " +
+        string buildSegment = DebugInstantBuildEnabled
+            ? "Build(DEBUG): Barracks+PowerPlant+VehicleFactory+Airfield, "
+            : "Build: <disabled>, ";
+        Debug.Log("[SetupRTSHUD] ✓ Buttons wired — " + buildSegment +
                   "Production: Soldier+RPGSoldier+Worker+Dozer+Humvee+ArtilleryTank+StrikeJet, " +
                   "DozerBuild: Barracks+PowerPlant+VehicleFactory+Airfield");
 
@@ -323,6 +355,12 @@ public static class SetupRTSHUD
                   $"offsetMin={topBar.offsetMin}, offsetMax={topBar.offsetMax}, " +
                   $"sizeDelta={topBar.sizeDelta}, scale={topBar.localScale}, " +
                   $"active={topBar.gameObject.activeInHierarchy}");
+
+        if (buildPanel == null)
+        {
+            Debug.Log("[SetupRTSHUD][DEBUG] BuildPanel: <not created — DebugInstantBuildEnabled = false>");
+            return;
+        }
 
         Debug.Log($"[SetupRTSHUD][DEBUG] BuildPanel: anchorMin={buildPanel.anchorMin}, " +
                   $"anchorMax={buildPanel.anchorMax}, pivot={buildPanel.pivot}, " +

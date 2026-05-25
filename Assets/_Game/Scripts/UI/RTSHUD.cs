@@ -454,6 +454,11 @@ public class RTSHUD : MonoBehaviour
             return;
         }
 
+        // Only log the transition (off → on) so re-selecting the same dozer
+        // each frame doesn't spam the console.
+        if (currentDozer != dozer)
+            Debug.Log("[RTSHUD] Showing Dozer build panel.");
+
         currentDozer = dozer;
 
         // Hide the building production panel while the Dozer panel is up — the
@@ -478,6 +483,10 @@ public class RTSHUD : MonoBehaviour
     /// <summary>Hides the Dozer build panel and forgets the bound Dozer.</summary>
     public void HideDozerBuildPanel()
     {
+        // Only log the transition (on → off).
+        if (currentDozer != null)
+            Debug.Log("[RTSHUD] Hiding Dozer build panel.");
+
         currentDozer = null;
         if (dozerBuildPanel != null)
             dozerBuildPanel.SetActive(false);

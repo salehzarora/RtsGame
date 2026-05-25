@@ -44,6 +44,10 @@ public class RTSCamera : MonoBehaviour
 
     private void Update()
     {
+        // Yield input while the main menu is open. Null-safe — if no
+        // GameStateManager is in the scene we fall through to normal behaviour.
+        if (!GameStateManager.IsPlaying) return;
+
         HandlePan();
         HandleZoom();
         HandleRotation();

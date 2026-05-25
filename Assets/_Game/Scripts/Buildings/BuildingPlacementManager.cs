@@ -149,6 +149,13 @@ public class BuildingPlacementManager : MonoBehaviour
 
     private void Update()
     {
+        // Gate everything while the main menu is still up.
+        if (!GameStateManager.IsPlaying)
+        {
+            if (IsPlacing) CancelPlacement();
+            return;
+        }
+
         // Enter instant-placement mode via hotkeys — gated on debug switch.
         // Normal gameplay enters DozerSite placement via HUD callbacks.
         if (!IsPlacing)
