@@ -830,6 +830,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Health
   team: 0
   maxHealth: 90
+  destroyDelay: 0
 --- !u!195 &8814959003372386060
 NavMeshAgent:
   m_ObjectHideFlags: 0

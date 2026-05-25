@@ -32,6 +32,12 @@ public class Health : MonoBehaviour
     [Header("Health")]
     public float maxHealth = 100f;
 
+    [Header("Destruction")]
+    [Tooltip("Seconds to wait between OnDeath firing and the GameObject being destroyed. " +
+             "Leave 0 to destroy immediately (default — unchanged behaviour). " +
+             "Set ~1.5–2.0 on units that play a death animation so the clip has time to play.")]
+    public float destroyDelay = 0f;
+
     // ------------------------------------------------------------------ //
     // Runtime state
     // ------------------------------------------------------------------ //
@@ -77,6 +83,16 @@ public class Health : MonoBehaviour
     private void Die()
     {
         OnDeath?.Invoke();
+
+        if (destroyDelay > 0f)
+            StartCoroutine(DelayedDestroy(destroyDelay));
+        else
+            Destroy(gameObject);
+    }
+
+    private System.Collections.IEnumerator DelayedDestroy(float seconds)
+    {
+        yield return new WaitForSeconds(seconds);
         Destroy(gameObject);
     }
 }

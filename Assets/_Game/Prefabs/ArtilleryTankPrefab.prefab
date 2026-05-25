@@ -832,6 +832,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Health
   team: 0
   maxHealth: 420
+  destroyDelay: 0
 --- !u!114 &3602393899260785284
 MonoBehaviour:
   m_ObjectHideFlags: 0
