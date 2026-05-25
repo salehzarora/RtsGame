@@ -102,6 +102,14 @@ public class RTSHUD : MonoBehaviour
              "when a producer is selected. Leave null to keep the static label.")]
     public TextMeshProUGUI missileLauncherButtonLabel;
 
+    [Tooltip("APC button GameObject. Visibility is toggled per producer " +
+             "(visible only when the selected VehicleFactoryProducer.CanProduceAPC).")]
+    public GameObject apcButton;
+
+    [Tooltip("The TMP label inside the APC button — updated to show cost " +
+             "when a producer is selected. Leave null to keep the static label.")]
+    public TextMeshProUGUI apcButtonLabel;
+
     [Tooltip("Strike Jet button GameObject. Visibility is toggled per producer " +
              "(visible only when the selected Airfield.CanProduceStrikeJet).")]
     public GameObject strikeJetButton;
@@ -135,6 +143,28 @@ public class RTSHUD : MonoBehaviour
     public GameObject dozerBuildMachineGunDefenseButton;
     public TextMeshProUGUI dozerBuildMachineGunDefenseLabel;
 
+    [Header("Transport Panel (shown when an APC is selected)")]
+    [Tooltip("Bottom-left panel shown only when at least one selected unit carries " +
+             "an APCTransport. Holds the title, 6 passenger slots, and the Unload All " +
+             "button.")]
+    public GameObject transportPanel;
+
+    [Tooltip("Title label at the top of the transport panel — refreshed with " +
+             "'Transport (current/capacity)' each frame the panel is visible.")]
+    public TextMeshProUGUI transportTitleLabel;
+
+    [Tooltip("Six passenger slot buttons (must be exactly 6 entries). Index 0..5. " +
+             "Clicking an occupied slot unloads that one passenger via " +
+             "OnClickUnloadSlot{N}.")]
+    public GameObject[] transportSlotButtons = new GameObject[6];
+
+    [Tooltip("Labels inside the slot buttons (must be exactly 6 entries) — refreshed " +
+             "each frame with the passenger's short name or 'Empty'.")]
+    public TextMeshProUGUI[] transportSlotLabels = new TextMeshProUGUI[6];
+
+    [Tooltip("Unload All button. Wired to OnClickUnloadAll.")]
+    public GameObject transportUnloadAllButton;
+
     // ------------------------------------------------------------------ //
     // Private references — found at runtime
     // ------------------------------------------------------------------ //
@@ -154,6 +184,10 @@ public class RTSHUD : MonoBehaviour
     // UnitSelector via ShowDozerBuildPanel. The Dozer build panel is hidden
     // when this reference is null OR when the dozer's GameObject is destroyed.
     private DozerBuilder           currentDozer;
+
+    // Currently bound APC transport — set by UnitSelector via ShowTransportPanel.
+    // Drives the per-frame slot refresh in LateUpdate.
+    private APCTransport           currentTransport;
 
     // ------------------------------------------------------------------ //
 
@@ -177,12 +211,27 @@ public class RTSHUD : MonoBehaviour
         // Dozer build panel is hidden until a dozer unit is selected
         if (dozerBuildPanel != null)
             dozerBuildPanel.SetActive(false);
+
+        // Transport panel is hidden until an APC is selected
+        if (transportPanel != null)
+            transportPanel.SetActive(false);
     }
 
     private void LateUpdate()
     {
         RefreshResources();
         RefreshPower();
+
+        // Per-frame transport slot refresh — covers passenger join/leave
+        // events without a dedicated observer hookup.
+        if (currentTransport != null && !currentTransport)
+        {
+            HideTransportPanel();   // APC died with the panel open
+        }
+        else if (currentTransport != null && transportPanel != null && transportPanel.activeSelf)
+        {
+            RefreshTransportSlots();
+        }
     }
 
     // ------------------------------------------------------------------ //
@@ -275,12 +324,13 @@ public class RTSHUD : MonoBehaviour
         bool showWorker          = workerProd  != null && workerProd.CanProduceWorker;
         bool showDozer           = workerProd  != null && workerProd.CanProduceDozer;
         bool showHumvee          = vehicleProd != null && vehicleProd.CanProduceHumvee;
+        bool showAPC             = vehicleProd != null && vehicleProd.CanProduceAPC;
         bool showTank            = vehicleProd != null && vehicleProd.CanProduceArtilleryTank;
         bool showMissileLauncher = vehicleProd != null && vehicleProd.CanProduceMissileLauncher;
         bool showStrikeJet       = airfield    != null && airfield.CanProduceStrikeJet;
 
         if (!showSoldier && !showRPGSoldier && !showWorker && !showDozer
-            && !showHumvee && !showTank && !showMissileLauncher && !showStrikeJet)
+            && !showHumvee && !showAPC && !showTank && !showMissileLauncher && !showStrikeJet)
         {
             HideProductionPanel();
             return;
@@ -291,7 +341,7 @@ public class RTSHUD : MonoBehaviour
         // CommandCenter producer drives both Worker and Dozer buttons.
         currentWorkerProducer  = (showWorker  || showDozer)       ? workerProd  : null;
         // Vehicle producer is bound when any of its outputs is available.
-        currentVehicleProducer = (showHumvee || showTank || showMissileLauncher) ? vehicleProd : null;
+        currentVehicleProducer = (showHumvee || showAPC || showTank || showMissileLauncher) ? vehicleProd : null;
         currentAirfield        = showStrikeJet                    ? airfield    : null;
 
         if (productionPanel != null)
@@ -331,6 +381,13 @@ public class RTSHUD : MonoBehaviour
 
         if (showHumvee && humveeButtonLabel != null)
             humveeButtonLabel.text = $"Humvee - {vehicleProd.humveeCost}";
+
+        // --- APC button ------------------------------------------------ //
+        if (apcButton != null)
+            apcButton.SetActive(showAPC);
+
+        if (showAPC && apcButtonLabel != null)
+            apcButtonLabel.text = $"APC - {vehicleProd.apcCost}";
 
         // --- Artillery Tank button ------------------------------------- //
         if (tankButton != null)
@@ -457,6 +514,19 @@ public class RTSHUD : MonoBehaviour
         currentVehicleProducer.ProduceMissileLauncher();
     }
 
+    /// <summary>Called by the APC button. Produces from the bound VehicleFactoryProducer.</summary>
+    public void OnClickProduceAPC()
+    {
+        if (currentVehicleProducer == null)
+        {
+            Debug.LogWarning("[RTSHUD] APC button clicked but no Vehicle producer is selected. " +
+                             "Select a VehicleFactory first.");
+            return;
+        }
+
+        currentVehicleProducer.ProduceAPC();
+    }
+
     /// <summary>Called by the Strike Jet button. Produces from the bound Airfield.</summary>
     public void OnClickProduceStrikeJet()
     {
@@ -576,5 +646,162 @@ public class RTSHUD : MonoBehaviour
             return false;
         }
         return true;
+    }
+
+    // ================================================================== //
+    // Transport panel — shown when an APC is selected
+    // ================================================================== //
+
+    /// <summary>
+    /// Bind the panel to <paramref name="apc"/> and show it. Called by
+    /// UnitSelector when at least one selected unit carries an APCTransport.
+    /// </summary>
+    public void ShowTransportPanel(APCTransport apc)
+    {
+        if (apc == null)
+        {
+            HideTransportPanel();
+            return;
+        }
+
+        if (currentTransport != apc)
+            Debug.Log($"[RTSHUD] Showing transport panel for '{apc.name}'.");
+
+        currentTransport = apc;
+
+        if (transportPanel != null)
+            transportPanel.SetActive(true);
+
+        RefreshTransportSlots();
+    }
+
+    /// <summary>Hide the transport panel and drop the bound APC reference.</summary>
+    public void HideTransportPanel()
+    {
+        if (currentTransport != null)
+            Debug.Log("[RTSHUD] Hiding transport panel.");
+
+        currentTransport = null;
+        if (transportPanel != null)
+            transportPanel.SetActive(false);
+    }
+
+    /// <summary>
+    /// Refresh the 6 slot labels + title based on the bound APC's passenger
+    /// list. Called every LateUpdate while the panel is visible so passengers
+    /// joining or leaving are reflected without an extra event hookup.
+    /// </summary>
+    private void RefreshTransportSlots()
+    {
+        if (currentTransport == null) return;
+
+        int count = currentTransport.PassengerCount;
+        int cap   = currentTransport.capacity;
+
+        if (transportTitleLabel != null)
+            transportTitleLabel.text = $"Transport ({count}/{cap})";
+
+        for (int i = 0; i < transportSlotButtons.Length; i++)
+        {
+            bool occupied = i < count;
+            GameObject slotGO = transportSlotButtons[i];
+
+            if (transportSlotLabels != null && i < transportSlotLabels.Length && transportSlotLabels[i] != null)
+            {
+                if (occupied)
+                {
+                    GameObject p = currentTransport.Passengers[i];
+                    transportSlotLabels[i].text = currentTransport.ResolvePassengerLabel(p);
+                }
+                else
+                {
+                    transportSlotLabels[i].text = "Empty";
+                }
+            }
+
+            // Visual feedback: dim empty slots, brighten occupied ones via
+            // child Image color if present. (The Button itself stays
+            // interactable so the player can click empty slots — they no-op.)
+            if (slotGO != null)
+            {
+                UnityEngine.UI.Image img = slotGO.GetComponent<UnityEngine.UI.Image>();
+                if (img != null)
+                {
+                    Color c = img.color;
+                    c.a = occupied ? 1.0f : 0.40f;
+                    img.color = c;
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    // Transport button callbacks — wired by SetupRTSHUD
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Called by the Unload All button. Fans the command across EVERY selected
+    /// friendly APC — not just the primary panel binding — so multi-select
+    /// drop-offs work in one click. APCs with no passengers are skipped silently.
+    /// </summary>
+    public void OnClickUnloadAll()
+    {
+        // Multi-APC path: collect every selected friendly APCTransport.
+        UnitSelector sel = UnitSelector.Instance;
+        if (sel != null)
+        {
+            System.Collections.Generic.List<APCTransport> apcs = sel.GetSelectedPlayerAPCs();
+
+            // Fallback to the panel-bound APC if the selector lost focus
+            // (e.g. the player clicked into the HUD area).
+            if (apcs.Count == 0 && currentTransport != null)
+                apcs.Add(currentTransport);
+
+            if (apcs.Count == 0)
+            {
+                Debug.LogWarning("[RTSHUD] Unload All clicked but no APC is selected.");
+                return;
+            }
+
+            int activated = 0;
+            foreach (APCTransport t in apcs)
+            {
+                if (t == null) continue;
+                if (t.PassengerCount == 0) continue;     // empty APC — skip safely
+                t.UnloadAll();
+                activated++;
+            }
+
+            Debug.Log($"[RTSHUD] Unload All issued to {activated} APC transport(s).");
+            return;
+        }
+
+        // No UnitSelector in the scene — single-APC fallback via panel binding.
+        if (currentTransport == null)
+        {
+            Debug.LogWarning("[RTSHUD] Unload All clicked but no APC is bound to the transport panel.");
+            return;
+        }
+        currentTransport.UnloadAll();
+    }
+
+    /// <summary>
+    /// Called when the player clicks a passenger slot. The slot index is
+    /// hard-coded per button (6 buttons → 6 methods) because Unity's
+    /// persistent button listeners can't pass arbitrary integer args.
+    /// Empty slots silently no-op.
+    /// </summary>
+    public void OnClickUnloadSlot0() => UnloadSlotIfValid(0);
+    public void OnClickUnloadSlot1() => UnloadSlotIfValid(1);
+    public void OnClickUnloadSlot2() => UnloadSlotIfValid(2);
+    public void OnClickUnloadSlot3() => UnloadSlotIfValid(3);
+    public void OnClickUnloadSlot4() => UnloadSlotIfValid(4);
+    public void OnClickUnloadSlot5() => UnloadSlotIfValid(5);
+
+    private void UnloadSlotIfValid(int index)
+    {
+        if (currentTransport == null) return;
+        if (index < 0 || index >= currentTransport.PassengerCount) return;     // empty slot
+        currentTransport.UnloadPassengerAtIndex(index);
     }
 }

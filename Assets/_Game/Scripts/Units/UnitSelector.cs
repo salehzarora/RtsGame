@@ -44,10 +44,24 @@ public class UnitSelector : MonoBehaviour
     public RectTransform selectionBoxRect;
 
     // ------------------------------------------------------------------ //
+    // Static accessor so APCTransport (and any future external code) can
+    // remove a unit from the active selection when it leaves the battlefield.
+    // ------------------------------------------------------------------ //
+
+    public static UnitSelector Instance { get; private set; }
+
+    // ------------------------------------------------------------------ //
 
     private readonly List<SelectableUnit>     selectedUnits     = new List<SelectableUnit>();
     private readonly List<SelectableAircraft> selectedAircraft  = new List<SelectableAircraft>();
     private SelectableBuilding                selectedBuilding;
+
+    /// <summary>
+    /// Read-only view of the currently selected ground units. Consumed by
+    /// hover/cursor systems (e.g. <see cref="TransportHoverIndicator"/>) that
+    /// need to peek at the selection without mutating it.
+    /// </summary>
+    public IReadOnlyList<SelectableUnit> SelectedUnits => selectedUnits;
 
     // Monotonically incrementing launch-group ID for multi-aircraft commands.
     // Static so the value is shared across UnitSelector lifetimes if the
@@ -83,6 +97,7 @@ public class UnitSelector : MonoBehaviour
 
     private void Awake()
     {
+        Instance     = this;
         mainCam      = Camera.main;
         hud          = FindAnyObjectByType<RTSHUD>();
         attackMarker = FindAnyObjectByType<AttackTargetMarker>();
@@ -144,8 +159,9 @@ public class UnitSelector : MonoBehaviour
         bool jPressed = Input.GetKeyDown(KeyCode.J);
         bool rPressed = Input.GetKeyDown(KeyCode.R);
         bool mPressed = Input.GetKeyDown(KeyCode.M);
+        bool aPressed = Input.GetKeyDown(KeyCode.A);
         if (!sPressed && !wPressed && !dPressed && !hPressed && !tPressed
-            && !jPressed && !rPressed && !mPressed) return;
+            && !jPressed && !rPressed && !mPressed && !aPressed) return;
 
         if (selectedBuilding == null)
         {
@@ -203,6 +219,13 @@ public class UnitSelector : MonoBehaviour
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
             if (vp != null && vp.CanProduceMissileLauncher) vp.ProduceMissileLauncher();
+        }
+
+        // A → APC (VehicleFactory only). Silent no-op otherwise.
+        if (aPressed)
+        {
+            VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
+            if (vp != null && vp.CanProduceAPC) vp.ProduceAPC();
         }
 
         // J → Strike Jet (Airfield only). Silent no-op otherwise.
@@ -364,6 +387,21 @@ public class UnitSelector : MonoBehaviour
             Health targetHealth = unitHit.collider.GetComponent<Health>()
                 ?? unitHit.collider.GetComponentInParent<Health>();
 
+            // --- Friendly APC → board if any selected unit is infantry -----
+            if (targetHealth != null && targetHealth.team == Health.Team.Player)
+            {
+                APCTransport apc = unitHit.collider.GetComponent<APCTransport>()
+                    ?? unitHit.collider.GetComponentInParent<APCTransport>();
+
+                if (apc != null && TryStartBoarding(apc))
+                {
+                    attackMarker?.Hide();
+                    return;
+                }
+                // No infantry selected (or no APCTransport) — fall through to
+                // Priority 2 / 3 so vehicles in the selection can still move.
+            }
+
             if (targetHealth != null && targetHealth.team == Health.Team.Enemy)
             {
                 Debug.Log($"[UnitSelector] Attack target selected: {targetHealth.name} " +
@@ -382,6 +420,8 @@ public class UnitSelector : MonoBehaviour
                     // Dozer is unarmed but if it's in the selection, abandon its
                     // current build assignment so it follows the new order.
                     unit.GetComponent<DozerBuilder>()?.ReleaseBuildAssignment();
+                    // Manual attack overrides a pending board command.
+                    unit.GetComponent<InfantryBoardingAgent>()?.CancelBoarding();
                 }
 
                 // Aircraft use AirUnitController (takeoff + fly + missile + return).
@@ -436,6 +476,8 @@ public class UnitSelector : MonoBehaviour
                 // The construction site itself is NOT destroyed — the player
                 // can right-click it later to resume.
                 unit.GetComponent<DozerBuilder>()?.ReleaseBuildAssignment();
+                // Manual move overrides a pending board command.
+                unit.GetComponent<InfantryBoardingAgent>()?.CancelBoarding();
             }
 
             attackMarker?.Hide();
@@ -604,6 +646,22 @@ public class UnitSelector : MonoBehaviour
         selectedUnits.Add(unit);
         unit.Select();
         RefreshDozerBuildPanel();
+        RefreshTransportPanel();
+    }
+
+    /// <summary>
+    /// Drops <paramref name="unit"/> from the active selection. Called by
+    /// <see cref="APCTransport.LoadUnit"/> when a soldier boards (so the
+    /// player can't keep commanding a passenger that no longer exists on
+    /// the battlefield).
+    /// </summary>
+    public void RemoveFromSelection(SelectableUnit unit)
+    {
+        if (unit == null) return;
+        if (!selectedUnits.Remove(unit)) return;
+        unit.Deselect();
+        RefreshDozerBuildPanel();
+        RefreshTransportPanel();
     }
 
     private void AddAircraftToSelection(SelectableAircraft aircraft)
@@ -628,8 +686,9 @@ public class UnitSelector : MonoBehaviour
         // continue their current command.
         attackMarker?.Hide();
 
-        // No units means no dozer — collapse the dozer build panel too.
+        // No units means no dozer / no APC — collapse those panels.
         RefreshDozerBuildPanel();
+        RefreshTransportPanel();
     }
 
     // ------------------------------------------------------------------ //
@@ -663,6 +722,103 @@ public class UnitSelector : MonoBehaviour
             hud.ShowDozerBuildPanel(dozer);
         else
             hud.HideDozerBuildPanel();
+    }
+
+    /// <summary>Re-evaluate the APC transport panel after any selection change.</summary>
+    private void RefreshTransportPanel()
+    {
+        if (hud == null) return;
+
+        APCTransport apc = GetPrimarySelectedAPC();
+        if (apc != null)
+            hud.ShowTransportPanel(apc);
+        else
+            hud.HideTransportPanel();
+    }
+
+    /// <summary>
+    /// Returns the first selected unit that carries an <see cref="APCTransport"/>,
+    /// or null. Mirrors the Dozer pattern — multi-APC selection picks the first
+    /// one added; extending to a per-APC switcher is a later milestone.
+    /// </summary>
+    private APCTransport GetPrimarySelectedAPC()
+    {
+        foreach (SelectableUnit u in selectedUnits)
+        {
+            if (u == null) continue;
+            APCTransport apc = u.GetComponent<APCTransport>();
+            if (apc != null) return apc;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Returns every selected <see cref="APCTransport"/> on the Player team.
+    /// Consumed by <c>RTSHUD.OnClickUnloadAll</c> so the Unload All button
+    /// fans across every selected friendly APC. Enemy APCs (if any future
+    /// spawn) are filtered out so the player UI can't unload them.
+    /// </summary>
+    public List<APCTransport> GetSelectedPlayerAPCs()
+    {
+        var result = new List<APCTransport>();
+        foreach (SelectableUnit u in selectedUnits)
+        {
+            if (u == null) continue;
+            APCTransport apc = u.GetComponent<APCTransport>();
+            if (apc == null) continue;
+
+            Health h = apc.GetComponent<Health>();
+            if (h != null && h.team != Health.Team.Player) continue;
+
+            result.Add(apc);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Attempts to send every infantry in the current selection to board
+    /// <paramref name="apc"/>. Vehicles / aircraft in the selection are
+    /// ignored. Returns true if at least one infantry was sent — used by the
+    /// right-click router to decide whether to consume the click.
+    /// </summary>
+    private bool TryStartBoarding(APCTransport apc)
+    {
+        if (apc == null) return false;
+
+        bool anyInfantry = false;
+        bool warnedFull  = false;
+
+        foreach (SelectableUnit unit in selectedUnits)
+        {
+            if (unit == null) continue;
+            if (!apc.CanLoad(unit.gameObject)) continue;     // not infantry / worker / wrong team
+
+            anyInfantry = true;
+
+            if (!apc.HasSpace())
+            {
+                if (!warnedFull)
+                {
+                    Debug.Log("[APC] Transport full — extra infantry will idle near the APC.");
+                    warnedFull = true;
+                }
+                continue;
+            }
+
+            // Clear any prior intent so the boarding agent owns the unit's
+            // movement / combat for the duration of the approach.
+            unit.GetComponent<UnitCombat>()?.ClearTarget();
+            unit.GetComponent<RocketCombat>()?.ClearTarget();
+            unit.GetComponent<MissileLauncherCombat>()?.ClearTarget();
+            unit.GetComponent<WorkerGatherer>()?.CancelGathering();
+
+            // Reuse an existing agent if present (retarget mid-approach).
+            InfantryBoardingAgent ba = unit.GetComponent<InfantryBoardingAgent>();
+            if (ba == null) ba = unit.gameObject.AddComponent<InfantryBoardingAgent>();
+            ba.StartBoarding(apc);
+        }
+
+        return anyInfantry;
     }
 
     // ------------------------------------------------------------------ //

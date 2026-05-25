@@ -66,6 +66,17 @@ public class VehicleFactoryProducer : MonoBehaviour
     [Tooltip("Keyboard shortcut to produce a Missile Launcher (UnitSelector hardcodes M)")]
     public KeyCode produceMissileLauncherKey = KeyCode.M;
 
+    [Header("APC Production")]
+    [Tooltip("The APC prefab — 8-wheeled armored troop carrier with primary MG + " +
+             "short-range AA. Created by Tools → RTS → Vehicles → Create APC Prefab.")]
+    public GameObject apcPrefab;
+
+    [Tooltip("Resource cost per APC")]
+    public int apcCost = 600;
+
+    [Tooltip("Keyboard shortcut to produce an APC (UnitSelector hardcodes A)")]
+    public KeyCode produceAPCKey = KeyCode.A;
+
     // ------------------------------------------------------------------ //
     // Inspector — Shared spawn location
     // ------------------------------------------------------------------ //
@@ -92,6 +103,9 @@ public class VehicleFactoryProducer : MonoBehaviour
 
     /// <summary>True when this producer has a Missile Launcher prefab assigned.</summary>
     public bool CanProduceMissileLauncher => missileLauncherPrefab != null;
+
+    /// <summary>True when this producer has an APC prefab assigned.</summary>
+    public bool CanProduceAPC => apcPrefab != null;
 
     // ------------------------------------------------------------------ //
     // Private
@@ -145,6 +159,18 @@ public class VehicleFactoryProducer : MonoBehaviour
             return;
         }
         SpawnUnit(missileLauncherPrefab, missileLauncherCost, "Missile Launcher");
+    }
+
+    /// <summary>Spawn one APC. No-op (logs info) if no prefab is assigned.</summary>
+    public void ProduceAPC()
+    {
+        if (!CanProduceAPC)
+        {
+            Debug.Log($"[VehicleFactory] '{name}' has no APC prefab assigned — ignoring. " +
+                      "Run Tools → RTS → Vehicles → Create APC Prefab.");
+            return;
+        }
+        SpawnUnit(apcPrefab, apcCost, "APC");
     }
 
     // ------------------------------------------------------------------ //

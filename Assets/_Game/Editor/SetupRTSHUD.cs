@@ -58,6 +58,7 @@ public static class SetupRTSHUD
     private static readonly Color BtnDozerColor         = new Color(0.92f, 0.72f, 0.12f, 1.00f); // dozer yellow
     private static readonly Color BtnHumveeColor        = new Color(0.28f, 0.36f, 0.22f, 1.00f); // olive drab
     private static readonly Color BtnTankColor          = new Color(0.18f, 0.28f, 0.16f, 1.00f); // dark olive
+    private static readonly Color BtnAPCColor           = new Color(0.36f, 0.44f, 0.24f, 1.00f); // armored olive
     private static readonly Color BtnMissileLauncherColor = new Color(0.32f, 0.38f, 0.20f, 1.00f); // olive-tan launcher truck
     private static readonly Color BtnStrikeJetColor     = new Color(0.45f, 0.55f, 0.65f, 1.00f); // air-force blue
 
@@ -169,12 +170,12 @@ public static class SetupRTSHUD
         productionPanel.anchorMax        = new Vector2(0f, 0f);
         productionPanel.pivot            = new Vector2(0f, 0f);
         productionPanel.anchoredPosition = new Vector2( 25f, 25f);
-        productionPanel.sizeDelta        = new Vector2(250f, 510f);
+        productionPanel.sizeDelta        = new Vector2(250f, 570f);
         productionPanel.localScale       = Vector3.one;
         productionPanel.gameObject.SetActive(false); // hidden until a producer is selected
-        Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x510, bottom-left, hidden by default)");
+        Debug.Log("[SetupRTSHUD] ✓ ProductionPanel created (250x570, bottom-left, hidden by default)");
 
-        // Eight buttons stacked inside the ProductionPanel (50px tall, 10px gap).
+        // Nine buttons stacked inside the ProductionPanel (50px tall, 10px gap).
         // RTSHUD.ShowProductionFor toggles each one based on the selected
         // building's producer capabilities — Barracks shows Soldier + RPG Soldier
         // together, CommandCenter shows Worker + Dozer, VehicleFactory shows
@@ -182,49 +183,55 @@ public static class SetupRTSHUD
         Button btnSoldier = CreateButton(
             productionPanel, "BtnSoldier", "Soldier - 50",
             BtnSoldierColor,
-            anchoredPos: new Vector2(0f, 210f),
+            anchoredPos: new Vector2(0f, 240f),
             size:        new Vector2(220f, 50f));
 
         Button btnRPGSoldier = CreateButton(
             productionPanel, "BtnRPGSoldier", "RPG Soldier - 120",
             BtnRPGSoldierColor,
-            anchoredPos: new Vector2(0f, 150f),
+            anchoredPos: new Vector2(0f, 180f),
             size:        new Vector2(220f, 50f));
 
         Button btnWorker = CreateButton(
             productionPanel, "BtnWorker", "Worker - 75",
             BtnWorkerColor,
-            anchoredPos: new Vector2(0f,  90f),
+            anchoredPos: new Vector2(0f, 120f),
             size:        new Vector2(220f, 50f));
 
         Button btnDozer = CreateButton(
             productionPanel, "BtnDozer", "Dozer - 150",
             BtnDozerColor,
-            anchoredPos: new Vector2(0f,  30f),
+            anchoredPos: new Vector2(0f,  60f),
             size:        new Vector2(220f, 50f));
 
         Button btnHumvee = CreateButton(
             productionPanel, "BtnHumvee", "Humvee - 150",
             BtnHumveeColor,
-            anchoredPos: new Vector2(0f, -30f),
+            anchoredPos: new Vector2(0f,   0f),
+            size:        new Vector2(220f, 50f));
+
+        Button btnAPC = CreateButton(
+            productionPanel, "BtnAPC", "APC - 600",
+            BtnAPCColor,
+            anchoredPos: new Vector2(0f, -60f),
             size:        new Vector2(220f, 50f));
 
         Button btnTank = CreateButton(
             productionPanel, "BtnArtilleryTank", "Artillery Tank - 350",
             BtnTankColor,
-            anchoredPos: new Vector2(0f, -90f),
+            anchoredPos: new Vector2(0f, -120f),
             size:        new Vector2(220f, 50f));
 
         Button btnMissileLauncher = CreateButton(
             productionPanel, "BtnMissileLauncher", "Missile Launcher - 1100",
             BtnMissileLauncherColor,
-            anchoredPos: new Vector2(0f,-150f),
+            anchoredPos: new Vector2(0f,-180f),
             size:        new Vector2(220f, 50f));
 
         Button btnStrikeJet = CreateButton(
             productionPanel, "BtnStrikeJet", "Strike Jet - 450",
             BtnStrikeJetColor,
-            anchoredPos: new Vector2(0f,-210f),
+            anchoredPos: new Vector2(0f,-240f),
             size:        new Vector2(220f, 50f));
 
         // ── 4c. Dozer Build Panel (bottom-left, shown when Dozer selected) ─ //
@@ -269,6 +276,98 @@ public static class SetupRTSHUD
             anchoredPos: new Vector2(0f,-120f),
             size:        new Vector2(220f, 50f));
 
+        // ── 4d. Transport Panel (bottom-left, shown when an APC is selected) ─ //
+        // 6 slot buttons in a 3-wide × 2-row grid + "Unload All" at the bottom.
+        // Lives in the same bottom-left slot as ProductionPanel / DozerBuildPanel —
+        // RTSHUD only ever shows ONE of the three at a time so they don't overlap.
+        RectTransform transportPanel = CreatePanel(canvas.transform, "TransportPanel", PanelBg);
+        transportPanel.anchorMin        = new Vector2(0f, 0f);
+        transportPanel.anchorMax        = new Vector2(0f, 0f);
+        transportPanel.pivot            = new Vector2(0f, 0f);
+        transportPanel.anchoredPosition = new Vector2( 25f, 25f);
+        transportPanel.sizeDelta        = new Vector2(260f, 260f);
+        transportPanel.localScale       = Vector3.one;
+        transportPanel.gameObject.SetActive(false); // hidden until an APC is selected
+        Debug.Log("[SetupRTSHUD] ✓ TransportPanel created (260x260, bottom-left, hidden by default)");
+
+        TextMeshProUGUI transportTitle = CreateTMPText(
+            transportPanel, "TransportTitle", "Transport (0/6)",
+            anchoredPos: new Vector2(0f, 110f),
+            size:        new Vector2(240f, 30f),
+            fontSize:    20,
+            alignment:   TextAlignmentOptions.Center);
+
+        // Six slot buttons in a 3×2 grid. Each button has its own click handler
+        // OnClickUnloadSlot{0..5}; the slot label text is updated by RTSHUD each
+        // frame the panel is visible.
+        Button[]            slotButtons = new Button[6];
+        TextMeshProUGUI[]   slotLabels  = new TextMeshProUGUI[6];
+        Color slotColor = new Color(0.30f, 0.40f, 0.20f, 1f);
+        for (int i = 0; i < 6; i++)
+        {
+            int col = i % 3;
+            int row = i / 3;
+            float x = (col - 1) * 80f;          // -80, 0, +80
+            float y = row == 0 ? 40f : -25f;    // top row y=40, bottom row y=-25
+            Button btn = CreateButton(
+                transportPanel, $"BtnSlot_{i}", "Empty",
+                slotColor,
+                anchoredPos: new Vector2(x, y),
+                size:        new Vector2(75f, 55f));
+            slotButtons[i] = btn;
+            slotLabels[i]  = btn.GetComponentInChildren<TextMeshProUGUI>(true);
+        }
+
+        // Unload All button beneath the slot grid.
+        Button btnUnloadAll = CreateButton(
+            transportPanel, "BtnUnloadAll", "Unload All",
+            new Color(0.55f, 0.18f, 0.10f, 1f),
+            anchoredPos: new Vector2(0f, -95f),
+            size:        new Vector2(220f, 50f));
+
+        // ── 4e. Boarding cursor indicator (follows mouse on APC hover) ── //
+        // Direct child of HUDCanvas so it can free-float anywhere on screen.
+        // Hidden by default; TransportHoverIndicator (on GameManager) turns it
+        // on/off based on hover state.
+        RectTransform boardingIndicator = CreatePanel(canvas.transform, "BoardingCursorIndicator",
+            new Color(0.20f, 0.75f, 0.30f, 0.85f));
+        boardingIndicator.anchorMin        = new Vector2(0f, 0f);
+        boardingIndicator.anchorMax        = new Vector2(0f, 0f);
+        boardingIndicator.pivot            = new Vector2(0.5f, 0.5f);
+        boardingIndicator.sizeDelta        = new Vector2(80f, 80f);
+        boardingIndicator.localScale       = Vector3.one;
+        boardingIndicator.anchoredPosition = new Vector2(-200f, -200f); // off-screen at boot
+        boardingIndicator.gameObject.SetActive(false);
+
+        Image boardingBg = boardingIndicator.GetComponent<Image>();
+        // CRITICAL: the cursor logo must not block raycasts, otherwise the
+        // EventSystem.IsPointerOverGameObject check in TransportHoverIndicator
+        // fires every frame the icon is shown and the hover flickers on/off.
+        // TMP children built by CreateTMPText already set raycastTarget=false;
+        // only the background Image needs an explicit flip here.
+        boardingBg.raycastTarget = false;
+
+        // Up-arrow glyph at the top of the box.
+        TextMeshProUGUI boardingArrow = CreateTMPText(
+            boardingIndicator, "Arrow", "▲",
+            anchoredPos: new Vector2(0f, 16f),
+            size:        new Vector2(60f, 36f),
+            fontSize:    32,
+            alignment:   TextAlignmentOptions.Center);
+        boardingArrow.color = Color.white;
+
+        // "ENTER" label at the bottom of the box.
+        TextMeshProUGUI boardingLabel = CreateTMPText(
+            boardingIndicator, "Label", "ENTER",
+            anchoredPos: new Vector2(0f, -18f),
+            size:        new Vector2(70f, 24f),
+            fontSize:    16,
+            alignment:   TextAlignmentOptions.Center);
+        boardingLabel.color = Color.white;
+        boardingLabel.fontStyle = FontStyles.Bold;
+
+        Debug.Log("[SetupRTSHUD] ✓ BoardingCursorIndicator created (80x80, hidden by default)");
+
         // ── 5. GameManager + RTSHUD ───────────────────────────────────── //
         GameObject gm  = GetOrCreateGameManager();
         RTSHUD     hud = GetOrAddComponent<RTSHUD>(gm);
@@ -295,6 +394,8 @@ public static class SetupRTSHUD
         hud.dozerButtonLabel    = btnDozer.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.humveeButton        = btnHumvee.gameObject;
         hud.humveeButtonLabel   = btnHumvee.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.apcButton                  = btnAPC.gameObject;
+        hud.apcButtonLabel             = btnAPC.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.tankButton                = btnTank.gameObject;
         hud.tankButtonLabel           = btnTank.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.missileLauncherButton      = btnMissileLauncher.gameObject;
@@ -314,7 +415,29 @@ public static class SetupRTSHUD
         hud.dozerBuildAirfieldLabel          = btnDozerBuildAirfield.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.dozerBuildMachineGunDefenseButton = btnDozerBuildMGD.gameObject;
         hud.dozerBuildMachineGunDefenseLabel  = btnDozerBuildMGD.GetComponentInChildren<TextMeshProUGUI>(true);
+
+        // Transport panel references — six slot GameObjects + labels + Unload All
+        hud.transportPanel             = transportPanel.gameObject;
+        hud.transportTitleLabel        = transportTitle;
+        hud.transportSlotButtons       = new GameObject[6];
+        hud.transportSlotLabels        = new TextMeshProUGUI[6];
+        for (int i = 0; i < 6; i++)
+        {
+            hud.transportSlotButtons[i] = slotButtons[i].gameObject;
+            hud.transportSlotLabels[i]  = slotLabels[i];
+        }
+        hud.transportUnloadAllButton   = btnUnloadAll.gameObject;
         EditorUtility.SetDirty(hud);
+
+        // TransportHoverIndicator — separate MonoBehaviour on the same
+        // GameManager, drives the boarding cursor element built above.
+        TransportHoverIndicator hover = GetOrAddComponent<TransportHoverIndicator>(gm);
+        hover.indicatorRoot       = boardingIndicator;
+        hover.indicatorBackground = boardingBg;
+        hover.indicatorArrow      = boardingArrow;
+        hover.indicatorLabel      = boardingLabel;
+        EditorUtility.SetDirty(hover);
+        Debug.Log("[SetupRTSHUD] ✓ TransportHoverIndicator wired to GameManager");
 
         // Wire buttons to RTSHUD callback methods.
         // Legacy instant-build buttons are only wired when the panel exists
@@ -331,6 +454,7 @@ public static class SetupRTSHUD
         WireButton(btnWorker,         hud, nameof(RTSHUD.OnClickProduceWorker));
         WireButton(btnDozer,          hud, nameof(RTSHUD.OnClickProduceDozer));
         WireButton(btnHumvee,         hud, nameof(RTSHUD.OnClickProduceHumvee));
+        WireButton(btnAPC,            hud, nameof(RTSHUD.OnClickProduceAPC));
         WireButton(btnTank,           hud, nameof(RTSHUD.OnClickProduceArtilleryTank));
         WireButton(btnMissileLauncher, hud, nameof(RTSHUD.OnClickProduceMissileLauncher));
         WireButton(btnStrikeJet,      hud, nameof(RTSHUD.OnClickProduceStrikeJet));
@@ -339,11 +463,21 @@ public static class SetupRTSHUD
         WireButton(btnDozerBuildVF,             hud, nameof(RTSHUD.OnClickDozerBuildVehicleFactory));
         WireButton(btnDozerBuildAirfield,       hud, nameof(RTSHUD.OnClickDozerBuildAirfield));
         WireButton(btnDozerBuildMGD,            hud, nameof(RTSHUD.OnClickDozerBuildMachineGunDefense));
+
+        // Transport panel — Unload All + 6 slot buttons each wired to the
+        // matching OnClickUnloadSlot{N} method on RTSHUD.
+        WireButton(btnUnloadAll,    hud, nameof(RTSHUD.OnClickUnloadAll));
+        WireButton(slotButtons[0],  hud, nameof(RTSHUD.OnClickUnloadSlot0));
+        WireButton(slotButtons[1],  hud, nameof(RTSHUD.OnClickUnloadSlot1));
+        WireButton(slotButtons[2],  hud, nameof(RTSHUD.OnClickUnloadSlot2));
+        WireButton(slotButtons[3],  hud, nameof(RTSHUD.OnClickUnloadSlot3));
+        WireButton(slotButtons[4],  hud, nameof(RTSHUD.OnClickUnloadSlot4));
+        WireButton(slotButtons[5],  hud, nameof(RTSHUD.OnClickUnloadSlot5));
         string buildSegment = DebugInstantBuildEnabled
             ? "Build(DEBUG): Barracks+PowerPlant+VehicleFactory+Airfield, "
             : "Build: <disabled>, ";
         Debug.Log("[SetupRTSHUD] ✓ Buttons wired — " + buildSegment +
-                  "Production: Soldier+RPGSoldier+Worker+Dozer+Humvee+ArtilleryTank+MissileLauncher+StrikeJet, " +
+                  "Production: Soldier+RPGSoldier+Worker+Dozer+Humvee+APC+ArtilleryTank+MissileLauncher+StrikeJet, " +
                   "DozerBuild: Barracks+PowerPlant+VehicleFactory+Airfield+MGDefense");
 
         // Ensure the HUD renders on top of any other scene UI

@@ -618,6 +618,24 @@ public class GroundAutoAttackController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Called by <see cref="APCTransport"/> when this unit is unloaded from a
+    /// transport. Updates the guard position to the deploy point and forces
+    /// an immediate scan on the next tick — no suppression window, unlike
+    /// <see cref="NotifyManualMove"/>, so the soldier engages nearby enemies
+    /// the moment they're inside its detection radius.
+    /// </summary>
+    public void OnUnloadedFromTransport(Vector3 newGuardPosition)
+    {
+        guardPosition     = newGuardPosition;
+        hasGuardPosition  = true;
+        state             = AutoState.Guarding;
+        currentAutoTarget = null;
+        scanResumeTime    = 0f;     // skip the manual-move-style suppression window
+        scanTimer         = 0f;     // scan on the next Update tick
+        Debug.Log($"[AutoAttack:{name}] Passenger auto-defense scan triggered.");
+    }
+
     // ------------------------------------------------------------------ //
     // Scan + acquire
     // ------------------------------------------------------------------ //

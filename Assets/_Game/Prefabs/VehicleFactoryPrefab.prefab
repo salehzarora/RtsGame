@@ -668,6 +668,9 @@ MonoBehaviour:
   missileLauncherPrefab: {fileID: 661519337422071430, guid: 683d5d23e7ef7c3409306f75f0cb88bf, type: 3}
   missileLauncherCost: 1100
   produceMissileLauncherKey: 109
+  apcPrefab: {fileID: 2013740237275289296, guid: 1d496081be16051459c6eea30dbec65b, type: 3}
+  apcCost: 600
+  produceAPCKey: 97
   spawnPoint: {fileID: 0}
   spawnOffset: {x: 5, y: 0, z: 0}
   navMeshSnapRadius: 6
