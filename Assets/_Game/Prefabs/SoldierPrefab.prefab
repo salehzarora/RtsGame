@@ -1552,7 +1552,7 @@ MonoBehaviour:
   teamColor: {r: 0.34713805, g: 1, b: 0, a: 1}
   teamColorSlots:
   - renderer: {fileID: 1815562468443730378}
-    materialIndexes: 01000000
+    materialIndexes: 00000000
   fixedColorSlots:
   - renderer: {fileID: 1815562468443730378}
     materialIndexes: 01000000

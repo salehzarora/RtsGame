@@ -53,6 +53,12 @@ public class BuildingPlacementManager : MonoBehaviour
     [Tooltip("Resource cost for placing an Airfield")]
     public int airfieldCost = 600;
 
+    [Tooltip("The Machine Gun Defense prefab — Building + BuildingTurretCombat + PowerConsumer. " +
+             "Anti-infantry / anti-air defensive turret. No instant-build hotkey by design.")]
+    public GameObject machineGunDefensePrefab;
+    [Tooltip("Resource cost for placing a Machine Gun Defense")]
+    public int machineGunDefenseCost = 250;
+
     [Tooltip("Y offset so the building sits on the ground surface (half the building's world height)")]
     public float placementHeightOffset = 0.75f;
 
@@ -300,6 +306,10 @@ public class BuildingPlacementManager : MonoBehaviour
     /// <summary>Convenience wrapper — Airfield build by Dozer.</summary>
     public void StartDozerBuildAirfield(DozerBuilder dozer) =>
         StartDozerBuildingPlacement(dozer, airfieldPrefab, airfieldCost, "Airfield");
+
+    /// <summary>Convenience wrapper — Machine Gun Defense build by Dozer.</summary>
+    public void StartDozerBuildMachineGunDefense(DozerBuilder dozer) =>
+        StartDozerBuildingPlacement(dozer, machineGunDefensePrefab, machineGunDefenseCost, "Machine Gun Defense");
 
     // ------------------------------------------------------------------ //
     // Placement mode entry / exit

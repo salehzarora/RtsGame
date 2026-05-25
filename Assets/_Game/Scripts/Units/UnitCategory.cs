@@ -6,10 +6,11 @@ using UnityEngine;
 /// </summary>
 public enum DamageType
 {
-    Bullet,   // Soldier rifle / Humvee machine gun — strong vs infantry
-    Cannon,   // Artillery Tank cannon shell — strong vs vehicles and buildings
-    Missile,  // Strike Jet air-to-ground missile — strong vs vehicles and buildings, weak vs infantry
-    Rocket    // RPG Soldier shoulder-fired rocket — strong vs vehicles, decent vs buildings/aircraft, weak vs infantry
+    Bullet,     // Soldier rifle / Humvee machine gun — strong vs infantry
+    Cannon,     // Artillery Tank cannon shell — strong vs vehicles and buildings
+    Missile,    // Strike Jet air-to-ground missile — strong vs vehicles and buildings, weak vs infantry
+    Rocket,     // RPG Soldier shoulder-fired rocket — strong vs vehicles, decent vs buildings/aircraft, weak vs infantry
+    MachineGun  // MG turret heavy machine gun — dominant vs infantry, decent vs aircraft, weak vs vehicles/buildings
 }
 
 /// <summary>
@@ -49,10 +50,11 @@ public class UnitCategory : MonoBehaviour
 /// Damage-type × target-category modifier table. Pure static helper — no state,
 /// no dependencies. Add a new <see cref="DamageType"/> by extending the switch.
 ///
-///   Bullet  vs (Infantry, Vehicle, Building, Aircraft) = 1.00 / 0.35 / 0.25 / 0.20
-///   Cannon  vs (Infantry, Vehicle, Building, Aircraft) = 0.25 / 1.00 / 1.20 / 0.10
-///   Missile vs (Infantry, Vehicle, Building, Aircraft) = 0.80 / 1.00 / 1.20 / 1.00
-///   Rocket  vs (Infantry, Vehicle, Building, Aircraft) = 0.35 / 1.00 / 0.80 / 0.75
+///   Bullet      vs (Infantry, Vehicle, Building, Aircraft) = 1.00 / 0.35 / 0.25 / 0.20
+///   Cannon      vs (Infantry, Vehicle, Building, Aircraft) = 0.25 / 1.00 / 1.20 / 0.10
+///   Missile     vs (Infantry, Vehicle, Building, Aircraft) = 0.80 / 1.00 / 1.20 / 1.00
+///   Rocket      vs (Infantry, Vehicle, Building, Aircraft) = 0.35 / 1.00 / 0.80 / 0.75
+///   MachineGun  vs (Infantry, Vehicle, Building, Aircraft) = 1.00 / 0.25 / 0.10 / 0.55
 /// </summary>
 public static class DamageRules
 {
@@ -97,6 +99,16 @@ public static class DamageRules
                     case UnitCategory.Category.Vehicle:  return 1.00f;   // primary anti-armor role
                     case UnitCategory.Category.Building: return 0.80f;
                     case UnitCategory.Category.Aircraft: return 0.75f;   // hits land hard, but rocket may miss outright
+                }
+                break;
+
+            case DamageType.MachineGun:
+                switch (cat)
+                {
+                    case UnitCategory.Category.Infantry: return 1.00f;   // MG turret — dominant vs infantry
+                    case UnitCategory.Category.Vehicle:  return 0.25f;   // chips light vehicles, weak vs armor
+                    case UnitCategory.Category.Building: return 0.10f;   // poor vs buildings
+                    case UnitCategory.Category.Aircraft: return 0.55f;   // decent anti-air — chip damage on high RoF
                 }
                 break;
         }

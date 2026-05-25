@@ -788,6 +788,7 @@ public class GroundAutoAttackController : MonoBehaviour
     /// RocketCombat says yes to everything (rockets are universal); UnitCombat
     /// skips Aircraft for Bullet and Cannon damage types so the Soldier /
     /// Humvee / Artillery Tank don't waste shots on jets they can barely scratch.
+    /// MachineGun and Missile damage types CAN engage Aircraft.
     /// </summary>
     private bool CanEngageCategory(UnitCategory.Category cat)
     {
@@ -795,7 +796,8 @@ public class GroundAutoAttackController : MonoBehaviour
         if (unitCombat   == null) return false;
 
         if (cat == UnitCategory.Category.Aircraft)
-            return unitCombat.damageType == DamageType.Missile;
+            return unitCombat.damageType == DamageType.Missile
+                || unitCombat.damageType == DamageType.MachineGun;
 
         return true;
     }

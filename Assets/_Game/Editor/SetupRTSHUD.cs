@@ -51,6 +51,7 @@ public static class SetupRTSHUD
     private static readonly Color BtnPowerColor         = new Color(0.82f, 0.60f, 0.08f, 1.00f); // amber
     private static readonly Color BtnVehicleFactoryColor = new Color(0.40f, 0.40f, 0.45f, 1.00f); // gunmetal
     private static readonly Color BtnAirfieldColor      = new Color(0.32f, 0.50f, 0.70f, 1.00f); // sky-blue grey
+    private static readonly Color BtnMGDefenseColor     = new Color(0.55f, 0.25f, 0.20f, 1.00f); // brick red — defensive turret
     private static readonly Color BtnSoldierColor       = new Color(0.30f, 0.65f, 0.30f, 1.00f); // green
     private static readonly Color BtnRPGSoldierColor    = new Color(0.62f, 0.35f, 0.18f, 1.00f); // rust orange
     private static readonly Color BtnWorkerColor        = new Color(0.78f, 0.50f, 0.18f, 1.00f); // tan/orange
@@ -225,34 +226,40 @@ public static class SetupRTSHUD
         dozerBuildPanel.anchorMax        = new Vector2(0f, 0f);
         dozerBuildPanel.pivot            = new Vector2(0f, 0f);
         dozerBuildPanel.anchoredPosition = new Vector2( 25f, 25f);
-        dozerBuildPanel.sizeDelta        = new Vector2(250f, 270f);
+        dozerBuildPanel.sizeDelta        = new Vector2(250f, 330f);
         dozerBuildPanel.localScale       = Vector3.one;
         dozerBuildPanel.gameObject.SetActive(false); // hidden until a Dozer is selected
-        Debug.Log("[SetupRTSHUD] ✓ DozerBuildPanel created (250x270, bottom-left, hidden by default)");
+        Debug.Log("[SetupRTSHUD] ✓ DozerBuildPanel created (250x330, bottom-left, hidden by default)");
 
-        // Four construction buttons inside the Dozer build panel.
+        // Five construction buttons inside the Dozer build panel (60px spacing).
         Button btnDozerBuildBarracks = CreateButton(
             dozerBuildPanel, "BtnDozerBuildBarracks", "Barracks - 100",
             BtnBarracksColor,
-            anchoredPos: new Vector2(0f,  90f),
+            anchoredPos: new Vector2(0f, 120f),
             size:        new Vector2(220f, 50f));
 
         Button btnDozerBuildPower = CreateButton(
             dozerBuildPanel, "BtnDozerBuildPowerPlant", "Power Plant - 150",
             BtnPowerColor,
-            anchoredPos: new Vector2(0f,  30f),
+            anchoredPos: new Vector2(0f,  60f),
             size:        new Vector2(220f, 50f));
 
         Button btnDozerBuildVF = CreateButton(
             dozerBuildPanel, "BtnDozerBuildVehicleFactory", "Vehicle Factory - 300",
             BtnVehicleFactoryColor,
-            anchoredPos: new Vector2(0f, -30f),
+            anchoredPos: new Vector2(0f,   0f),
             size:        new Vector2(220f, 50f));
 
         Button btnDozerBuildAirfield = CreateButton(
             dozerBuildPanel, "BtnDozerBuildAirfield", "Airfield - 600",
             BtnAirfieldColor,
-            anchoredPos: new Vector2(0f, -90f),
+            anchoredPos: new Vector2(0f, -60f),
+            size:        new Vector2(220f, 50f));
+
+        Button btnDozerBuildMGD = CreateButton(
+            dozerBuildPanel, "BtnDozerBuildMachineGunDefense", "MG Defense - 250",
+            BtnMGDefenseColor,
+            anchoredPos: new Vector2(0f,-120f),
             size:        new Vector2(220f, 50f));
 
         // ── 5. GameManager + RTSHUD ───────────────────────────────────── //
@@ -296,6 +303,8 @@ public static class SetupRTSHUD
         hud.dozerBuildVehicleFactoryLabel    = btnDozerBuildVF.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.dozerBuildAirfieldButton         = btnDozerBuildAirfield.gameObject;
         hud.dozerBuildAirfieldLabel          = btnDozerBuildAirfield.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.dozerBuildMachineGunDefenseButton = btnDozerBuildMGD.gameObject;
+        hud.dozerBuildMachineGunDefenseLabel  = btnDozerBuildMGD.GetComponentInChildren<TextMeshProUGUI>(true);
         EditorUtility.SetDirty(hud);
 
         // Wire buttons to RTSHUD callback methods.
@@ -319,12 +328,13 @@ public static class SetupRTSHUD
         WireButton(btnDozerBuildPower,          hud, nameof(RTSHUD.OnClickDozerBuildPowerPlant));
         WireButton(btnDozerBuildVF,             hud, nameof(RTSHUD.OnClickDozerBuildVehicleFactory));
         WireButton(btnDozerBuildAirfield,       hud, nameof(RTSHUD.OnClickDozerBuildAirfield));
+        WireButton(btnDozerBuildMGD,            hud, nameof(RTSHUD.OnClickDozerBuildMachineGunDefense));
         string buildSegment = DebugInstantBuildEnabled
             ? "Build(DEBUG): Barracks+PowerPlant+VehicleFactory+Airfield, "
             : "Build: <disabled>, ";
         Debug.Log("[SetupRTSHUD] ✓ Buttons wired — " + buildSegment +
                   "Production: Soldier+RPGSoldier+Worker+Dozer+Humvee+ArtilleryTank+StrikeJet, " +
-                  "DozerBuild: Barracks+PowerPlant+VehicleFactory+Airfield");
+                  "DozerBuild: Barracks+PowerPlant+VehicleFactory+Airfield+MGDefense");
 
         // Ensure the HUD renders on top of any other scene UI
         canvas.transform.SetAsLastSibling();

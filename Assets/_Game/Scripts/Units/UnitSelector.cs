@@ -341,14 +341,21 @@ public class UnitSelector : MonoBehaviour
             }
         }
 
-        // --- Priority 1: enemy unit → attack -----------------------------
-        if (Physics.Raycast(ray, out RaycastHit unitHit, Mathf.Infinity, unitLayer))
+        // --- Priority 1: enemy unit OR enemy building → attack -----------
+        // Raycast against BOTH Unit and Building layers so enemy buildings
+        // (e.g. EnemyMachineGunDefense, future enemy bases) become valid
+        // right-click attack targets. Friendly buildings still fall through
+        // because the team check below rejects Player-team Health.
+        int attackMask = unitLayer | buildingLayer;
+        if (Physics.Raycast(ray, out RaycastHit unitHit, Mathf.Infinity, attackMask))
         {
             Health targetHealth = unitHit.collider.GetComponent<Health>()
                 ?? unitHit.collider.GetComponentInParent<Health>();
 
             if (targetHealth != null && targetHealth.team == Health.Team.Enemy)
             {
+                Debug.Log($"[UnitSelector] Attack target selected: {targetHealth.name} " +
+                          $"(category: {DamageRules.Resolve(targetHealth.gameObject)}).");
                 // Ground units use UnitCombat (chase + shoot on NavMesh) OR
                 // RocketCombat (chase + fire RocketProjectile). A given unit
                 // only has one of the two — null-conditional skips the other.

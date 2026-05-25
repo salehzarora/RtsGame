@@ -123,6 +123,10 @@ public class RTSHUD : MonoBehaviour
     public GameObject dozerBuildAirfieldButton;
     public TextMeshProUGUI dozerBuildAirfieldLabel;
 
+    [Tooltip("Construction button — Machine Gun Defense. Wired to OnClickDozerBuildMachineGunDefense.")]
+    public GameObject dozerBuildMachineGunDefenseButton;
+    public TextMeshProUGUI dozerBuildMachineGunDefenseLabel;
+
     // ------------------------------------------------------------------ //
     // Private references — found at runtime
     // ------------------------------------------------------------------ //
@@ -473,10 +477,11 @@ public class RTSHUD : MonoBehaviour
         // tunes them in the inspector.
         if (placementManager != null)
         {
-            if (dozerBuildBarracksLabel       != null) dozerBuildBarracksLabel.text       = $"Barracks - {placementManager.barracksCost}";
-            if (dozerBuildPowerPlantLabel     != null) dozerBuildPowerPlantLabel.text     = $"Power Plant - {placementManager.powerPlantCost}";
-            if (dozerBuildVehicleFactoryLabel != null) dozerBuildVehicleFactoryLabel.text = $"Vehicle Factory - {placementManager.vehicleFactoryCost}";
-            if (dozerBuildAirfieldLabel       != null) dozerBuildAirfieldLabel.text       = $"Airfield - {placementManager.airfieldCost}";
+            if (dozerBuildBarracksLabel           != null) dozerBuildBarracksLabel.text           = $"Barracks - {placementManager.barracksCost}";
+            if (dozerBuildPowerPlantLabel         != null) dozerBuildPowerPlantLabel.text         = $"Power Plant - {placementManager.powerPlantCost}";
+            if (dozerBuildVehicleFactoryLabel     != null) dozerBuildVehicleFactoryLabel.text     = $"Vehicle Factory - {placementManager.vehicleFactoryCost}";
+            if (dozerBuildAirfieldLabel           != null) dozerBuildAirfieldLabel.text           = $"Airfield - {placementManager.airfieldCost}";
+            if (dozerBuildMachineGunDefenseLabel  != null) dozerBuildMachineGunDefenseLabel.text  = $"MG Defense - {placementManager.machineGunDefenseCost}";
         }
     }
 
@@ -518,6 +523,13 @@ public class RTSHUD : MonoBehaviour
     {
         if (!ValidateDozerBuildClick("Airfield")) return;
         placementManager.StartDozerBuildAirfield(currentDozer);
+    }
+
+    /// <summary>Called by the Dozer-build Machine Gun Defense button.</summary>
+    public void OnClickDozerBuildMachineGunDefense()
+    {
+        if (!ValidateDozerBuildClick("Machine Gun Defense")) return;
+        placementManager.StartDozerBuildMachineGunDefense(currentDozer);
     }
 
     private bool ValidateDozerBuildClick(string label)
