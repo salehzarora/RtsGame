@@ -51,6 +51,7 @@ public class GroundAutoAttackController : MonoBehaviour
     {
         Guarding,
         AutoChasing,
+        LookingForNextTarget,   // brief continuation scan after a target dies before returning
         ReturningToGuard,
         ManualCommand,
     }
@@ -70,8 +71,20 @@ public class GroundAutoAttackController : MonoBehaviour
 
     [Tooltip("Hard outer limit. An auto-acquired target outside this radius from guardPosition " +
              "is dropped and the unit returns home. Must be ≥ detectionRadius — a small gap " +
-             "(e.g. 12 / 18) gives the unit room to chase a fleeing enemy a short distance.")]
-    public float leashRadius = 18f;
+             "(e.g. 12 / 20) gives the unit room to chase a fleeing enemy a short distance.")]
+    public float leashRadius = 20f;
+
+    [Tooltip("Small grace distance added on top of leashRadius before a chase is " +
+             "actually dropped. Prevents flicker when a target sits exactly on the " +
+             "leash boundary. Also used as the radius for continuation-scan after a kill.")]
+    public float leashTolerance = 2f;
+
+    [Tooltip("After a target dies, the unit re-scans for hostiles near its current " +
+             "fight position before returning to guard. Targets within this radius of " +
+             "either the unit OR the last fight position count as 'nearby' and are " +
+             "engaged even if they sit just outside the standard detection radius. " +
+             "Stops a unit from walking past a second enemy 1-2 m away to return home.")]
+    public float continueFightRadius = 7f;
 
     [Tooltip("Seconds between re-scans. Smaller = more responsive, larger = cheaper.")]
     public float scanInterval = 0.35f;
@@ -97,6 +110,12 @@ public class GroundAutoAttackController : MonoBehaviour
              "transitions from ReturningToGuard back to Guarding.")]
     public float returnToGuardThreshold = 1.5f;
 
+    [Tooltip("Seconds the unit spends scanning for a nearby follow-up target after " +
+             "a kill before committing to a return-to-guard. Small (0.25-0.5) is " +
+             "enough — long enough to absorb a one-frame combat-idle blip, short " +
+             "enough that lone kills don't visibly stall the unit.")]
+    public float returnToGuardDelay = 0.35f;
+
     [Tooltip("If true, NotifyManualMove updates guardPosition to the move destination. " +
              "If false, the guard position is locked at the spawn point and the unit " +
              "always returns to its original spot after manual moves end.")]
@@ -111,6 +130,24 @@ public class GroundAutoAttackController : MonoBehaviour
              "(right-click ground). Prevents the unit from instantly re-engaging and " +
              "cancelling the move order.")]
     public float autoAttackPausedAfterManualMoveSeconds = 1.0f;
+
+    // ------------------------------------------------------------------ //
+    // Inspector — Fire While Moving (turret vehicles)
+    // ------------------------------------------------------------------ //
+
+    [Header("Fire While Moving (turret vehicles)")]
+    [Tooltip("If true, the unit keeps scanning + engaging targets while its body " +
+             "is moving toward a manual destination. The scan centre switches from " +
+             "guardPosition to the unit's current position so en-route hostiles are " +
+             "actually seen. Auto-acquired targets are NOT chased — the body keeps " +
+             "moving toward its original destination; only the turret engages. " +
+             "Default false so infantry behaves unchanged.")]
+    public bool autoFireWhileMoving = false;
+
+    [Tooltip("Lose multiplier for in-transit targets. Target is dropped when " +
+             "distance from the unit exceeds attackRange × this. 1.15 gives a small " +
+             "grace window so a single laggy frame doesn't cancel an engagement.")]
+    public float transitTargetLoseMultiplier = 1.15f;
 
     // ------------------------------------------------------------------ //
     // Public runtime state
@@ -130,6 +167,12 @@ public class GroundAutoAttackController : MonoBehaviour
     private UnitCombat    unitCombat;     // null on RPG units
     private RocketCombat  rocketCombat;   // null on rifle / cannon units
     private UnitMovement  movement;       // used for ReturningToGuard MoveTo
+    private UnityEngine.AI.NavMeshAgent agent;  // for transit-fire motion check
+
+    // True while the unit is in the transit-fire branch (autoFireWhileMoving +
+    // body actually moving). Tracked so we can log "Suppression ignored…" once
+    // per entry instead of every frame.
+    private bool transitLoggedSuppression;
 
     private AutoState state = AutoState.Guarding;
     private Vector3   guardPosition;
@@ -141,6 +184,13 @@ public class GroundAutoAttackController : MonoBehaviour
     // Time after which auto-scan may resume (post-manual-move suppression).
     private float scanResumeTime;
     private float scanTimer;
+
+    // Continuation-scan bookkeeping. lastFightPosition is captured when the
+    // current target dies so the next-target scan can prefer enemies near
+    // where the fight just happened. lookForNextDeadline is the absolute time
+    // at which the continuation gives up and we head back to guard.
+    private Vector3 lastFightPosition;
+    private float   lookForNextDeadline;
 
     // OverlapSphere buffer — sized for typical scenes; overflow truncates safely.
     private readonly Collider[] scanBuffer = new Collider[32];
@@ -157,6 +207,7 @@ public class GroundAutoAttackController : MonoBehaviour
         unitCombat   = GetComponent<UnitCombat>();
         rocketCombat = GetComponent<RocketCombat>();
         movement     = GetComponent<UnitMovement>();
+        agent        = GetComponent<UnityEngine.AI.NavMeshAgent>();
 
         // Aircraft self-exclusion. Spec: this is a GROUND auto-attack system;
         // air units have their own targeting via AirUnitController.
@@ -202,16 +253,178 @@ public class GroundAutoAttackController : MonoBehaviour
         if (!autoAttackEnabled) return;
         if (ownHealth == null) return;
 
-        // Manual-move suppression — applies regardless of state.
+        // Transit-fire: turret vehicles with autoFireWhileMoving keep scanning
+        // while the body is en route to a manual destination. Scan centre
+        // becomes the vehicle's current position, NOT the (possibly distant)
+        // guard position. Manual-attack state is left alone so the player's
+        // explicit target doesn't get overridden.
+        if (IsInTransitFire())
+        {
+            // Ignore the post-manual-move suppression timer — that timer is
+            // for stationary guards. A turret vehicle should fire en route.
+            if (Time.time < scanResumeTime)
+            {
+                if (!transitLoggedSuppression)
+                {
+                    Debug.Log($"[AutoAttack:{name}] Suppression ignored for vehicle fire-while-moving.");
+                    transitLoggedSuppression = true;
+                }
+                scanResumeTime = 0f;
+            }
+
+            UpdateTransitFire();
+            return;
+        }
+        transitLoggedSuppression = false;   // re-arm so next entry logs once
+
+        // Manual-move suppression — applies to non-transit-fire units (infantry, etc.).
         if (Time.time < scanResumeTime) return;
 
         switch (state)
         {
-            case AutoState.Guarding:         UpdateGuarding();         break;
-            case AutoState.AutoChasing:      UpdateAutoChasing();      break;
-            case AutoState.ReturningToGuard: UpdateReturningToGuard(); break;
-            case AutoState.ManualCommand:    UpdateManualCommand();    break;
+            case AutoState.Guarding:             UpdateGuarding();             break;
+            case AutoState.AutoChasing:          UpdateAutoChasing();          break;
+            case AutoState.LookingForNextTarget: UpdateLookingForNextTarget(); break;
+            case AutoState.ReturningToGuard:     UpdateReturningToGuard();     break;
+            case AutoState.ManualCommand:        UpdateManualCommand();        break;
         }
+    }
+
+    /// <summary>
+    /// True when the unit should currently run the transit-fire branch:
+    /// <see cref="autoFireWhileMoving"/> is on, the NavMeshAgent has measurable
+    /// velocity, and we're not in a manual-attack engagement (manual fire
+    /// uses the standard chase + leash flow).
+    /// </summary>
+    private bool IsInTransitFire()
+    {
+        if (!autoFireWhileMoving) return false;
+        if (state == AutoState.ManualCommand) return false;
+        if (agent == null) return false;
+
+        // Reuse the existing movement threshold concept (0.2 u/s) — matches
+        // UnitCombat's isMoving check so the two stay consistent.
+        const float MovingThresholdSqr = 0.2f * 0.2f;
+        return agent.velocity.sqrMagnitude > MovingThresholdSqr;
+    }
+
+    /// <summary>
+    /// Transit-fire path. The vehicle is moving toward a manual destination;
+    /// the body is not stopped, never chases, and engages opportunistically
+    /// only when a hostile sits inside the actual weapon range right now.
+    /// </summary>
+    private void UpdateTransitFire()
+    {
+        // Step 1 — validate the current target.
+        if (currentAutoTarget != null)
+        {
+            bool stillEngageable = !CombatIsIdle();
+
+            if (stillEngageable)
+            {
+                float dist  = Vector3.Distance(currentAutoTarget.transform.position, transform.position);
+                float range = GetWeaponRangeFor(currentAutoTarget);
+                if (dist > range * transitTargetLoseMultiplier)
+                    stillEngageable = false;
+            }
+
+            if (!stillEngageable)
+            {
+                Debug.Log($"[VehicleAutoFire:{name}] Target lost — continuing route.");
+                ClearAutoTargetOnCombat();
+                currentAutoTarget = null;
+            }
+        }
+
+        // Step 2 — if we already have a target, keep firing; no rescan needed.
+        if (currentAutoTarget != null) return;
+
+        // Step 3 — periodic re-scan from the unit's current position.
+        scanTimer -= Time.deltaTime;
+        if (scanTimer > 0f) return;
+        scanTimer = scanInterval;
+
+        if (TryAcquireTransitTarget(out Health next))
+        {
+            Debug.Log($"[VehicleAutoFire:{name}] Acquired target while moving: {next.name}.");
+
+            currentAutoTarget = next;
+            state             = AutoState.AutoChasing;   // for state-machine compat when we stop
+
+            if (unitCombat   != null) unitCombat.SetTarget(next);
+            if (rocketCombat != null) rocketCombat.SetTarget(next);
+
+            Debug.Log($"[VehicleAutoFire:{name}] Firing while continuing move order.");
+        }
+    }
+
+    /// <summary>
+    /// Scans from the unit's current position and returns the closest hostile
+    /// already inside our actual weapon range. We deliberately exclude targets
+    /// that are visible (detectionRadius) but out of range — engaging them
+    /// would trigger UnitCombat's chase path and cancel the move order.
+    /// </summary>
+    private bool TryAcquireTransitTarget(out Health best)
+    {
+        best = null;
+        if (unitCombat == null && rocketCombat == null) return false;
+
+        float bestDist = float.PositiveInfinity;
+
+        // Scan with the larger of detection / anti-air range so air targets
+        // close enough to fire on still surface. Per-candidate filter below
+        // narrows to the actual weapon range for the target's category.
+        float scanRadius = detectionRadius;
+        if (rocketCombat != null) scanRadius = Mathf.Max(scanRadius, rocketCombat.antiAirRange);
+
+        int count = Physics.OverlapSphereNonAlloc(
+            transform.position, scanRadius, scanBuffer, targetLayerMask.value);
+
+        Health.Team hostileTeam = (ownHealth.team == Health.Team.Player)
+            ? Health.Team.Enemy
+            : Health.Team.Player;
+
+        for (int i = 0; i < count; i++)
+        {
+            Collider c = scanBuffer[i];
+            if (c == null) continue;
+
+            Health h = c.GetComponent<Health>() ?? c.GetComponentInParent<Health>();
+            if (h == null || h == ownHealth) continue;
+            if (h.team != hostileTeam) continue;
+
+            UnitCategory.Category cat = DamageRules.Resolve(h.gameObject);
+            if (!CanEngageCategory(cat)) continue;
+
+            float distFromUnit = Vector3.Distance(h.transform.position, transform.position);
+            float weaponRange  = GetWeaponRangeFor(h);
+            if (distFromUnit > weaponRange) continue;     // outside actual weapon range — would trigger chase
+
+            if (distFromUnit < bestDist)
+            {
+                bestDist = distFromUnit;
+                best     = h;
+            }
+        }
+
+        return best != null;
+    }
+
+    /// <summary>
+    /// Resolves the right attack-range field for <paramref name="target"/>:
+    /// RocketCombat exposes a separate antiAirRange for Aircraft, UnitCombat
+    /// uses one attackRange for everything.
+    /// </summary>
+    private float GetWeaponRangeFor(Health target)
+    {
+        if (target == null) return 0f;
+        UnitCategory.Category cat = DamageRules.Resolve(target.gameObject);
+
+        if (rocketCombat != null)
+            return cat == UnitCategory.Category.Aircraft ? rocketCombat.antiAirRange : rocketCombat.attackRange;
+
+        if (unitCombat != null) return unitCombat.attackRange;
+        return 0f;
     }
 
     // ------------------------------------------------------------------ //
@@ -229,26 +442,60 @@ public class GroundAutoAttackController : MonoBehaviour
 
     private void UpdateAutoChasing()
     {
-        // Combat went idle on its own (target died / cleared). Decide what to
-        // do next: return home if we wandered, otherwise just resume guarding.
+        // Combat went idle on its own (target died / cleared). Snapshot the
+        // last fight position, then briefly look for another nearby enemy
+        // BEFORE committing to a return-to-guard. Otherwise a unit will walk
+        // past a second hostile sitting 1-2 m away.
         if (currentAutoTarget == null || CombatIsIdle())
         {
+            // Use the live target position if we still have a reference,
+            // otherwise our own position as a fallback anchor.
+            lastFightPosition = currentAutoTarget != null
+                ? currentAutoTarget.transform.position
+                : transform.position;
             currentAutoTarget = null;
-            EnterPostEngagement();
+            EnterLookingForNextTarget();
             return;
         }
 
-        // Leash check — the hard limit on how far an enemy can pull us. Run
-        // every frame so a fleeing target is dropped immediately, not on the
-        // next 0.35s scan tick.
+        // Leash check — the hard limit on how far an enemy can pull us. Apply
+        // the small tolerance so a target jittering exactly on the boundary
+        // doesn't yank us back. Run every frame so a fleeing target is
+        // dropped immediately, not on the next 0.35 s scan tick.
         float distFromGuard = Vector3.Distance(
             currentAutoTarget.transform.position, guardPosition);
 
-        if (distFromGuard > leashRadius)
+        if (distFromGuard > leashRadius + leashTolerance)
         {
             Debug.Log($"[AutoAttack:{name}] Target left leash range — returning to guard.");
             ClearAutoTargetOnCombat();
+            lastFightPosition = currentAutoTarget.transform.position;
             currentAutoTarget = null;
+            EnterReturningToGuard();
+        }
+    }
+
+    /// <summary>
+    /// Brief scan window between a kill and the return-to-guard walk. Looks
+    /// for a follow-up target near the last fight position (or near the unit)
+    /// that's still inside the guard's leash boundary. If found, jump straight
+    /// back into AutoChasing; if the deadline passes with nothing eligible,
+    /// commit to ReturningToGuard.
+    /// </summary>
+    private void UpdateLookingForNextTarget()
+    {
+        // Scan every tick — this is a short window (≤ returnToGuardDelay) so
+        // the cost is one OverlapSphere per frame for at most ~half a second.
+        if (TryAcquireContinuationTarget(out Health next))
+        {
+            Debug.Log($"[AutoAttack:{name}] Continuing fight with nearby target: {next.name}.");
+            AssignAutoTarget(next);   // transitions back to AutoChasing
+            return;
+        }
+
+        if (Time.time >= lookForNextDeadline)
+        {
+            Debug.Log($"[AutoAttack:{name}] No nearby enemies — returning to guard.");
             EnterReturningToGuard();
         }
     }
@@ -312,6 +559,23 @@ public class GroundAutoAttackController : MonoBehaviour
         state = AutoState.ReturningToGuard;
         if (movement != null) movement.MoveTo(guardPosition);
         scanTimer = scanInterval;   // re-issue MoveTo every scanInterval as a safety pulse
+    }
+
+    /// <summary>
+    /// Enter the brief look-around window after a kill. The deadline gives
+    /// the unit ~returnToGuardDelay seconds to find a follow-up target before
+    /// it gives up and walks home.
+    /// </summary>
+    private void EnterLookingForNextTarget()
+    {
+        state               = AutoState.LookingForNextTarget;
+        lookForNextDeadline = Time.time + Mathf.Max(0f, returnToGuardDelay);
+
+        Debug.Log($"[AutoAttack:{name}] Target down — scanning for nearby enemies.");
+
+        // Body should hold its current position during the look-around so it
+        // doesn't drift forward / backward while we decide.
+        if (movement != null) movement.Stop();
     }
 
     // ------------------------------------------------------------------ //
@@ -410,6 +674,81 @@ public class GroundAutoAttackController : MonoBehaviour
         if (best == null) return;          // nothing eligible; stay idle
 
         AssignAutoTarget(best);
+    }
+
+    /// <summary>
+    /// Like <see cref="TryAcquireTarget"/> but with relaxed inclusion criteria
+    /// for the post-kill continuation window. A candidate is eligible if it's
+    /// inside the absolute leash boundary (leashRadius + leashTolerance) AND
+    /// either:
+    ///   • inside detectionRadius from guardPosition (normal scan range), OR
+    ///   • inside continueFightRadius of the last fight position, OR
+    ///   • inside continueFightRadius of the unit itself.
+    /// Picks the candidate nearest to the unit. Returns false if nothing
+    /// eligible exists, signalling the caller to commit to ReturningToGuard.
+    /// </summary>
+    private bool TryAcquireContinuationTarget(out Health best)
+    {
+        best = null;
+        if (unitCombat == null && rocketCombat == null) return false;
+
+        float bestDist     = float.PositiveInfinity;
+        float searchRadius = Mathf.Max(leashRadius + leashTolerance, continueFightRadius);
+
+        // OverlapSphere from the unit's position so a target sitting next to
+        // us but slightly outside guard-detection still surfaces; we apply
+        // the leash filter below.
+        int count = Physics.OverlapSphereNonAlloc(
+            transform.position, searchRadius, scanBuffer, targetLayerMask.value);
+
+        Health.Team hostileTeam = (ownHealth.team == Health.Team.Player)
+            ? Health.Team.Enemy
+            : Health.Team.Player;
+
+        bool sawLeashRejection = false;
+
+        for (int i = 0; i < count; i++)
+        {
+            Collider c = scanBuffer[i];
+            if (c == null) continue;
+
+            Health h = c.GetComponent<Health>() ?? c.GetComponentInParent<Health>();
+            if (h == null || h == ownHealth) continue;
+            if (h.team != hostileTeam) continue;
+
+            UnitCategory.Category cat = DamageRules.Resolve(h.gameObject);
+            if (!CanEngageCategory(cat)) continue;
+
+            Vector3 hp = h.transform.position;
+            float distFromGuard     = Vector3.Distance(hp, guardPosition);
+            float distFromUnit      = Vector3.Distance(hp, transform.position);
+            float distFromLastFight = Vector3.Distance(hp, lastFightPosition);
+
+            // Hard leash gate — nothing outside the absolute boundary qualifies.
+            if (distFromGuard > leashRadius + leashTolerance)
+            {
+                sawLeashRejection = true;
+                continue;
+            }
+
+            // Relaxed inclusion: regular detection OR nearby to fight / unit.
+            bool inDetection    = distFromGuard     <= detectionRadius;
+            bool nearFight      = distFromLastFight <= continueFightRadius;
+            bool nearUnit       = distFromUnit      <= continueFightRadius;
+
+            if (!inDetection && !nearFight && !nearUnit) continue;
+
+            if (distFromUnit < bestDist)
+            {
+                bestDist = distFromUnit;
+                best     = h;
+            }
+        }
+
+        if (best == null && sawLeashRejection)
+            Debug.Log($"[AutoAttack:{name}] Candidate rejected: outside leash.");
+
+        return best != null;
     }
 
     /// <summary>

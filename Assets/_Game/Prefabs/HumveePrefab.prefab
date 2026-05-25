@@ -714,7 +714,9 @@ Transform:
   m_LocalPosition: {x: 0, y: 1.35, z: -0.1}
   m_LocalScale: {x: 0.55, y: 0.3, z: 0.55}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 4735280371159703601}
+  - {fileID: 8303333016830170607}
   m_Father: {fileID: 4847139090598348790}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &1300096768397493389
@@ -798,12 +800,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7155501608950356438}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1.4, z: 1.2}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.1666665, z: 2.3636365}
+  m_LocalScale: {x: 1.8181819, y: 3.333333, z: 1.8181819}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 4847139090598348790}
+  m_Father: {fileID: 7589505475687349087}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &8095608060732401746
 GameObject:
@@ -822,6 +824,7 @@ GameObject:
   - component: {fileID: 7109208735776049404}
   - component: {fileID: 6623930013077882469}
   - component: {fileID: 7977784470709816416}
+  - component: {fileID: 1665088554144949194}
   m_Layer: 6
   m_Name: HumveePrefab
   m_TagString: Untagged
@@ -850,8 +853,6 @@ Transform:
   - {fileID: 1789720563384686245}
   - {fileID: 5322421190702607684}
   - {fileID: 7589505475687349087}
-  - {fileID: 4735280371159703601}
-  - {fileID: 8303333016830170607}
   - {fileID: 7436180187383852895}
   - {fileID: 6301291551484642087}
   m_Father: {fileID: 0}
@@ -957,6 +958,11 @@ MonoBehaviour:
   isRanged: 1
   firePoint: {fileID: 8303333016830170607}
   rotationSpeed: 240
+  canFireWhileMoving: 1
+  movingCooldownMultiplier: 1.1
+  movingAccuracy: 0.85
+  stationaryAccuracy: 1
+  movingSpeedThreshold: 0.2
   tracerColor: {r: 1, g: 0.85, b: 0.3, a: 1}
   tracerDuration: 0.05
   tracerWidth: 0.045
@@ -986,14 +992,40 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GroundAutoAttackController
   autoAttackEnabled: 1
-  detectionRadius: 12
+  detectionRadius: 13
+  leashRadius: 18
+  leashTolerance: 2
+  continueFightRadius: 7
   scanInterval: 0.35
-  targetLoseRadiusMultiplier: 1.2
   targetLayerMask:
     serializedVersion: 2
     m_Bits: 0
   debugDrawRadius: 0
+  returnToGuardAfterChase: 1
+  returnToGuardThreshold: 1.5
+  returnToGuardDelay: 0.35
+  updateGuardPositionOnManualMove: 1
   autoAttackPausedAfterManualMoveSeconds: 1
+  autoFireWhileMoving: 1
+  transitTargetLoseMultiplier: 1.15
+--- !u!114 &1665088554144949194
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8095608060732401746}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bdea80776fb7ab347a99be3d5d91ddcb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VehicleTurretController
+  turret: {fileID: 7589505475687349087}
+  firePoint: {fileID: 8303333016830170607}
+  turretTurnSpeed: 180
+  aimToleranceDegrees: 15
+  returnToForwardWhenIdle: 1
+  idleReturnSpeed: 60
 --- !u!1 &8227739870178863476
 GameObject:
   m_ObjectHideFlags: 0
@@ -1110,12 +1142,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8511492944229962974}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 1.4, z: 0.55}
-  m_LocalScale: {x: 0.1, y: 0.55, z: 0.1}
+  m_LocalRotation: {x: 0.7071068, y: -0, z: -0, w: 0.7071068}
+  m_LocalPosition: {x: 0, y: 0.1666665, z: 1.1818182}
+  m_LocalScale: {x: 0.18181819, y: 1, z: 0.33333334}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 4847139090598348790}
+  m_Father: {fileID: 7589505475687349087}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &3704352337421522564
 MeshFilter:

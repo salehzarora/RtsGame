@@ -69,6 +69,32 @@ public class UnitCombat : MonoBehaviour
     [Tooltip("Degrees per second this unit can rotate to face its target while attacking")]
     public float rotationSpeed = 540f;
 
+    [Header("Fire While Moving (vehicle-style)")]
+    [Tooltip("If true, the unit can release shots while its body is moving. The " +
+             "turret (if a VehicleTurretController is present) still aims; the " +
+             "body does NOT stop on entering range when this is enabled. Default " +
+             "false so infantry behaviour is unchanged.")]
+    public bool canFireWhileMoving = false;
+
+    [Tooltip("Cooldown multiplier while moving. >1 means slower fire on the move; " +
+             "1.4 is a sensible tank value, 1.1 for a fast vehicle. Stationary fire " +
+             "always uses 1.0× cooldown.")]
+    public float movingCooldownMultiplier = 1.4f;
+
+    [Tooltip("Probability (0..1) that a moving shot hits. On a miss the tracer still " +
+             "fires for visual feedback but no damage is applied. 1.0 = always hits, " +
+             "0.65 ≈ tank on the move, 0.85 ≈ light vehicle on the move.")]
+    [Range(0f, 1f)] public float movingAccuracy = 0.65f;
+
+    [Tooltip("Probability (0..1) that a stationary shot hits. Usually 1.0 for hitscan; " +
+             "set lower if you want generic miss chance regardless of motion.")]
+    [Range(0f, 1f)] public float stationaryAccuracy = 1.0f;
+
+    [Tooltip("NavMeshAgent velocity threshold (units/sec) above which the unit is " +
+             "considered to be 'moving' for the purposes of accuracy / cooldown " +
+             "penalties. Below this it counts as stationary.")]
+    public float movingSpeedThreshold = 0.2f;
+
     [Header("Tracer Visual (optional, lightweight)")]
     [Tooltip("Colour of the muzzle-to-target tracer line")]
     [ColorUsage(false)] public Color tracerColor = new Color(1f, 0.85f, 0.3f);
@@ -88,6 +114,11 @@ public class UnitCombat : MonoBehaviour
     private UnitMovement movement;
     private float attackTimer;
 
+    // Optional sibling components — null on infantry, non-null on vehicles wired
+    // up via the Repair Vehicle Turrets tool.
+    private VehicleTurretController     turretController;
+    private UnityEngine.AI.NavMeshAgent agent;
+
     private LineRenderer tracer;
     private float tracerTimer;
 
@@ -100,7 +131,9 @@ public class UnitCombat : MonoBehaviour
 
     private void Awake()
     {
-        movement = GetComponent<UnitMovement>();
+        movement         = GetComponent<UnitMovement>();
+        turretController = GetComponent<VehicleTurretController>();
+        agent            = GetComponent<UnityEngine.AI.NavMeshAgent>();
         BuildTracer();
     }
 
@@ -114,41 +147,80 @@ public class UnitCombat : MonoBehaviour
         if (target == null)
         {
             state = CombatState.Idle;
+            if (turretController != null) turretController.ClearAim();
             return;
         }
 
-        float dist = Vector3.Distance(transform.position, target.transform.position);
+        float dist     = Vector3.Distance(transform.position, target.transform.position);
+        bool  isMoving = agent != null &&
+                         agent.velocity.sqrMagnitude >
+                             movingSpeedThreshold * movingSpeedThreshold;
+
+        // The turret tracks the target regardless of body motion. UnitCombat
+        // gates firing on turretController.IsAimed below; if no turret is
+        // present, the body rotates via FaceTarget() instead.
+        if (turretController != null) turretController.AimAt(target.transform);
 
         if (dist > attackRange)
         {
-            // Close the gap — NavMeshAgent handles rotation while moving.
-            state = CombatState.ChasingTarget;
-            movement.MoveTo(target.transform.position);
-        }
-        else
-        {
-            // In range — stop moving and attack
-            if (state != CombatState.Attacking)
+            // Out of range. Fire-while-moving vehicles don't auto-chase — the
+            // body keeps doing whatever the player ordered. Other units chase.
+            if (canFireWhileMoving && isMoving)
             {
-                state = CombatState.Attacking;
-                movement.Stop();
-                attackTimer = attackCooldown; // brief wind-up before first hit
+                // Just wait — the body is going somewhere; we'll fire if the
+                // path happens to bring the target into range.
+                state = CombatState.ChasingTarget;
+            }
+            else
+            {
+                state = CombatState.ChasingTarget;
+                movement.MoveTo(target.transform.position);
+            }
+            return;
+        }
+
+        // In range. Decide whether to stop or fire on the move.
+        bool fireOnMove = canFireWhileMoving && isMoving;
+
+        if (state != CombatState.Attacking)
+        {
+            state = CombatState.Attacking;
+            if (!fireOnMove) movement.Stop();
+            attackTimer = attackCooldown;     // brief wind-up before the first hit
+        }
+
+        // Body facing — only rotate the WHOLE body when there's no turret to
+        // do the aim. A turret-equipped vehicle leaves its body to NavMeshAgent.
+        if (turretController == null && !fireOnMove) FaceTarget();
+
+        attackTimer -= Time.deltaTime;
+        if (attackTimer <= 0f)
+        {
+            // Hold fire until the turret has slewed onto target. No-op when
+            // there's no turret (infantry path).
+            if (turretController != null && !turretController.IsAimed)
+            {
+                // Tiny re-check delay so we don't spin the timer to -∞ while
+                // the cannon swings around.
+                attackTimer = 0.05f;
+                return;
             }
 
-            // Rotate to face the target while attacking. Done manually
-            // because the NavMeshAgent only steers while it has a path.
-            FaceTarget();
+            // Apply moving-vs-stationary accuracy. On a miss, the tracer still
+            // flashes but no damage is applied — feels like a wide round.
+            float hitChance = fireOnMove ? movingAccuracy : stationaryAccuracy;
+            bool  willHit   = Random.value <= hitChance;
 
-            attackTimer -= Time.deltaTime;
-            if (attackTimer <= 0f)
+            if (willHit) ApplyDamage();
+            ShowTracer(target.transform.position);
+
+            attackTimer = attackCooldown * (fireOnMove ? movingCooldownMultiplier : 1f);
+
+            // Target may have just been destroyed by that hit
+            if (target == null)
             {
-                ApplyDamage();
-                ShowTracer(target.transform.position);
-                attackTimer = attackCooldown;
-
-                // Target may have just been destroyed by that hit
-                if (target == null)
-                    state = CombatState.Idle;
+                state = CombatState.Idle;
+                if (turretController != null) turretController.ClearAim();
             }
         }
     }
@@ -167,6 +239,11 @@ public class UnitCombat : MonoBehaviour
         target = enemyHealth;
         state = CombatState.ChasingTarget;
         attackTimer = attackCooldown;
+
+        // Hand the aim to the turret immediately so it starts slewing while
+        // the body decides whether to chase or keep going.
+        if (turretController != null && enemyHealth != null)
+            turretController.AimAt(enemyHealth.transform);
     }
 
     /// <summary>
@@ -177,6 +254,7 @@ public class UnitCombat : MonoBehaviour
     {
         target = null;
         state = CombatState.Idle;
+        if (turretController != null) turretController.ClearAim();
     }
 
     // ------------------------------------------------------------------ //
@@ -259,8 +337,14 @@ public class UnitCombat : MonoBehaviour
     {
         if (tracer == null) return;
 
-        Vector3 start = firePoint != null
-            ? firePoint.position
+        // Prefer the turret's muzzle so tracers leave the rotating barrel, not
+        // the body. Falls back to UnitCombat's own firePoint, then chest height.
+        Transform muzzle = (turretController != null && turretController.firePoint != null)
+            ? turretController.firePoint
+            : firePoint;
+
+        Vector3 start = muzzle != null
+            ? muzzle.position
             : transform.position + Vector3.up * 1.2f;
 
         // Aim at the target's chest, not its feet — feels less like shooting

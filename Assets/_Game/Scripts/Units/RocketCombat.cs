@@ -61,6 +61,18 @@ public class RocketCombat : MonoBehaviour
     [Tooltip("Seconds between rocket releases.")]
     public float attackCooldown = 2.5f;
 
+    [Tooltip("If true, the first rocket on a freshly-acquired target fires after " +
+             "firstShotDelay instead of the full attackCooldown. Makes auto-attack " +
+             "feel responsive when an enemy walks into the guard radius. Subsequent " +
+             "shots respect attackCooldown.")]
+    public bool fireImmediatelyOnNewTarget = true;
+
+    [Tooltip("Seconds before the first rocket on a new target. Very small values " +
+             "(0.05) feel near-instant; 0 fires on the same tick the target enters " +
+             "range, which can look like a teleport-shot. Only used when " +
+             "fireImmediatelyOnNewTarget is true.")]
+    public float firstShotDelay = 0.05f;
+
     [Tooltip("Optional inner dead-zone — targets closer than this are ignored so " +
              "the unit doesn't blast its own feet. 0 disables.")]
     public float minRange = 3f;
@@ -111,6 +123,10 @@ public class RocketCombat : MonoBehaviour
     private UnitMovement movement;
     private float        attackTimer;
 
+    /// <summary>True from SetTarget until the first rocket on that target releases.
+    /// Used to skip the wind-up cooldown when the player wants an instant first shot.</summary>
+    private bool firstShotPending;
+
     /// <summary>True when the unit has no active target. Used by future enemy-AI scans.</summary>
     public bool IsIdle => state == CombatState.Idle;
 
@@ -159,7 +175,11 @@ public class RocketCombat : MonoBehaviour
         {
             state = CombatState.Attacking;
             movement.Stop();
-            attackTimer = attackCooldown;     // brief wind-up before the first shot
+            // Honour the fast-first-shot timer SetTarget already loaded;
+            // only fall back to the full cooldown wind-up if this isn't a
+            // fresh acquisition.
+            if (!firstShotPending)
+                attackTimer = attackCooldown;
         }
 
         FaceTarget();
@@ -178,19 +198,30 @@ public class RocketCombat : MonoBehaviour
     // Public API — UnitSelector calls these
     // ------------------------------------------------------------------ //
 
-    /// <summary>Begin attacking <paramref name="enemyHealth"/>. Works regardless of category.</summary>
+    /// <summary>
+    /// Begin attacking <paramref name="enemyHealth"/>. Works regardless of category.
+    /// When <see cref="fireImmediatelyOnNewTarget"/> is true the wind-up timer is
+    /// set to <see cref="firstShotDelay"/> (typically 0.05 s) instead of the full
+    /// attackCooldown, so the auto-attack controller's "enemy walked into radius"
+    /// flow produces a near-instant first rocket.
+    /// </summary>
     public void SetTarget(Health enemyHealth)
     {
-        target      = enemyHealth;
-        state       = CombatState.ChasingTarget;
-        attackTimer = attackCooldown;
+        target           = enemyHealth;
+        state            = CombatState.ChasingTarget;
+        firstShotPending = fireImmediatelyOnNewTarget && enemyHealth != null;
+        attackTimer      = firstShotPending ? Mathf.Max(0f, firstShotDelay) : attackCooldown;
+
+        if (firstShotPending)
+            Debug.Log($"[RPG:{name}] Target acquired — immediate fire ready.");
     }
 
     /// <summary>Drop the current target; the unit returns to Idle. Called when the player gives a move order.</summary>
     public void ClearTarget()
     {
-        target = null;
-        state  = CombatState.Idle;
+        target           = null;
+        firstShotPending = false;
+        state            = CombatState.Idle;
     }
 
     // ------------------------------------------------------------------ //
@@ -219,7 +250,15 @@ public class RocketCombat : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.up * 1.2f;
 
-        Debug.Log($"[RPG] {name} fired rocket at {target.name}.");
+        if (firstShotPending)
+        {
+            Debug.Log($"[RPG:{name}] First rocket fired immediately.");
+            firstShotPending = false;
+        }
+        else
+        {
+            Debug.Log($"[RPG] {name} fired rocket at {target.name}.");
+        }
 
         // Build the visual body — same primitive-cube pattern as StrikeMissile.
         GameObject rocketGO = GameObject.CreatePrimitive(PrimitiveType.Cube);

@@ -53,7 +53,7 @@ public static class CreateEnemyRPGSoldierPrefab
     private const float GroundHitRadius   = 0.8f;
     private const float BarHeight         = 1.7f;
     private const float ScanRadius        = 18f;
-    private const float ScanInterval      = 0.4f;
+    private const float ScanInterval      = 0.1f;   // snappy auto-acquire — see RocketCombat first-shot path
 
     // Palette — red / black so the enemy reads at a glance against the player's
     // olive-green infantry.
@@ -144,16 +144,18 @@ public static class CreateEnemyRPGSoldierPrefab
 
         // Same RocketCombat the player uses — no duplicate projectile logic.
         RocketCombat rc = root.AddComponent<RocketCombat>();
-        rc.attackRange         = AttackRange;
-        rc.antiAirRange        = AntiAirRange;
-        rc.attackDamage        = AttackDamage;
-        rc.attackCooldown      = AttackCooldown;
-        rc.minRange            = MinRange;
-        rc.projectileSpeed     = ProjectileSpeed;
-        rc.homingTurnRateDegrees = HomingTurnRate;
-        rc.rocketLifetime      = RocketLifetime;
-        rc.aircraftHitRadius   = AircraftHitRadius;
-        rc.groundHitRadius     = GroundHitRadius;
+        rc.attackRange                = AttackRange;
+        rc.antiAirRange               = AntiAirRange;
+        rc.attackDamage               = AttackDamage;
+        rc.attackCooldown             = AttackCooldown;
+        rc.fireImmediatelyOnNewTarget = true;     // enemy guard reacts instantly when a player walks in
+        rc.firstShotDelay             = 0.05f;
+        rc.minRange                   = MinRange;
+        rc.projectileSpeed            = ProjectileSpeed;
+        rc.homingTurnRateDegrees      = HomingTurnRate;
+        rc.rocketLifetime             = RocketLifetime;
+        rc.aircraftHitRadius          = AircraftHitRadius;
+        rc.groundHitRadius            = GroundHitRadius;
 
         // Local guard brain — uses the unified GroundAutoAttackController,
         // which is team-aware (a unit on team Enemy hunts team Player and

@@ -948,6 +948,8 @@ MonoBehaviour:
   antiAirRange: 14
   attackDamage: 70
   attackCooldown: 2.5
+  fireImmediatelyOnNewTarget: 1
+  firstShotDelay: 0.05
   minRange: 3
   rotationSpeed: 540
   projectileSpeed: 16
@@ -972,13 +974,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GroundAutoAttackController
   autoAttackEnabled: 1
-  detectionRadius: 12
-  scanInterval: 0.35
-  targetLoseRadiusMultiplier: 1.2
+  detectionRadius: 18
+  leashRadius: 18
+  scanInterval: 0.1
   targetLayerMask:
     serializedVersion: 2
     m_Bits: 0
   debugDrawRadius: 0
+  returnToGuardAfterChase: 1
+  returnToGuardThreshold: 1.5
+  updateGuardPositionOnManualMove: 1
   autoAttackPausedAfterManualMoveSeconds: 1
 --- !u!1 &6859437128692549259
 GameObject:

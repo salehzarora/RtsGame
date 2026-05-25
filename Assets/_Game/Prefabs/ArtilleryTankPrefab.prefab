@@ -116,12 +116,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1979051106346285333}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 1.45, z: 1.2}
-  m_LocalScale: {x: 0.18, y: 1.25, z: 0.18}
+  m_LocalRotation: {x: 0.7071068, y: -0, z: -0, w: 0.7071068}
+  m_LocalPosition: {x: 0, y: 0.15384619, z: 0.87500006}
+  m_LocalScale: {x: 0.112500004, y: 0.78124994, z: 0.27692306}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 3099463981565237053}
+  m_Father: {fileID: 3839809480002135903}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &6809378001045265021
 MeshFilter:
@@ -438,12 +438,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5159212318389843128}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1.45, z: 2.5}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.15384619, z: 1.6875}
+  m_LocalScale: {x: 0.625, y: 1.5384616, z: 0.625}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 3099463981565237053}
+  m_Father: {fileID: 3839809480002135903}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &6379886860295586065
 GameObject:
@@ -565,7 +565,9 @@ Transform:
   m_LocalPosition: {x: 0, y: 1.35, z: -0.2}
   m_LocalScale: {x: 1.6, y: 0.65, z: 1.6}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 8340335915480665613}
+  - {fileID: 5265621421634936027}
   m_Father: {fileID: 3099463981565237053}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &4985366659886121380
@@ -642,6 +644,7 @@ GameObject:
   - component: {fileID: 1851921996125716627}
   - component: {fileID: 1856207582002445912}
   - component: {fileID: 2299888454212288620}
+  - component: {fileID: 7828305095357263063}
   m_Layer: 6
   m_Name: ArtilleryTankPrefab
   m_TagString: Untagged
@@ -666,8 +669,6 @@ Transform:
   - {fileID: 270146088524361611}
   - {fileID: 6825464691433203377}
   - {fileID: 3839809480002135903}
-  - {fileID: 8340335915480665613}
-  - {fileID: 5265621421634936027}
   - {fileID: 5741061775718518382}
   - {fileID: 6066332650758849480}
   m_Father: {fileID: 0}
@@ -773,6 +774,11 @@ MonoBehaviour:
   isRanged: 1
   firePoint: {fileID: 5265621421634936027}
   rotationSpeed: 120
+  canFireWhileMoving: 1
+  movingCooldownMultiplier: 1.4
+  movingAccuracy: 0.65
+  stationaryAccuracy: 1
+  movingSpeedThreshold: 0.2
   tracerColor: {r: 1, g: 0.55, b: 0.1, a: 1}
   tracerDuration: 0.12
   tracerWidth: 0.1
@@ -802,11 +808,37 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GroundAutoAttackController
   autoAttackEnabled: 1
-  detectionRadius: 12
+  detectionRadius: 16
+  leashRadius: 18
+  leashTolerance: 2
+  continueFightRadius: 7
   scanInterval: 0.35
-  targetLoseRadiusMultiplier: 1.2
   targetLayerMask:
     serializedVersion: 2
     m_Bits: 0
   debugDrawRadius: 0
+  returnToGuardAfterChase: 1
+  returnToGuardThreshold: 1.5
+  returnToGuardDelay: 0.35
+  updateGuardPositionOnManualMove: 1
   autoAttackPausedAfterManualMoveSeconds: 1
+  autoFireWhileMoving: 1
+  transitTargetLoseMultiplier: 1.15
+--- !u!114 &7828305095357263063
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7339278035214007323}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bdea80776fb7ab347a99be3d5d91ddcb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VehicleTurretController
+  turret: {fileID: 3839809480002135903}
+  firePoint: {fileID: 5265621421634936027}
+  turretTurnSpeed: 90
+  aimToleranceDegrees: 8
+  returnToForwardWhenIdle: 1
+  idleReturnSpeed: 60

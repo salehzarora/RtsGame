@@ -136,16 +136,18 @@ public static class CreateRPGSoldierPrefab
         cat.category     = UnitCategory.Category.Infantry;
 
         RocketCombat rc = root.AddComponent<RocketCombat>();
-        rc.attackRange         = AttackRange;
-        rc.antiAirRange        = AntiAirRange;
-        rc.attackDamage        = AttackDamage;
-        rc.attackCooldown      = AttackCooldown;
-        rc.minRange            = MinRange;
-        rc.projectileSpeed     = ProjectileSpeed;
-        rc.homingTurnRateDegrees = HomingTurnRate;
-        rc.rocketLifetime      = RocketLifetime;
-        rc.aircraftHitRadius   = AircraftHitRadius;
-        rc.groundHitRadius     = GroundHitRadius;
+        rc.attackRange                = AttackRange;
+        rc.antiAirRange               = AntiAirRange;
+        rc.attackDamage               = AttackDamage;
+        rc.attackCooldown             = AttackCooldown;
+        rc.fireImmediatelyOnNewTarget = true;     // first shot snappy when auto-acquired
+        rc.firstShotDelay             = 0.05f;
+        rc.minRange                   = MinRange;
+        rc.projectileSpeed            = ProjectileSpeed;
+        rc.homingTurnRateDegrees      = HomingTurnRate;
+        rc.rocketLifetime             = RocketLifetime;
+        rc.aircraftHitRadius          = AircraftHitRadius;
+        rc.groundHitRadius            = GroundHitRadius;
 
         // --- Visual children -------------------------------------------- //
 
