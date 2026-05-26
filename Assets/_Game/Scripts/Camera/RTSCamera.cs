@@ -99,6 +99,23 @@ public class RTSCamera : MonoBehaviour
         transform.position = pos;
     }
 
+    // ------------------------------------------------------------------ //
+    // Public — external teleport (used by minimap click-to-recentre)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Snaps the camera rig to <paramref name="worldXZ"/> while preserving the
+    /// current zoom height. Y is left untouched so the player's zoom doesn't
+    /// jump when the minimap moves them across the map.
+    /// </summary>
+    public void TeleportTo(Vector3 worldXZ)
+    {
+        Vector3 next = transform.position;
+        next.x = worldXZ.x;
+        next.z = worldXZ.z;
+        transform.position = next;
+    }
+
     private void HandleRotation()
     {
         float yaw = 0f;

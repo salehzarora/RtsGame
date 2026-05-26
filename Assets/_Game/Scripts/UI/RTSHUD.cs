@@ -166,6 +166,27 @@ public class RTSHUD : MonoBehaviour
     public GameObject transportUnloadAllButton;
 
     // ------------------------------------------------------------------ //
+    // New HUD modules (Selected Info + Resource/Power + Minimap)
+    // ------------------------------------------------------------------ //
+
+    [Header("New HUD modules (set up by Tools → RTS → Setup → Setup Gameplay HUD)")]
+    [Tooltip("The full bottom command bar that hosts every panel. Hide this " +
+             "to suppress the entire gameplay HUD (e.g. during a cinematic).")]
+    public GameObject bottomBarRoot;
+
+    [Tooltip("Left-section module — selected-object portrait + name + HP + " +
+             "category + group breakdown. Self-driven (polls UnitSelector).")]
+    public SelectedInfoPanelUI selectedInfoPanel;
+
+    [Tooltip("Right-section module — resources / power display with low-power " +
+             "warning pulse. Owns no text content; RTSHUD writes the strings.")]
+    public ResourcePowerPanelUI resourcePowerPanel;
+
+    [Tooltip("Right-section module — top-down minimap. Binds the MinimapCamera's " +
+             "RenderTexture to a RawImage. Optional click-to-recentre.")]
+    public MiniMapPanelUI miniMapPanel;
+
+    // ------------------------------------------------------------------ //
     // Private references — found at runtime
     // ------------------------------------------------------------------ //
 
@@ -215,6 +236,96 @@ public class RTSHUD : MonoBehaviour
         // Transport panel is hidden until an APC is selected
         if (transportPanel != null)
             transportPanel.SetActive(false);
+    }
+
+    private bool gameStartedListenerSubscribed;
+
+    private void Start()
+    {
+        // Auto-hide the gameplay HUD while the main menu is showing. We do
+        // this in Start (not Awake) so MainMenuController and GameStateManager
+        // — which usually live on the same GameObject — have a chance to
+        // initialise their Awake-time state first.
+        //
+        // Safety: in test scenes WITHOUT a MainMenuController, we leave the
+        // HUD visible. Authoring/preview workflows keep working as before.
+        MainMenuController menu = FindAnyObjectByType<MainMenuController>(FindObjectsInactive.Include);
+        if (menu == null) return;
+
+        // Menu present, but no GameStateManager: behave defensively and hide
+        // the HUD anyway — if the menu is in the scene, the player hasn't
+        // pressed Play yet by definition.
+        bool gameAlreadyStarted = GameStateManager.Instance != null
+                               && GameStateManager.Instance.IsGameStarted;
+        if (gameAlreadyStarted) return;
+
+        SetGameplayHudVisible(false);
+
+        // Subscribe to OnGameStarted so the HUD comes back when Play is pressed.
+        if (GameStateManager.Instance != null && !gameStartedListenerSubscribed)
+        {
+            GameStateManager.Instance.OnGameStarted += HandleGameStarted;
+            gameStartedListenerSubscribed = true;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (gameStartedListenerSubscribed && GameStateManager.Instance != null)
+        {
+            GameStateManager.Instance.OnGameStarted -= HandleGameStarted;
+            gameStartedListenerSubscribed = false;
+        }
+    }
+
+    private void HandleGameStarted()
+    {
+        Debug.Log("[RTSHUD] OnGameStarted received — showing gameplay HUD.");
+        SetGameplayHudVisible(true);
+
+        // One-shot — unsubscribe so a future re-fire (e.g. scene reload that
+        // didn't tear us down) doesn't double-show.
+        if (GameStateManager.Instance != null)
+        {
+            GameStateManager.Instance.OnGameStarted -= HandleGameStarted;
+            gameStartedListenerSubscribed = false;
+        }
+    }
+
+    /// <summary>
+    /// Toggle the entire gameplay HUD (HUDCanvas root if reachable, otherwise
+    /// the bottom command bar). Called by:
+    ///   • <see cref="HandleGameStarted"/> when the player presses Play.
+    ///   • Externally by editor tools or cinematic systems that need to hide
+    ///     the HUD wholesale.
+    ///
+    /// No-op if neither <see cref="bottomBarRoot"/> nor a parent Canvas is
+    /// reachable — fail-silent so this method is safe to call before SetupHUD
+    /// has finished running.
+    /// </summary>
+    public void SetGameplayHudVisible(bool visible)
+    {
+        // Prefer toggling the whole HUDCanvas — that also hides the floating
+        // boarding-cursor indicator while the menu is up. Walk from the bottom
+        // bar up to the Canvas; that's how the bar was parented during setup.
+        if (bottomBarRoot != null)
+        {
+            Canvas canvas = bottomBarRoot.GetComponentInParent<Canvas>();
+            if (canvas != null && canvas.gameObject.activeSelf != visible)
+            {
+                canvas.gameObject.SetActive(visible);
+                Debug.Log($"[RTSHUD] HUDCanvas → {(visible ? "shown" : "hidden")}");
+                return;
+            }
+
+            // Canvas not found (HUD may have been re-parented). Fall back to
+            // toggling just the bottom bar GameObject.
+            if (bottomBarRoot.activeSelf != visible)
+            {
+                bottomBarRoot.SetActive(visible);
+                Debug.Log($"[RTSHUD] BottomBar → {(visible ? "shown" : "hidden")} (canvas fallback)");
+            }
+        }
     }
 
     private void LateUpdate()

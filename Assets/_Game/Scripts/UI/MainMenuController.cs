@@ -70,10 +70,35 @@ public class MainMenuController : MonoBehaviour
         pendingColor     = defaultColor;
         pendingColorName = defaultColorName;
 
+        // Runtime fallback: if the Inspector reference to HUDCanvas got
+        // wiped (e.g. Setup Gameplay HUD was re-run AFTER Setup Main Menu
+        // and the user didn't re-wire), recover it by scene-name lookup.
+        // Without this, the gameplay HUD would stay visible behind the menu.
+        if (hudCanvas == null)
+        {
+            GameObject found = GameObject.Find("HUDCanvas");
+            if (found != null)
+            {
+                hudCanvas = found;
+                Debug.Log("[MainMenu] hudCanvas Inspector ref was missing — recovered " +
+                          "by name lookup ('HUDCanvas').");
+            }
+            else
+            {
+                Debug.LogWarning("[MainMenu] hudCanvas reference is null and no " +
+                                 "GameObject named 'HUDCanvas' was found. The gameplay HUD " +
+                                 "won't be hidden while the menu is open. Run " +
+                                 "Tools → RTS → Setup → Setup Gameplay HUD to rebuild it.");
+            }
+        }
+
         if (menuCanvas != null) menuCanvas.SetActive(true);
         if (hudCanvas  != null) hudCanvas.SetActive(false);
 
         RefreshLabels();
+
+        Debug.Log("[MainMenu] Boot — main menu shown. Awaiting player input " +
+                  $"(default color: {pendingColorName}).");
     }
 
     // ------------------------------------------------------------------ //
@@ -92,6 +117,8 @@ public class MainMenuController : MonoBehaviour
         pendingColor     = c;
         pendingColorName = label;
 
+        Debug.Log($"[MainMenu] Color selected: {label}.");
+
         // Apply IMMEDIATELY to any markers already in the scene so the player
         // sees the result without having to press Play first.
         if (PlayerFactionManager.Instance != null)
@@ -106,6 +133,9 @@ public class MainMenuController : MonoBehaviour
 
     public void OnClickPlay()
     {
+        Debug.Log($"[MainMenu] Play pressed. Committing color={pendingColorName} " +
+                  "and Default Army selection.");
+
         // Commit selection — covers the case where the player pressed Play
         // without touching a color button (manager still gets default applied).
         if (PlayerFactionManager.Instance != null)
@@ -125,10 +155,16 @@ public class MainMenuController : MonoBehaviour
         if (hudCanvas  != null) hudCanvas.SetActive(true);
 
         if (GameStateManager.Instance != null)
+        {
             GameStateManager.Instance.StartGame();
+            Debug.Log("[MainMenu] Match starting — gameplay HUD shown, " +
+                      "your army is now active on the battlefield.");
+        }
         else
+        {
             Debug.LogWarning("[MainMenu] No GameStateManager in scene — gameplay " +
                              "input will be live by default. Run Tools → RTS → Setup → Setup Main Menu.");
+        }
     }
 
     // ------------------------------------------------------------------ //

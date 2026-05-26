@@ -63,6 +63,19 @@ public class UnitSelector : MonoBehaviour
     /// </summary>
     public IReadOnlyList<SelectableUnit> SelectedUnits => selectedUnits;
 
+    /// <summary>
+    /// Read-only view of the currently selected aircraft. Mirrors
+    /// <see cref="SelectedUnits"/> but for jets — consumed by HUD modules
+    /// that need to render selection info without touching selection state.
+    /// </summary>
+    public IReadOnlyList<SelectableAircraft> SelectedAircraftList => selectedAircraft;
+
+    /// <summary>
+    /// The currently selected building, or <c>null</c>. A building selection
+    /// is mutually exclusive with a unit selection — see <see cref="SelectBuilding"/>.
+    /// </summary>
+    public SelectableBuilding SelectedBuilding => selectedBuilding;
+
     // Monotonically incrementing launch-group ID for multi-aircraft commands.
     // Static so the value is shared across UnitSelector lifetimes if the
     // scene reloads — collisions don't matter, only "do these aircraft share

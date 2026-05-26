@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -c \"^public static class\\\\|^[[:space:]]*\\\\\\(private\\\\|public\\\\|internal\\\\\\)[[:space:]]*static.*{$\" \"c:/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Editor/SetupRTSHUD.cs\")"
+    ]
+  }
+}
