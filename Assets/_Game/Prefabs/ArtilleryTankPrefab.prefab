@@ -735,6 +735,7 @@ GameObject:
   - component: {fileID: 1856207582002445912}
   - component: {fileID: 4053799557133660040}
   - component: {fileID: 1237263245287224748}
+  - component: {fileID: 5414389545863520461}
   m_Layer: 6
   m_Name: ArtilleryTankPrefab
   m_TagString: Untagged
@@ -929,6 +930,24 @@ MonoBehaviour:
   aimToleranceDegrees: 8
   returnToForwardWhenIdle: 1
   idleReturnSpeed: 60
+--- !u!114 &5414389545863520461
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7339278035214007323}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: ArtilleryTank
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &8217187700371217789
 GameObject:
   m_ObjectHideFlags: 0

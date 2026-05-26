@@ -112,6 +112,14 @@ public class EnemyWorkerAI : MonoBehaviour
         movement = GetComponent<UnitMovement>();
         agent    = GetComponent<NavMeshAgent>();
 
+        // Phase 3: disable AI worker behaviour in multiplayer.
+        if (NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.multiplayerMode)
+        {
+            Debug.Log("[EnemyWorkerAI] Disabled — multiplayer mode is on.");
+            enabled = false;
+            return;
+        }
+
         // Force enemy team on the Health component so a worker that was cloned
         // from the player WorkerPrefab can never accidentally deposit to the
         // player. Defensive — SetupCleanMatchMap also sets this at edit time.
@@ -122,6 +130,7 @@ public class EnemyWorkerAI : MonoBehaviour
 
     private void Start()
     {
+        if (!enabled) return;
         if (enemyCommandCenter == null)
             enemyCommandCenter = FindAnyObjectByType<EnemyCommandCenter>();
 

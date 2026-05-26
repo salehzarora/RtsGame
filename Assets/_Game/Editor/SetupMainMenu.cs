@@ -161,17 +161,31 @@ public static class SetupMainMenu
             WireButton(swatchBtn, controller, sw.method);
         }
 
-        // Play button
-        Button play = CreateButton(
+        // Single Player button — was "Play" pre-Phase-6. Same wiring target;
+        // the new OnClickSinglePlayer just forces multiplayerMode=false and
+        // calls into the existing OnClickPlay flow.
+        Button singlePlayer = CreateButton(
             (RectTransform)canvas.transform,
-            "BtnPlay", "Play",
+            "BtnSinglePlayer", "Single Player",
             PlayBtnColor,
             anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
             anchoredPos: new Vector2(0f, -160f),
-            size:        new Vector2(300f, 80f));
-        play.GetComponentInChildren<TextMeshProUGUI>(true).fontSize = 36;
+            size:        new Vector2(360f, 70f));
+        singlePlayer.GetComponentInChildren<TextMeshProUGUI>(true).fontSize = 28;
 
-        WireButton(play, controller, nameof(MainMenuController.OnClickPlay));
+        WireButton(singlePlayer, controller, nameof(MainMenuController.OnClickSinglePlayer));
+
+        // Online button — opens MultiplayerLobbyUI's OnlineMenuPanel.
+        Button online = CreateButton(
+            (RectTransform)canvas.transform,
+            "BtnOnline", "Online",
+            new Color(0.32f, 0.50f, 0.70f),    // sky-blue grey — matches debug-panel Connect button
+            anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
+            anchoredPos: new Vector2(0f, -245f),
+            size:        new Vector2(360f, 70f));
+        online.GetComponentInChildren<TextMeshProUGUI>(true).fontSize = 28;
+
+        WireButton(online, controller, nameof(MainMenuController.OnClickOnline));
 
         // Ensure the menu renders above the gameplay HUD (sort order 1000 > 999).
         canvas.transform.SetAsLastSibling();

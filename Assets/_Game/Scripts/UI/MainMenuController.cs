@@ -124,12 +124,86 @@ public class MainMenuController : MonoBehaviour
         if (PlayerFactionManager.Instance != null)
             PlayerFactionManager.Instance.SetColor(pendingColor, pendingColorName);
 
+        // Phase 5: push the pick into NetworkManagerRTS. It writes the colour
+        // to our Photon custom player properties when we're in a room; if we
+        // haven't joined yet, it queues the value and flushes on OnJoinedRoom.
+        // The master reads both players' properties when broadcasting the
+        // MatchStart event, so each owner ends up with the colour its own
+        // player picked.
+        if (NetworkManagerRTS.Instance != null)
+            NetworkManagerRTS.Instance.SetLocalPlayerColor(pendingColor, pendingColorName);
+
         RefreshLabels();
     }
 
     // ------------------------------------------------------------------ //
     // Play button
     // ------------------------------------------------------------------ //
+
+    private bool matchStartSubscribed;
+
+    private void OnEnable()
+    {
+        if (!matchStartSubscribed)
+        {
+            NetworkMatchCoordinator.OnMatchStarted += HandleMatchStarted;
+            matchStartSubscribed = true;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (matchStartSubscribed)
+        {
+            NetworkMatchCoordinator.OnMatchStarted -= HandleMatchStarted;
+            matchStartSubscribed = false;
+        }
+    }
+
+    /// <summary>
+    /// Phase 6 — "Online" button on the Main Menu. Hides this menu and shows
+    /// the MultiplayerLobbyUI's OnlineMenuPanel. The lobby system handles
+    /// everything from Connect → Create/Join → Lobby → Start Match. No
+    /// MatchStart fires until the lobby's Start button is clicked.
+    /// </summary>
+    public void OnClickOnline()
+    {
+        Debug.Log("[MainMenu] Online clicked.");
+
+        // Make sure multiplayerMode is on so command relay + ownership checks
+        // activate. The legacy SP toggle stays in the NetworkManagerRTS
+        // Inspector for explicit override; we just flip it on for this session.
+        if (NetworkManagerRTS.Instance != null)
+            NetworkManagerRTS.Instance.multiplayerMode = true;
+
+        if (MultiplayerLobbyUI.Instance == null)
+        {
+            Debug.LogWarning("[MainMenu] No MultiplayerLobbyUI found in scene. " +
+                             "Run Tools → RTS → Multiplayer → Setup Multiplayer Lobby UI " +
+                             "(or the All-In-One tool).");
+            return;
+        }
+
+        Debug.Log("[MainMenu] Opening MultiplayerLobbyUI.");
+        MultiplayerLobbyUI.Instance.ShowOnlineMenu();
+    }
+
+    /// <summary>
+    /// Single-player Play. Same as the existing <see cref="OnClickPlay"/>.
+    /// Kept as a named alias so the SetupMainMenu tool can wire a new
+    /// "Single Player" button to this without breaking older scenes whose
+    /// existing Play button still calls <see cref="OnClickPlay"/>.
+    /// </summary>
+    public void OnClickSinglePlayer()
+    {
+        // Belt-and-braces: make sure MP is OFF for the SP path. Even if the
+        // player toggled it on earlier in the session by exploring the lobby
+        // and backing out, this forces the SP coordinator path.
+        if (NetworkManagerRTS.Instance != null)
+            NetworkManagerRTS.Instance.multiplayerMode = false;
+
+        OnClickPlay();
+    }
 
     public void OnClickPlay()
     {
@@ -151,6 +225,45 @@ public class MainMenuController : MonoBehaviour
                              "team colors will fall back to per-prefab defaults.");
         }
 
+        // Phase 4: route through NetworkMatchCoordinator. In single-player it
+        // fires OnMatchStarted synchronously; in multiplayer it either
+        // broadcasts MatchStart (master + room ready) or logs a waiting
+        // message and returns false (we stay on the menu).
+        if (NetworkMatchCoordinator.Instance != null)
+        {
+            bool willFire = NetworkMatchCoordinator.Instance.RequestMatchStart(pendingColor);
+            if (!willFire)
+            {
+                // Menu stays open. The coordinator already logged the reason
+                // (not in room / waiting for player 2 / waiting for master).
+                // OnMatchStarted will fire later via the network event; until
+                // then, the player just sees the menu and the debug panel.
+                return;
+            }
+            // willFire == true means OnMatchStarted has either fired
+            // synchronously (SP path) or will fire on the same frame from
+            // Photon's receive callback (MP master path). HandleMatchStarted
+            // takes it from here.
+            return;
+        }
+
+        // Fallback path — no coordinator in scene (legacy single-player setup).
+        // Behaves exactly like before this phase: hide menu, show HUD, start game.
+        Debug.LogWarning("[MainMenu] No NetworkMatchCoordinator in scene — " +
+                         "using legacy single-player Play flow. Run " +
+                         "Tools → RTS → Multiplayer → Setup Network Manager " +
+                         "to add it.");
+        FinishLocalMatchStart();
+    }
+
+    private void HandleMatchStarted()
+    {
+        Debug.Log("[MainMenu] OnMatchStarted received — completing local match boot.");
+        FinishLocalMatchStart();
+    }
+
+    private void FinishLocalMatchStart()
+    {
         if (menuCanvas != null) menuCanvas.SetActive(false);
         if (hudCanvas  != null) hudCanvas.SetActive(true);
 

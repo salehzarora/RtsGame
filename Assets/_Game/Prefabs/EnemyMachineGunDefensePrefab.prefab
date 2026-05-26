@@ -374,6 +374,7 @@ GameObject:
   - component: {fileID: 618462229582564834}
   - component: {fileID: 2448077574166165398}
   - component: {fileID: 8048675359651880785}
+  - component: {fileID: 238576522456210907}
   m_Layer: 9
   m_Name: EnemyMachineGunDefensePrefab
   m_TagString: Untagged
@@ -494,6 +495,24 @@ MonoBehaviour:
   tracerWidth: 0.045
   requirePower: 0
   debugDrawRange: 1
+--- !u!114 &238576522456210907
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2710259142004813792}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: EnemyMachineGunDefense
+  ownerPlayerId: 1
+  teamId: 1
+  overrideTeamFromHealth: 1
+  entityType: 1
 --- !u!1 &3163583339717891305
 GameObject:
   m_ObjectHideFlags: 0

@@ -1810,6 +1810,7 @@ GameObject:
   - component: {fileID: 5968892466568840196}
   - component: {fileID: 1993030529821401841}
   - component: {fileID: 2806777283754994273}
+  - component: {fileID: 5028306148737764837}
   m_Layer: 9
   m_Name: AirfieldPrefab
   m_TagString: Untagged
@@ -2030,6 +2031,24 @@ MonoBehaviour:
   - {fileID: 963764914501217743}
   - {fileID: 7356004640774204206}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &5028306148737764837
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7719987813672397985}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: Airfield
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 1
 --- !u!1 &7884317160407150857
 GameObject:
   m_ObjectHideFlags: 0

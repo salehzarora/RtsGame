@@ -50,6 +50,15 @@ public class EnemyAIController : MonoBehaviour
 
     private void Start()
     {
+        // Phase 3: enemy AI is the human opponent in multiplayer — disable this
+        // bot retarget loop so it doesn't fight for control of the same units.
+        if (NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.multiplayerMode)
+        {
+            Debug.Log($"[EnemyAIController] '{name}' disabled — multiplayer mode is on.");
+            enabled = false;
+            return;
+        }
+
         // Stagger the scan across all enemies so they don't all call
         // FindObjectsByType on the exact same frame.
         float jitter = Random.Range(0.3f, 1.2f);

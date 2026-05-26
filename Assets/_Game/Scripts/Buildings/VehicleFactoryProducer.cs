@@ -111,16 +111,16 @@ public class VehicleFactoryProducer : MonoBehaviour
     // Private
     // ------------------------------------------------------------------ //
 
-    private PlayerResourceManager resourceManager;
+    // Phase 3: owner-aware bank lookup via ResourceBank on each spend.
+    private GameEntity selfEntity;
+    private int OwnerId => (selfEntity ?? (selfEntity = GetComponent<GameEntity>())) != null
+        ? selfEntity.ownerPlayerId : 0;
 
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
-        resourceManager = FindAnyObjectByType<PlayerResourceManager>();
-
-        if (resourceManager == null)
-            Debug.LogError($"VehicleFactoryProducer on '{name}': No PlayerResourceManager found in scene.");
+        selfEntity = GetComponent<GameEntity>();
     }
 
     // ------------------------------------------------------------------ //
@@ -181,9 +181,12 @@ public class VehicleFactoryProducer : MonoBehaviour
     {
         // --- Validation ---------------------------------------------------
 
-        if (resourceManager == null)
+        int ownerId = OwnerId;
+        PlayerResourceManager bank = ResourceBank.For(ownerId);
+        if (bank == null)
         {
-            Debug.LogError($"[VehicleFactory] Cannot produce {unitLabel}: PlayerResourceManager missing.");
+            Debug.LogError($"[VehicleFactory] Cannot produce {unitLabel}: " +
+                           $"no PlayerResourceManager registered for owner {ownerId}.");
             return;
         }
 
@@ -197,10 +200,10 @@ public class VehicleFactoryProducer : MonoBehaviour
             return;
         }
 
-        if (!resourceManager.CanAfford(cost))
+        if (!bank.CanAfford(cost))
         {
             Debug.LogWarning($"[VehicleFactory] Not enough resources to produce {unitLabel}. " +
-                             $"Need {cost}, have {resourceManager.CurrentResources}.");
+                             $"Need {cost}, have {bank.CurrentResources} (owner {ownerId}).");
             return;
         }
 
@@ -227,9 +230,9 @@ public class VehicleFactoryProducer : MonoBehaviour
         GameObject unit = Instantiate(prefab, spawnPos, Quaternion.identity);
         unit.name = unitLabel;
 
-        resourceManager.SpendResources(cost);
+        bank.SpendResources(cost);
 
         Debug.Log($"[VehicleFactory] {unitLabel} produced by '{name}' at {spawnPos:F1}. " +
-                  $"Remaining resources: {resourceManager.CurrentResources}");
+                  $"Remaining resources (owner {ownerId}): {bank.CurrentResources}");
     }
 }

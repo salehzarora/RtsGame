@@ -76,16 +76,17 @@ public class CommandCenterProducer : MonoBehaviour
     // Private
     // ------------------------------------------------------------------ //
 
-    private PlayerResourceManager resourceManager;
+    // Phase 3: no cached PlayerResourceManager — owner-aware lookup via
+    // ResourceBank.For(OwnerId) on each spend.
+    private GameEntity selfEntity;
+    private int OwnerId => (selfEntity ?? (selfEntity = GetComponent<GameEntity>())) != null
+        ? selfEntity.ownerPlayerId : 0;
 
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
-        resourceManager = FindAnyObjectByType<PlayerResourceManager>();
-
-        if (resourceManager == null)
-            Debug.LogError($"CommandCenterProducer on '{name}': No PlayerResourceManager found in scene.");
+        selfEntity = GetComponent<GameEntity>();
     }
 
     // ------------------------------------------------------------------ //
@@ -126,9 +127,12 @@ public class CommandCenterProducer : MonoBehaviour
     {
         // --- Validation ---------------------------------------------------
 
-        if (resourceManager == null)
+        int ownerId = OwnerId;
+        PlayerResourceManager bank = ResourceBank.For(ownerId);
+        if (bank == null)
         {
-            Debug.LogError($"[CommandCenter] Cannot produce {unitLabel}: PlayerResourceManager missing.");
+            Debug.LogError($"[CommandCenter] Cannot produce {unitLabel}: " +
+                           $"no PlayerResourceManager registered for owner {ownerId}.");
             return;
         }
 
@@ -142,10 +146,10 @@ public class CommandCenterProducer : MonoBehaviour
             return;
         }
 
-        if (!resourceManager.CanAfford(cost))
+        if (!bank.CanAfford(cost))
         {
             Debug.LogWarning($"[CommandCenter] Not enough resources to produce {unitLabel}. " +
-                             $"Need {cost}, have {resourceManager.CurrentResources}.");
+                             $"Need {cost}, have {bank.CurrentResources} (owner {ownerId}).");
             return;
         }
 
@@ -172,9 +176,9 @@ public class CommandCenterProducer : MonoBehaviour
         GameObject unit = Instantiate(prefab, spawnPos, Quaternion.identity);
         unit.name = unitLabel;
 
-        resourceManager.SpendResources(cost);
+        bank.SpendResources(cost);
 
         Debug.Log($"[CommandCenter] {unitLabel} produced by '{name}' at {spawnPos:F1}. " +
-                  $"Remaining resources: {resourceManager.CurrentResources}");
+                  $"Remaining resources (owner {ownerId}): {bank.CurrentResources}");
     }
 }

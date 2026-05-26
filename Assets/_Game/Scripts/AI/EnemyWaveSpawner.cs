@@ -60,6 +60,14 @@ public class EnemyWaveSpawner : MonoBehaviour
 
     private void Start()
     {
+        // Phase 3: enemy bot is disabled in multiplayer.
+        if (NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.multiplayerMode)
+        {
+            Debug.Log("[WaveSpawner] Disabled — multiplayer mode is on.");
+            enabled = false;
+            return;
+        }
+
         if (enemySoldierPrefab == null)
         {
             Debug.LogError("[WaveSpawner] enemySoldierPrefab is not assigned. Waves will not spawn.");

@@ -38,6 +38,17 @@ public class EnemyResourceManager : MonoBehaviour
 
     private void Awake()
     {
+        // Phase 3: enemy AI bot is replaced by a human player 1 in multiplayer.
+        // Disable the bot's resource bank entirely so the per-player
+        // ResourceBank.For(1) lookup goes to PlayerResourceManager's owner-1
+        // instance instead of this AI bag of resources.
+        if (NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.multiplayerMode)
+        {
+            Debug.Log("[EnemyResources] Disabled — multiplayer mode is on.");
+            enabled = false;
+            return;
+        }
+
         if (Instance != null && Instance != this)
         {
             Debug.LogWarning("EnemyResourceManager: duplicate instance destroyed.");

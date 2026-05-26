@@ -823,6 +823,7 @@ GameObject:
   - component: {fileID: 6453900848943223293}
   - component: {fileID: 4413367843291879616}
   - component: {fileID: 8578212601218592860}
+  - component: {fileID: 7930222081774893567}
   m_Layer: 6
   m_Name: EnemyRPGSoldierPrefab
   m_TagString: Untagged
@@ -885,6 +886,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Health
   team: 1
   maxHealth: 90
+  destroyDelay: 0
 --- !u!195 &3915781709377116486
 NavMeshAgent:
   m_ObjectHideFlags: 0
@@ -976,6 +978,8 @@ MonoBehaviour:
   autoAttackEnabled: 1
   detectionRadius: 18
   leashRadius: 18
+  leashTolerance: 2
+  continueFightRadius: 7
   scanInterval: 0.1
   targetLayerMask:
     serializedVersion: 2
@@ -983,8 +987,29 @@ MonoBehaviour:
   debugDrawRadius: 0
   returnToGuardAfterChase: 1
   returnToGuardThreshold: 1.5
+  returnToGuardDelay: 0.35
   updateGuardPositionOnManualMove: 1
   autoAttackPausedAfterManualMoveSeconds: 1
+  autoFireWhileMoving: 0
+  transitTargetLoseMultiplier: 1.15
+--- !u!114 &7930222081774893567
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6703991689060351976}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: EnemyRPGSoldier
+  ownerPlayerId: 1
+  teamId: 1
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &6859437128692549259
 GameObject:
   m_ObjectHideFlags: 0

@@ -355,6 +355,7 @@ GameObject:
   - component: {fileID: 6912086103658986049}
   - component: {fileID: 7952698917859281081}
   - component: {fileID: 7942479148610807488}
+  - component: {fileID: 6422221710006895179}
   m_Layer: 9
   m_Name: MachineGunDefensePrefab
   m_TagString: Untagged
@@ -528,6 +529,24 @@ MonoBehaviour:
   ignoreRenderers:
   - {fileID: 2186131107884202761}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &6422221710006895179
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2208744455693117004}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: MachineGunDefense
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 1
 --- !u!1 &2461872034481192685
 GameObject:
   m_ObjectHideFlags: 0

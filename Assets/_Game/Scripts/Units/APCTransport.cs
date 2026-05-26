@@ -278,12 +278,31 @@ public class APCTransport : MonoBehaviour
 
         Health.Team team = ownHealth != null ? ownHealth.team : Health.Team.Player;
 
+        // Derive a deterministic id prefix from the APC's own entity id so
+        // the spawned default passengers get the same ids on every client.
+        // Falls back to empty (random GUID per client) when the APC has no
+        // GameEntity yet — single-player still works either way.
+        GameEntity apcEntity = GetComponent<GameEntity>();
+        string apcId = apcEntity != null ? apcEntity.EntityId : null;
+
         for (int i = 0; i < wanted; i++)
         {
-            // Instantiate at the APC's position then immediately deactivate —
-            // Unity processes Awake/OnEnable synchronously, so the GameObject
-            // never renders a visible frame on the ground.
-            GameObject p = Instantiate(defaultPassengerPrefab, transform.position, Quaternion.identity);
+            // Push a per-passenger deterministic id BEFORE Instantiate so the
+            // passenger's GameEntity.Awake adopts it.
+            string passengerId = !string.IsNullOrEmpty(apcId) ? $"{apcId}-pax-{i}" : null;
+            GameEntity.SetNextSpawnId(passengerId);
+            GameObject p;
+            try
+            {
+                // Instantiate at the APC's position then immediately deactivate —
+                // Unity processes Awake/OnEnable synchronously, so the GameObject
+                // never renders a visible frame on the ground.
+                p = Instantiate(defaultPassengerPrefab, transform.position, Quaternion.identity);
+            }
+            finally
+            {
+                GameEntity.SetNextSpawnId(null);
+            }
             p.SetActive(false);
 
             // Match the APC's team (player APC → player soldier passengers).
@@ -293,7 +312,8 @@ public class APCTransport : MonoBehaviour
             passengers.Add(p);
         }
 
-        Debug.Log($"[APC] Spawned with {passengers.Count} default passengers.");
+        Debug.Log($"[APC] Spawned with {passengers.Count} default passengers " +
+                  $"(id prefix '{apcId ?? "<none>"}').");
         OnPassengersChanged?.Invoke();
     }
 

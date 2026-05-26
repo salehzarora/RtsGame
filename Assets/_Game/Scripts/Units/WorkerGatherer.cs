@@ -97,16 +97,50 @@ public class WorkerGatherer : MonoBehaviour
         movement = GetComponent<UnitMovement>();
         agent    = GetComponent<NavMeshAgent>();
 
+        // Auto-find a CommandCenter that matches THIS worker's owner. In
+        // single-player there's only one CC, so this resolves identically to
+        // the legacy behaviour. In multiplayer there are two; pick the
+        // closest one whose owner matches this worker.
         if (commandCenter == null)
-            commandCenter = FindAnyObjectByType<CommandCenter>();
+            commandCenter = ResolveOwnerCommandCenter();
 
         if (commandCenter == null)
-            Debug.LogWarning($"[Worker:{name}] No CommandCenter found. " +
-                             "Worker cannot deposit until one exists.");
+            Debug.LogWarning($"[Worker:{name}] No CommandCenter found for owner " +
+                             $"{GetWorkerOwnerId()}. Worker cannot deposit until one exists.");
 
         if (FindAnyObjectByType<PlayerResourceManager>() == null)
             Debug.LogWarning($"[Worker:{name}] No PlayerResourceManager found. " +
                              "Deposits will be ignored until one exists.");
+    }
+
+    private int GetWorkerOwnerId()
+    {
+        GameEntity ge = GetComponent<GameEntity>();
+        return ge != null ? ge.ownerPlayerId : 0;
+    }
+
+    /// <summary>
+    /// Pick the closest <see cref="CommandCenter"/> whose owner matches this
+    /// worker. Falls back to ANY CommandCenter (for the single-player /
+    /// transition path where ids may not be stamped yet).
+    /// </summary>
+    private CommandCenter ResolveOwnerCommandCenter()
+    {
+        int myOwner = GetWorkerOwnerId();
+        CommandCenter[] all = FindObjectsByType<CommandCenter>(FindObjectsSortMode.None);
+        CommandCenter best = null;
+        float bestDist = float.MaxValue;
+        foreach (CommandCenter cc in all)
+        {
+            if (cc == null) continue;
+            if (cc.OwnerPlayerId != myOwner) continue;
+            float d = (cc.transform.position - transform.position).sqrMagnitude;
+            if (d < bestDist) { best = cc; bestDist = d; }
+        }
+        // Fallback: any CC. Keeps single-player working even if a designer
+        // hasn't run the multiplayer scene tool.
+        if (best == null && all.Length > 0) best = all[0];
+        return best;
     }
 
     private void Update()

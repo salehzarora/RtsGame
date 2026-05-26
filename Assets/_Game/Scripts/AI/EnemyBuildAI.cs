@@ -220,6 +220,15 @@ public class EnemyBuildAI : MonoBehaviour
 
     private void Start()
     {
+        // Phase 3: in multiplayer, the enemy seat is a human player — the AI
+        // bot must not run. Single-player keeps the existing behaviour.
+        if (NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.multiplayerMode)
+        {
+            Debug.Log("[EnemyBuildAI] Disabled — multiplayer mode is on.");
+            enabled = false;
+            return;
+        }
+
         basePosition = transform.position;
 
         GameObject enemyStart = GameObject.Find("EnemyStart");

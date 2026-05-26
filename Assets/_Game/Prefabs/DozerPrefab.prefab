@@ -912,6 +912,7 @@ GameObject:
   - component: {fileID: 833035228095270556}
   - component: {fileID: 9066066712849973475}
   - component: {fileID: 2850021715521448318}
+  - component: {fileID: 4904496238617313140}
   m_Layer: 6
   m_Name: DozerPrefab
   m_TagString: Untagged
@@ -1071,6 +1072,24 @@ MonoBehaviour:
   - {fileID: 2829086329619554651}
   - {fileID: 6962337200126965882}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &4904496238617313140
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7844289557595845791}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: Dozer
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &8086566528800639221
 GameObject:
   m_ObjectHideFlags: 0

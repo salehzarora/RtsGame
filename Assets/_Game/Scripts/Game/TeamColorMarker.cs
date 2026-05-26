@@ -94,17 +94,19 @@ public class TeamColorMarker : MonoBehaviour
         // can later opt in to a separate enemy-team palette without breaking.
         if (team != Team.Player) return;
 
+        // Phase 4 MP path: the per-slot palette in MultiplayerColors wins
+        // over the local PlayerFactionManager pick so a Player 0 unit looks
+        // identical on Client A and Client B. We still register with the
+        // faction manager (so SP color changes during a match repaint
+        // everything), but the actual paint uses the per-owner colour.
         if (PlayerFactionManager.Instance != null)
-        {
             PlayerFactionManager.Instance.Register(this);
-            ApplyColor(PlayerFactionManager.Instance.SelectedColor);
-        }
-        else
-        {
-            // No manager yet — paint the fallback so the prefab looks reasonable
-            // when previewed without the game systems wired up.
-            ApplyColor(fallbackColor);
-        }
+
+        // Subscribe to MultiplayerColors so a late-arriving MatchStart event
+        // repaints us automatically.
+        MultiplayerColors.OnColorsChanged += RepaintFromContext;
+
+        RepaintFromContext();
     }
 
     private void OnDisable()
@@ -112,6 +114,40 @@ public class TeamColorMarker : MonoBehaviour
         if (team != Team.Player) return;
         if (PlayerFactionManager.Instance != null)
             PlayerFactionManager.Instance.Unregister(this);
+
+        MultiplayerColors.OnColorsChanged -= RepaintFromContext;
+    }
+
+    /// <summary>
+    /// Resolve which colour this marker should currently display, then call
+    /// <see cref="ApplyColor"/>.
+    ///   • MP + owner registered → MultiplayerColors slot colour.
+    ///   • PlayerFactionManager present → its SelectedColor (legacy SP path).
+    ///   • Otherwise → <see cref="fallbackColor"/> for editor preview.
+    /// </summary>
+    private void RepaintFromContext()
+    {
+        // Resolve the canonical owner via sibling GameEntity. Missing
+        // GameEntity → owner 0 (single-player default).
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge == null) ge = GetComponentInParent<GameEntity>();
+        int ownerId = ge != null ? ge.ownerPlayerId : 0;
+
+        // MP per-slot palette wins when available.
+        if (MultiplayerColors.TryGetForOwner(ownerId, out Color slotColor))
+        {
+            ApplyColor(slotColor);
+            return;
+        }
+
+        // SP fallback path — same as before this phase.
+        if (PlayerFactionManager.Instance != null)
+        {
+            ApplyColor(PlayerFactionManager.Instance.SelectedColor);
+            return;
+        }
+
+        ApplyColor(fallbackColor);
     }
 
     // ------------------------------------------------------------------ //
@@ -119,9 +155,24 @@ public class TeamColorMarker : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     /// <summary>Re-paint every body renderer with <paramref name="color"/>.
-    /// Detail and ignore renderers are not touched.</summary>
+    /// Detail and ignore renderers are not touched.
+    ///
+    /// Phase 4: when this marker's owner has a slot colour registered in
+    /// <see cref="MultiplayerColors"/>, the slot colour OVERRIDES whatever
+    /// the caller passed in. This is how
+    /// <see cref="PlayerFactionManager"/>'s legacy "push local color to all
+    /// markers" loop stops recolouring opponent units to the local pick.
+    /// </summary>
     public void ApplyColor(Color color)
     {
+        // MP override: any registered slot colour for THIS marker's owner
+        // beats the argument. Keeps Player 0 blue on every client even when
+        // Client B's PlayerFactionManager pushes red.
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge == null) ge = GetComponentInParent<GameEntity>();
+        if (ge != null && MultiplayerColors.TryGetForOwner(ge.ownerPlayerId, out Color slotColor))
+            color = slotColor;
+
         if (mpb == null) mpb = new MaterialPropertyBlock();
 
         for (int i = 0; i < bodyColorRenderers.Count; i++)

@@ -499,6 +499,7 @@ GameObject:
   - component: {fileID: 9027973089648668517}
   - component: {fileID: 6148407789625793867}
   - component: {fileID: 7734198603052073979}
+  - component: {fileID: 8242438357870092411}
   m_Layer: 6
   m_Name: StrikeJetPrefab
   m_TagString: Untagged
@@ -735,6 +736,24 @@ MonoBehaviour:
   - {fileID: 848720631280617105}
   - {fileID: 3566464037600163866}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &8242438357870092411
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5477634759810098689}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: StrikeJet
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 2
 --- !u!1 &5545922301382905743
 GameObject:
   m_ObjectHideFlags: 0

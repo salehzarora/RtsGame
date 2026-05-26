@@ -119,8 +119,9 @@ public class BuildingPlacementManager : MonoBehaviour
     private enum PlacementMode { Instant, DozerSite }
 
     private Camera        mainCam;
-    private PlayerResourceManager resourceManager;
-
+    // Phase 3: per-spend bank lookup via ResourceBank.For(owner). The local
+    // PlayerResourceManager reference is gone — placement charges the dozer's
+    // owner bank in DozerSite mode and the local player's bank in Instant.
     private GameObject    ghost;
     private Renderer[]    ghostRenderers;
     private bool          isValid;
@@ -139,12 +140,28 @@ public class BuildingPlacementManager : MonoBehaviour
 
     private void Awake()
     {
-        mainCam         = Camera.main;
-        resourceManager = FindAnyObjectByType<PlayerResourceManager>();
-
-        if (resourceManager == null)
-            Debug.LogError("BuildingPlacementManager: No PlayerResourceManager found in scene.");
+        mainCam = Camera.main;
     }
+
+    /// <summary>
+    /// Owner whose bank should be charged for placement-mode actions. In
+    /// DozerSite mode this comes from the active dozer's GameEntity; in
+    /// Instant mode (debug) it defaults to local player 0 — the legacy
+    /// single-player behaviour.
+    /// </summary>
+    private int GetActiveOwnerId()
+    {
+        if (activeDozer != null)
+        {
+            GameEntity ge = activeDozer.GetComponent<GameEntity>();
+            if (ge != null) return ge.ownerPlayerId;
+        }
+        // Instant / fallback: use the local player in MP, 0 in SP.
+        int localPid = NetworkManagerRTS.LocalPlayerId;
+        return localPid >= 0 ? localPid : 0;
+    }
+
+    private PlayerResourceManager ActiveBank() => ResourceBank.For(GetActiveOwnerId());
 
     private void Start()
     {
@@ -422,7 +439,8 @@ public class BuildingPlacementManager : MonoBehaviour
     {
         if (!ghost.activeSelf) return;
 
-        bool affordable = resourceManager != null && resourceManager.CanAfford(activeCost);
+        PlayerResourceManager activeBank = ActiveBank();
+        bool affordable = activeBank != null && activeBank.CanAfford(activeCost);
         bool clearGround = IsFootprintClear(ghost.transform.position);
 
         isValid = affordable && clearGround;
@@ -451,19 +469,43 @@ public class BuildingPlacementManager : MonoBehaviour
             return;
         }
 
-        if (resourceManager == null || !resourceManager.CanAfford(activeCost))
+        PlayerResourceManager activeBank = ActiveBank();
+        if (activeBank == null || !activeBank.CanAfford(activeCost))
         {
-            Debug.LogWarning($"[Placement] Cannot place {activeLabel}: need {activeCost} resources, " +
-                             $"have {(resourceManager != null ? resourceManager.CurrentResources : 0)}.");
+            Debug.LogWarning($"[Placement] Cannot place {activeLabel}: owner " +
+                             $"{GetActiveOwnerId()} needs {activeCost} resources, " +
+                             $"have {(activeBank != null ? activeBank.CurrentResources : 0)}.");
             return;
         }
 
         Vector3 pos = ghost.transform.position;
 
         if (activeMode == PlacementMode.DozerSite)
-            PlaceConstructionSite(pos);
+        {
+            // Route the confirmed Dozer placement through CommandDispatcher.
+            // BPM owns the placement-mode UX (ghost preview, mouse tracking,
+            // validation just done above); the dispatcher owns the canonical
+            // "place site here" intent that a future networked layer will
+            // need to replicate. ExecuteBuild calls back into
+            // ExecuteConfirmedDozerPlacement with the same position + ids.
+            string dozerId = activeDozer != null
+                ? GameEntity.EnsureOn(activeDozer.gameObject).EntityId
+                : "";
+
+            // Mint two ids in one go so they don't interleave with other
+            // allocations: one for the construction site itself, one for the
+            // final building the site spawns on Complete().
+            string[] ids = NetworkEntityIdAllocator.AllocateBatch(2);
+            string siteId  = ids[0];
+            string finalId = ids[1];
+
+            CommandDispatcher.Issue(PlayerCommand.Build(
+                GameEntity.LocalCommandPlayerId, dozerId, activeLabel, pos, siteId, finalId));
+        }
         else
+        {
             PlaceFinalBuildingInstant(pos);
+        }
 
         CancelPlacement();
     }
@@ -482,16 +524,108 @@ public class BuildingPlacementManager : MonoBehaviour
                 child.gameObject.layer = buildingLayer;
         }
 
-        resourceManager.SpendResources(activeCost);
+        PlayerResourceManager instBank = ActiveBank();
+        if (instBank != null) instBank.SpendResources(activeCost);
         Debug.Log($"[Placement] {activeLabel} placed at {pos:F1} (instant). " +
-                  $"Remaining resources: {resourceManager.CurrentResources}");
+                  $"Remaining resources (owner {GetActiveOwnerId()}): " +
+                  $"{(instBank != null ? instBank.CurrentResources : 0)}");
     }
 
-    /// <summary>Dozer-mode confirm — spawns a ConstructionSite and assigns the dozer to it.</summary>
-    private void PlaceConstructionSite(Vector3 pos)
+    /// <summary>
+    /// Public entry point used by <see cref="CommandDispatcher"/> to execute
+    /// a confirmed Dozer-driven placement. Fully self-contained — does NOT
+    /// rely on BPM's placement-mode state. The originating client AND any
+    /// remote replay client can call this; both end up with a construction
+    /// site at <paramref name="pos"/> sharing
+    /// <paramref name="siteEntityId"/>, and the dozer (if resolvable)
+    /// assigned to it.
+    /// </summary>
+    public void ExecuteConfirmedDozerPlacement(
+        Vector3 pos,
+        string  buildingType,
+        string  dozerEntityId,
+        string  siteEntityId,
+        string  finalBuildingEntityId)
     {
-        GameObject siteGO = Instantiate(constructionSitePrefab, pos, Quaternion.identity);
-        siteGO.name = $"{activeLabel} (Construction Site)";
+        // Resolve prefab + cost from the building-type string. Lets the
+        // remote replay path work without needing BPM's placement state.
+        GameObject prefab = ResolveBuildingPrefab(buildingType, out int cost);
+        if (prefab == null)
+        {
+            Debug.LogWarning($"[Placement] Unknown buildingType '{buildingType}' — ignoring Build command.");
+            return;
+        }
+
+        // Resolve dozer via EntityRegistry. On the originating client this
+        // will match activeDozer; on a remote client this is the only way to
+        // identify the dozer that should drive the site.
+        DozerBuilder dozer = null;
+        if (!string.IsNullOrEmpty(dozerEntityId))
+        {
+            GameEntity dozerEntity = EntityRegistry.Find(dozerEntityId);
+            if (dozerEntity != null)
+                dozer = dozerEntity.GetComponent<DozerBuilder>();
+        }
+
+        SpawnConstructionSite(prefab, cost, buildingType, pos, dozer, siteEntityId, finalBuildingEntityId);
+    }
+
+    /// <summary>
+    /// Builds a (prefab, cost) pair for <paramref name="buildingType"/> using
+    /// BPM's Inspector-assigned prefab/cost fields. Returns (null, 0) for
+    /// unknown types. Must mirror the labels passed into
+    /// <see cref="StartDozerBuildingPlacement"/> by the public wrappers above.
+    /// </summary>
+    private GameObject ResolveBuildingPrefab(string buildingType, out int cost)
+    {
+        switch (buildingType)
+        {
+            case "Barracks":             cost = barracksCost;          return barracksPrefab;
+            case "PowerPlant":           cost = powerPlantCost;        return powerPlantPrefab;
+            case "VehicleFactory":       cost = vehicleFactoryCost;    return vehicleFactoryPrefab;
+            case "Airfield":             cost = airfieldCost;          return airfieldPrefab;
+            case "MachineGunDefense":
+            case "Machine Gun Defense":  cost = machineGunDefenseCost; return machineGunDefensePrefab;
+        }
+        cost = 0;
+        return null;
+    }
+
+    /// <summary>
+    /// Self-contained construction-site spawn. Used by
+    /// <see cref="ExecuteConfirmedDozerPlacement"/> for both the local-issue
+    /// path and the remote replay path. Pushes the network-allocated id via
+    /// <see cref="GameEntity.SetNextSpawnId"/> so the spawned site's
+    /// GameEntity adopts it during Awake.
+    /// </summary>
+    private void SpawnConstructionSite(
+        GameObject finalPrefab,
+        int        cost,
+        string     label,
+        Vector3    pos,
+        DozerBuilder dozer,
+        string     siteEntityId,
+        string     finalBuildingEntityId)
+    {
+        if (constructionSitePrefab == null)
+        {
+            Debug.LogError("[Placement] constructionSitePrefab is not assigned.");
+            return;
+        }
+
+        // Push the network-allocated site id BEFORE Instantiate so
+        // GameEntity.Awake on the site picks it up.
+        GameEntity.SetNextSpawnId(siteEntityId);
+        GameObject siteGO;
+        try
+        {
+            siteGO = Instantiate(constructionSitePrefab, pos, Quaternion.identity);
+        }
+        finally
+        {
+            GameEntity.SetNextSpawnId(null);
+        }
+        siteGO.name = $"{label} (Construction Site)";
 
         int buildingLayer = LayerMask.NameToLayer("Building");
         if (buildingLayer >= 0)
@@ -504,20 +638,31 @@ public class BuildingPlacementManager : MonoBehaviour
         ConstructionSite site = siteGO.GetComponent<ConstructionSite>();
         if (site == null)
         {
-            Debug.LogError("[Placement] constructionSitePrefab is missing the ConstructionSite component. " +
-                           "Run Tools → RTS → Construction → Create Construction Site Prefab.");
+            Debug.LogError("[Placement] constructionSitePrefab is missing the ConstructionSite component.");
             Destroy(siteGO);
             return;
         }
 
-        site.Initialise(activePrefab, activeCost, dozerBuildTime, activeLabel, Quaternion.identity);
+        site.Initialise(finalPrefab, cost, dozerBuildTime, label, Quaternion.identity);
+        // Phase 2: also hand the site the final-building id so that, when it
+        // completes, the spawned building can adopt the same id on every client.
+        site.SetFinalBuildingEntityId(finalBuildingEntityId);
 
-        if (activeDozer != null)
-            activeDozer.AssignBuildOrder(site);
+        if (dozer != null) dozer.AssignBuildOrder(site);
 
-        resourceManager.SpendResources(activeCost);
-        Debug.Log($"[Construction] {activeLabel} site placed at {pos:F1} — dozer dispatched. " +
-                  $"Remaining resources: {resourceManager.CurrentResources}");
+        // Phase 3: charge the bank that matches the dozer's owner. Both clients
+        // execute this on Build replay; each charges the same owner's bank, so
+        // the per-player balance stays consistent across clients.
+        int ownerId = dozer != null && dozer.GetComponent<GameEntity>() != null
+            ? dozer.GetComponent<GameEntity>().ownerPlayerId
+            : 0;
+        PlayerResourceManager bank = ResourceBank.For(ownerId);
+        if (bank != null) bank.SpendResources(cost);
+
+        Debug.Log($"[NetworkSpawn] Construction site '{label}' placed at {pos:F1} " +
+                  $"with siteId='{siteEntityId}', finalId='{finalBuildingEntityId}'. " +
+                  $"Remaining resources (owner {ownerId}): " +
+                  $"{(bank != null ? bank.CurrentResources : 0)}");
     }
 
     // ------------------------------------------------------------------ //

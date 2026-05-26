@@ -556,6 +556,7 @@ GameObject:
   - component: {fileID: 1934244548885630090}
   - component: {fileID: 4571146822086913373}
   - component: {fileID: 5364102620363978243}
+  - component: {fileID: 3026012212896847368}
   m_Layer: 9
   m_Name: VehicleFactoryPrefab
   m_TagString: Untagged
@@ -709,6 +710,24 @@ MonoBehaviour:
   - {fileID: 8292812610182743690}
   - {fileID: 6775115555936757449}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &3026012212896847368
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7035481686126615289}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: VehicleFactory
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 1
 --- !u!1 &7092386133591601253
 GameObject:
   m_ObjectHideFlags: 0

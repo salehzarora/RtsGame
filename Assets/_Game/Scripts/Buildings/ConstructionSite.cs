@@ -102,6 +102,12 @@ public class ConstructionSite : MonoBehaviour
     // Stored at Initialise so Complete() spawns the building facing the same way the ghost did.
     private Quaternion finalRotation = Quaternion.identity;
 
+    // Phase 2 (multiplayer prep): network-allocated id the spawned final
+    // building must adopt so every client agrees on its EntityId. Set by
+    // BuildingPlacementManager.SetFinalBuildingEntityId immediately after
+    // Initialise. Empty in the single-player path → falls back to GUID.
+    private string networkFinalBuildingEntityId = "";
+
     // ------------------------------------------------------------------ //
     // Setup — called by BuildingPlacementManager right after Instantiate
     // ------------------------------------------------------------------ //
@@ -133,6 +139,17 @@ public class ConstructionSite : MonoBehaviour
 
         // Reset the progress bar visual to zero.
         RefreshProgressVisual();
+    }
+
+    /// <summary>
+    /// Hands the site a network-allocated entity id that the spawned final
+    /// building must adopt on completion. Optional — when unset (or empty
+    /// string) the final building falls back to a fresh GUID from
+    /// <see cref="GameEntity.Awake"/>.
+    /// </summary>
+    public void SetFinalBuildingEntityId(string entityId)
+    {
+        networkFinalBuildingEntityId = entityId ?? "";
     }
 
     // ------------------------------------------------------------------ //
@@ -193,8 +210,33 @@ public class ConstructionSite : MonoBehaviour
         }
 
         Vector3 pos = transform.position;
-        GameObject placed = Instantiate(FinalBuildingPrefab, pos, finalRotation);
+
+        // Phase 2: push the network-allocated final id BEFORE Instantiate so
+        // GameEntity.Awake on the spawned building adopts it. Empty preset →
+        // GameEntity falls back to a fresh GUID (single-player default).
+        GameEntity.SetNextSpawnId(networkFinalBuildingEntityId);
+        GameObject placed;
+        try
+        {
+            placed = Instantiate(FinalBuildingPrefab, pos, finalRotation);
+        }
+        finally
+        {
+            GameEntity.SetNextSpawnId(null);
+        }
         placed.name = BuildingLabel;
+
+        if (!string.IsNullOrEmpty(networkFinalBuildingEntityId))
+            Debug.Log($"[NetworkSpawn] Final building '{BuildingLabel}' adopted " +
+                      $"entityId={networkFinalBuildingEntityId}.");
+
+        // Phase 3: inherit ownership from this site so the final building
+        // ends up on the same team / owner on every client. The site got its
+        // ownership stamped by CommandDispatcher.ExecuteBuild after spawn.
+        GameEntity selfEntity = GetComponent<GameEntity>();
+        GameEntity placedEntity = placed.GetComponent<GameEntity>();
+        if (selfEntity != null && placedEntity != null)
+            placedEntity.ApplyOwnership(selfEntity.ownerPlayerId);
 
         // Ensure placed building is on the Building layer (mirrors BPM behaviour).
         int buildingLayer = LayerMask.NameToLayer("Building");

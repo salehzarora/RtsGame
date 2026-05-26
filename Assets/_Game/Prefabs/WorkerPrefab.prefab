@@ -810,6 +810,7 @@ GameObject:
   - component: {fileID: 8697405200582759181}
   - component: {fileID: 3323199303602187603}
   - component: {fileID: 6414040709957896359}
+  - component: {fileID: 3540096384077877061}
   m_Layer: 6
   m_Name: WorkerPrefab
   m_TagString: Untagged
@@ -1037,6 +1038,24 @@ MonoBehaviour:
   ignoreRenderers:
   - {fileID: 4552388349626329105}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &3540096384077877061
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6067435896608983967}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: Worker
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &6132738001858159055
 GameObject:
   m_ObjectHideFlags: 0

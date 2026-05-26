@@ -198,6 +198,7 @@ GameObject:
   - component: {fileID: 8822049909631903670}
   - component: {fileID: 3147386671430663656}
   - component: {fileID: 194983424847782483}
+  - component: {fileID: 9169168493556101098}
   m_Layer: 6
   m_Name: MissileLauncherPrefab
   m_TagString: Untagged
@@ -412,6 +413,24 @@ MonoBehaviour:
   ignoreRenderers:
   - {fileID: 5789272924732992489}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &9169168493556101098
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 661519337422071430}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: MissileLauncher
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &779221643812267643
 GameObject:
   m_ObjectHideFlags: 0

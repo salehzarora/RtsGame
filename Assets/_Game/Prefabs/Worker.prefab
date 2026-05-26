@@ -131,6 +131,7 @@ GameObject:
   - component: {fileID: 2994685305593313198}
   - component: {fileID: 9200557976117937444}
   - component: {fileID: 6785256581171219269}
+  - component: {fileID: 7144728416983097218}
   m_Layer: 6
   m_Name: Worker
   m_TagString: Untagged
@@ -296,6 +297,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Health
   team: 0
   maxHealth: 100
+  destroyDelay: 0
 --- !u!114 &6785256581171219269
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -311,7 +313,27 @@ MonoBehaviour:
   gatherTime: 1.5
   arrivalThreshold: 1.5
   baseArrivalThreshold: 4
+  autoFindNewResource: 1
+  resourceSearchRadius: 40
   commandCenter: {fileID: 0}
+--- !u!114 &7144728416983097218
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7592823128351885767}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: Worker
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &8424969933034131648
 GameObject:
   m_ObjectHideFlags: 0

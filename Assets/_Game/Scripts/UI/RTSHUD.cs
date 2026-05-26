@@ -351,8 +351,25 @@ public class RTSHUD : MonoBehaviour
 
     private void RefreshResources()
     {
-        if (resourcesText == null || resourceManager == null) return;
-        resourcesText.text = $"Resources: {resourceManager.CurrentResources}";
+        if (resourcesText == null) return;
+
+        // Phase 4: in multiplayer, show the LOCAL player's bank — owner 0 on
+        // Client A, owner 1 on Client B. Before MatchStart fires (or in
+        // single-player), fall back to the legacy single-bank reference.
+        int localPid = NetworkManagerRTS.LocalPlayerId;
+        if (localPid >= 0)
+        {
+            PlayerResourceManager bank = ResourceBank.For(localPid);
+            if (bank != null)
+            {
+                resourcesText.text = $"Resources: {bank.CurrentResources}";
+                return;
+            }
+        }
+
+        // SP / pre-match fallback.
+        if (resourceManager != null)
+            resourcesText.text = $"Resources: {resourceManager.CurrentResources}";
     }
 
     private void RefreshPower()
@@ -537,118 +554,79 @@ public class RTSHUD : MonoBehaviour
     /// <summary>Called by the Soldier button. Produces from the bound UnitProducer.</summary>
     public void OnClickProduceSoldier()
     {
-        if (currentSoldierProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] Soldier button clicked but no Soldier producer is selected. " +
-                             "Select a Barracks first.");
-            return;
-        }
-
-        currentSoldierProducer.ProduceSoldier();
+        IssueProduceCommand(currentSoldierProducer, "Soldier", "Barracks");
     }
 
     /// <summary>Called by the RPG Soldier button. Produces from the bound UnitProducer.</summary>
     public void OnClickProduceRPGSoldier()
     {
-        if (currentSoldierProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] RPG Soldier button clicked but no producer is selected. " +
-                             "Select a Barracks first.");
-            return;
-        }
-
-        currentSoldierProducer.ProduceRPGSoldier();
+        IssueProduceCommand(currentSoldierProducer, "RPGSoldier", "Barracks");
     }
 
     /// <summary>Called by the Worker button. Produces from the bound CommandCenterProducer.</summary>
     public void OnClickProduceWorker()
     {
-        if (currentWorkerProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] Worker button clicked but no Worker producer is selected. " +
-                             "Select a CommandCenter first.");
-            return;
-        }
-
-        currentWorkerProducer.ProduceWorker();
+        IssueProduceCommand(currentWorkerProducer, "Worker", "CommandCenter");
     }
 
     /// <summary>Called by the Dozer button. Produces from the bound CommandCenterProducer.</summary>
     public void OnClickProduceDozer()
     {
-        if (currentWorkerProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] Dozer button clicked but no CommandCenter is selected. " +
-                             "Select a CommandCenter first.");
-            return;
-        }
-
-        currentWorkerProducer.ProduceDozer();
+        IssueProduceCommand(currentWorkerProducer, "Dozer", "CommandCenter");
     }
 
     /// <summary>Called by the Humvee button. Produces from the bound VehicleFactoryProducer.</summary>
     public void OnClickProduceHumvee()
     {
-        if (currentVehicleProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] Humvee button clicked but no Vehicle producer is selected. " +
-                             "Select a VehicleFactory first.");
-            return;
-        }
-
-        currentVehicleProducer.ProduceHumvee();
+        IssueProduceCommand(currentVehicleProducer, "Humvee", "VehicleFactory");
     }
 
     /// <summary>Called by the Artillery Tank button. Produces from the bound VehicleFactoryProducer.</summary>
     public void OnClickProduceArtilleryTank()
     {
-        if (currentVehicleProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] Artillery Tank button clicked but no Vehicle producer is selected. " +
-                             "Select a VehicleFactory first.");
-            return;
-        }
-
-        currentVehicleProducer.ProduceArtilleryTank();
+        IssueProduceCommand(currentVehicleProducer, "ArtilleryTank", "VehicleFactory");
     }
 
     /// <summary>Called by the Missile Launcher button. Produces from the bound VehicleFactoryProducer.</summary>
     public void OnClickProduceMissileLauncher()
     {
-        if (currentVehicleProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] Missile Launcher button clicked but no Vehicle producer is selected. " +
-                             "Select a VehicleFactory first.");
-            return;
-        }
-
-        currentVehicleProducer.ProduceMissileLauncher();
+        IssueProduceCommand(currentVehicleProducer, "MissileLauncher", "VehicleFactory");
     }
 
     /// <summary>Called by the APC button. Produces from the bound VehicleFactoryProducer.</summary>
     public void OnClickProduceAPC()
     {
-        if (currentVehicleProducer == null)
-        {
-            Debug.LogWarning("[RTSHUD] APC button clicked but no Vehicle producer is selected. " +
-                             "Select a VehicleFactory first.");
-            return;
-        }
-
-        currentVehicleProducer.ProduceAPC();
+        IssueProduceCommand(currentVehicleProducer, "APC", "VehicleFactory");
     }
 
     /// <summary>Called by the Strike Jet button. Produces from the bound Airfield.</summary>
     public void OnClickProduceStrikeJet()
     {
-        if (currentAirfield == null)
+        IssueProduceCommand(currentAirfield, "StrikeJet", "Airfield");
+    }
+
+    /// <summary>
+    /// Shared validation + dispatch path for the nine Produce buttons. The
+    /// command record carries the producer's <see cref="GameEntity.EntityId"/>
+    /// plus a fresh network-allocated <c>spawnEntityId</c> for the spawned
+    /// unit. Both clients (issuer + remote replay) see the same spawn id and
+    /// the resulting unit registers under that id in <see cref="EntityRegistry"/>.
+    /// </summary>
+    private void IssueProduceCommand(Component producer, string productionType, string expectedBuilding)
+    {
+        if (producer == null)
         {
-            Debug.LogWarning("[RTSHUD] Strike Jet button clicked but no Airfield is selected. " +
-                             "Select an Airfield first.");
+            Debug.LogWarning($"[RTSHUD] {productionType} button clicked but no " +
+                             $"{expectedBuilding} is selected. Select a {expectedBuilding} first.");
             return;
         }
 
-        currentAirfield.ProduceStrikeJet();
+        GameEntity ge = GameEntity.EnsureOn(producer.gameObject);
+        // Pre-allocate the id the spawned unit will adopt so the produce
+        // command can carry it to remote clients.
+        string spawnId = NetworkEntityIdAllocator.Allocate();
+        CommandDispatcher.Issue(
+            PlayerCommand.Produce(GameEntity.LocalCommandPlayerId, ge.EntityId, productionType, spawnId));
     }
 
     // ================================================================== //
@@ -851,49 +829,41 @@ public class RTSHUD : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Called by the Unload All button. Fans the command across EVERY selected
-    /// friendly APC — not just the primary panel binding — so multi-select
-    /// drop-offs work in one click. APCs with no passengers are skipped silently.
+    /// Called by the Unload All button. Collects every selected friendly APC
+    /// (plus the panel-bound APC as a fallback) into a single
+    /// <see cref="PlayerCommand.UnloadTransport"/> and routes it through
+    /// <see cref="CommandDispatcher"/>. The dispatcher walks the id array
+    /// and calls <c>APCTransport.UnloadAll</c> on each — preserving the
+    /// multi-APC staggered drop behaviour that's already in place.
     /// </summary>
     public void OnClickUnloadAll()
     {
-        // Multi-APC path: collect every selected friendly APCTransport.
+        // Collect the set of APCs the player wants to unload. Mirror the old
+        // behaviour exactly: selected APCs first, fall back to the panel-bound
+        // one if the player has clicked into the HUD and lost selection focus.
+        System.Collections.Generic.List<APCTransport> apcs = null;
         UnitSelector sel = UnitSelector.Instance;
-        if (sel != null)
+        if (sel != null) apcs = sel.GetSelectedPlayerAPCs();
+        if (apcs == null) apcs = new System.Collections.Generic.List<APCTransport>();
+
+        if (apcs.Count == 0 && currentTransport != null)
+            apcs.Add(currentTransport);
+
+        if (apcs.Count == 0)
         {
-            System.Collections.Generic.List<APCTransport> apcs = sel.GetSelectedPlayerAPCs();
-
-            // Fallback to the panel-bound APC if the selector lost focus
-            // (e.g. the player clicked into the HUD area).
-            if (apcs.Count == 0 && currentTransport != null)
-                apcs.Add(currentTransport);
-
-            if (apcs.Count == 0)
-            {
-                Debug.LogWarning("[RTSHUD] Unload All clicked but no APC is selected.");
-                return;
-            }
-
-            int activated = 0;
-            foreach (APCTransport t in apcs)
-            {
-                if (t == null) continue;
-                if (t.PassengerCount == 0) continue;     // empty APC — skip safely
-                t.UnloadAll();
-                activated++;
-            }
-
-            Debug.Log($"[RTSHUD] Unload All issued to {activated} APC transport(s).");
+            Debug.LogWarning("[RTSHUD] Unload All clicked but no APC is selected.");
             return;
         }
 
-        // No UnitSelector in the scene — single-APC fallback via panel binding.
-        if (currentTransport == null)
-        {
-            Debug.LogWarning("[RTSHUD] Unload All clicked but no APC is bound to the transport panel.");
-            return;
-        }
-        currentTransport.UnloadAll();
+        // Snapshot the entity IDs. EnsureOn guarantees an APC that was placed
+        // in-scene without going through the prefab tool still gets an id at
+        // the point of the first command.
+        string[] ids = new string[apcs.Count];
+        for (int i = 0; i < apcs.Count; i++)
+            ids[i] = GameEntity.EnsureOn(apcs[i].gameObject).EntityId;
+
+        CommandDispatcher.Issue(
+            PlayerCommand.UnloadTransport(GameEntity.LocalCommandPlayerId, ids));
     }
 
     /// <summary>

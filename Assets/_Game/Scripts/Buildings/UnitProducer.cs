@@ -73,17 +73,21 @@ public class UnitProducer : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     private SelectableBuilding selectableBuilding;
-    private PlayerResourceManager resourceManager;
+    // No cached PlayerResourceManager — Phase 3 resources go through
+    // ResourceBank.For(owner) so producers always charge the right pool.
+
+    private GameEntity SelfEntity => selfEntityCache != null
+        ? selfEntityCache
+        : (selfEntityCache = GetComponent<GameEntity>());
+    private GameEntity selfEntityCache;
+
+    private int OwnerId => SelfEntity != null ? SelfEntity.ownerPlayerId : 0;
 
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
         selectableBuilding = GetComponent<SelectableBuilding>();
-        resourceManager    = FindAnyObjectByType<PlayerResourceManager>();
-
-        if (resourceManager == null)
-            Debug.LogError($"UnitProducer on '{name}': No PlayerResourceManager found in scene.");
     }
 
     // ------------------------------------------------------------------ //
@@ -126,9 +130,16 @@ public class UnitProducer : MonoBehaviour
     {
         // --- Validation ---------------------------------------------------
 
-        if (resourceManager == null)
+        // Phase 3: resolve THIS producer's owner bank via ResourceBank.
+        // Single-player → returns the only PlayerResourceManager in the
+        // scene. Multiplayer → returns the bank matching the producer's
+        // owner so Player 0 spends never touch Player 1's pool.
+        int ownerId = OwnerId;
+        PlayerResourceManager bank = ResourceBank.For(ownerId);
+        if (bank == null)
         {
-            Debug.LogError($"[UnitProducer] Cannot produce {unitLabel}: PlayerResourceManager missing.");
+            Debug.LogError($"[UnitProducer] Cannot produce {unitLabel}: " +
+                           $"no PlayerResourceManager registered for owner {ownerId}.");
             return;
         }
 
@@ -140,10 +151,10 @@ public class UnitProducer : MonoBehaviour
             return;
         }
 
-        if (!resourceManager.CanAfford(cost))
+        if (!bank.CanAfford(cost))
         {
             Debug.LogWarning($"[{name}] Not enough resources to produce {unitLabel}. " +
-                             $"Need {cost}, have {resourceManager.CurrentResources}.");
+                             $"Need {cost}, have {bank.CurrentResources} (owner {ownerId}).");
             return;
         }
 
@@ -170,9 +181,9 @@ public class UnitProducer : MonoBehaviour
         GameObject unit = Instantiate(prefab, spawnPos, Quaternion.identity);
         unit.name = unitLabel;
 
-        resourceManager.SpendResources(cost);
+        bank.SpendResources(cost);
 
         Debug.Log($"[UnitProducer] {unitLabel} produced by '{name}' at {spawnPos:F1}. " +
-                  $"Remaining resources: {resourceManager.CurrentResources}");
+                  $"Remaining resources (owner {ownerId}): {bank.CurrentResources}");
     }
 }

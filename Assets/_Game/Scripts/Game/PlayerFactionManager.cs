@@ -156,4 +156,48 @@ public class PlayerFactionManager : MonoBehaviour
     /// <summary>Alias for <see cref="ApplyColorToAllExistingMarkers"/> — kept
     /// to match the verb-noun naming used elsewhere in the design notes.</summary>
     public void ApplyColorToAllPlayerTeamMarkers() => ApplyColorToAllExistingMarkers();
+
+    // ------------------------------------------------------------------ //
+    // Phase 5 — canonical per-owner color lookup
+    //
+    // Other systems (TeamColorMarker, future minimap blips, scoreboard)
+    // should NOT hard-bind to <see cref="SelectedColor"/> in multiplayer —
+    // that's the LOCAL client's choice and would recolour the opponent's
+    // army on this client. Call this helper instead.
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Returns the canonical colour for <paramref name="ownerPlayerId"/>.
+    ///   • Multiplayer (slot registered) → <see cref="MultiplayerColors"/>
+    ///     entry for that slot. Identical on every client.
+    ///   • Single-player (slot 0, nothing registered) →
+    ///     <see cref="SelectedColor"/>.
+    ///   • Anything else → the slot's static default.
+    /// </summary>
+    public static Color GetColorForOwner(int ownerPlayerId)
+    {
+        if (MultiplayerColors.TryGetForOwner(ownerPlayerId, out Color slotColor))
+            return slotColor;
+
+        // Owner 0 in single-player should match the local pick so the
+        // existing menu→army colour pipeline keeps working.
+        if (ownerPlayerId == 0 && Instance != null)
+            return Instance.SelectedColor;
+
+        return MultiplayerColors.ForOwnerOrDefault(ownerPlayerId);
+    }
+
+    /// <summary>
+    /// Triggers an owner-aware re-paint pass on every registered
+    /// <see cref="TeamColorMarker"/>. Internally calls the existing marker
+    /// iteration; each marker's <see cref="TeamColorMarker.ApplyColor"/>
+    /// uses the slot palette via <see cref="MultiplayerColors"/> first,
+    /// falling back to <see cref="SelectedColor"/> in single-player. Useful
+    /// after a runtime swap or ownership change.
+    /// </summary>
+    public static void ApplyColorsToAllByOwner()
+    {
+        if (Instance != null)
+            Instance.ApplyColorToAllExistingMarkers();
+    }
 }

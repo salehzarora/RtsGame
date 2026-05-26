@@ -253,8 +253,35 @@ public class UnitSelector : MonoBehaviour
     // LEFT MOUSE — single click OR drag box
     // ------------------------------------------------------------------ //
 
+    /// <summary>
+    /// In multiplayer, we can't usefully evaluate ownership until the
+    /// MatchStart event has assigned this client a player slot. Before that,
+    /// left-click does nothing (we'd reject every unit because LocalPlayerId
+    /// is -1). Logged once per readiness flip so the console doesn't spam.
+    /// </summary>
+    private bool localOwnershipReady;
+
+    private bool IsLocalOwnershipReady()
+    {
+        if (!NetworkManagerRTS.IsMultiplayerEnabled) return true;     // SP — always ready
+        return NetworkManagerRTS.LocalPlayerId >= 0;
+    }
+
     private void HandleLeftMouse()
     {
+        // Phase 4: in multiplayer, gate input until LocalPlayerId is known.
+        // Otherwise the player can drag-box during the menu / lobby and have
+        // every click rejected silently — that's a worse experience than
+        // simply consuming the input.
+        bool readyNow = IsLocalOwnershipReady();
+        if (readyNow != localOwnershipReady)
+        {
+            localOwnershipReady = readyNow;
+            if (readyNow) Debug.Log("[UnitSelector] Local ownership ready.");
+            else          Debug.Log("[UnitSelector] Waiting for LocalPlayerId.");
+        }
+        if (!readyNow) return;
+
         // Record drag start
         if (Input.GetMouseButtonDown(0))
         {
@@ -419,31 +446,26 @@ public class UnitSelector : MonoBehaviour
             {
                 Debug.Log($"[UnitSelector] Attack target selected: {targetHealth.name} " +
                           $"(category: {DamageRules.Resolve(targetHealth.gameObject)}).");
-                // Ground units use UnitCombat (chase + shoot on NavMesh) OR
-                // RocketCombat (chase + fire RocketProjectile). A given unit
-                // only has one of the two — null-conditional skips the other.
-                // Also notify the auto-attack controller so it marks this as
-                // a manual target and stops trying to override it.
+
+                // Per-unit local cleanup that must happen BEFORE the new
+                // command runs (dozer build release, boarding cancel). These
+                // are intentionally client-side — they don't need to flow
+                // through CommandDispatcher because the canonical intent is
+                // "attack X", not "release build + cancel board + attack X".
                 foreach (SelectableUnit unit in selectedUnits)
                 {
-                    unit.GetComponent<UnitCombat>()?.SetTarget(targetHealth);
-                    unit.GetComponent<RocketCombat>()?.SetTarget(targetHealth);
-                    unit.GetComponent<MissileLauncherCombat>()?.SetTarget(targetHealth);
-                    unit.GetComponent<GroundAutoAttackController>()?.NotifyManualAttack(targetHealth);
-                    // Dozer is unarmed but if it's in the selection, abandon its
-                    // current build assignment so it follows the new order.
                     unit.GetComponent<DozerBuilder>()?.ReleaseBuildAssignment();
-                    // Manual attack overrides a pending board command.
                     unit.GetComponent<InfantryBoardingAgent>()?.CancelBoarding();
                 }
 
-                // Aircraft use AirUnitController (takeoff + fly + missile + return).
-                // Multi-aircraft selections share one launch group ID so the
-                // Airfield synchronizes batch pair takeoff. Solo selections
-                // get groupId = 0 (no sync, immediate roll after alignment).
-                long aircraftGroupId = AllocateAircraftGroupId(selectedAircraft.Count);
-                foreach (SelectableAircraft jet in selectedAircraft)
-                    jet.GetComponent<AirUnitController>()?.AttackTarget(targetHealth, aircraftGroupId);
+                // Issue the Attack command through the dispatcher. Ground +
+                // aircraft selections share one command — the dispatcher
+                // handles SetTarget on each combat component and the aircraft
+                // AttackTarget call.
+                GameEntity targetEntity = targetHealth.GetComponent<GameEntity>();
+                string[] attackerIds = CollectSelectionEntityIds();
+                CommandDispatcher.IssueAttack(
+                    GameEntity.LocalCommandPlayerId, attackerIds, targetEntity, targetHealth);
 
                 if (attackMarker != null)
                 {
@@ -479,40 +501,29 @@ public class UnitSelector : MonoBehaviour
         // --- Priority 3: ground → move formation / fly-to-point patrol ---
         if (Physics.Raycast(ray, out RaycastHit groundHit, Mathf.Infinity, groundLayer))
         {
+            // Per-unit local cleanup — clear active intents BEFORE the new
+            // move command runs, because the canonical intent ("move to X")
+            // doesn't include "clear gather + clear build + clear boarding".
+            // These are client-side concerns that don't need to network.
             foreach (SelectableUnit unit in selectedUnits)
             {
                 unit.GetComponent<UnitCombat>()?.ClearTarget();
                 unit.GetComponent<RocketCombat>()?.ClearTarget();
                 unit.GetComponent<MissileLauncherCombat>()?.ClearTarget();
                 unit.GetComponent<WorkerGatherer>()?.CancelGathering();
-                // Manual move abandons the Dozer's current build assignment.
-                // The construction site itself is NOT destroyed — the player
-                // can right-click it later to resume.
                 unit.GetComponent<DozerBuilder>()?.ReleaseBuildAssignment();
-                // Manual move overrides a pending board command.
                 unit.GetComponent<InfantryBoardingAgent>()?.CancelBoarding();
             }
 
             attackMarker?.Hide();
 
-            // Compute formation slots, dispatch MoveTo + tell the auto-attack
-            // controller this is the unit's new guard position so it scans
-            // around the move destination, not its old spawn point.
-            Vector3[] positions = GetFormationPositions(groundHit.point, selectedUnits.Count);
-            for (int i = 0; i < selectedUnits.Count; i++)
-            {
-                SelectableUnit unit = selectedUnits[i];
-                unit.GetComponent<UnitMovement>().MoveTo(positions[i]);
-                unit.GetComponent<GroundAutoAttackController>()?.NotifyManualMove(positions[i]);
-            }
-
-            // Aircraft: fly to the clicked point and circle it before
-            // returning home. AirUnitController ignores the call while mid-
-            // attack, so an active strike isn't interrupted. Group ID matches
-            // the attack path so synchronized batch takeoff still applies.
-            long aircraftPatrolGroupId = AllocateAircraftGroupId(selectedAircraft.Count);
-            foreach (SelectableAircraft jet in selectedAircraft)
-                jet.GetComponent<AirUnitController>()?.FlyToPoint(groundHit.point, aircraftPatrolGroupId);
+            // Issue Move through the dispatcher. Ground + aircraft share one
+            // command — the dispatcher computes formation positions, calls
+            // UnitMovement.MoveTo, notifies the auto-attack controller of the
+            // new guard position, and routes aircraft via AirUnitController.
+            string[] moverIds = CollectSelectionEntityIds();
+            CommandDispatcher.Issue(
+                PlayerCommand.Move(GameEntity.LocalCommandPlayerId, moverIds, groundHit.point));
         }
     }
 
@@ -572,6 +583,13 @@ public class UnitSelector : MonoBehaviour
 
     private void SelectBuilding(SelectableBuilding building)
     {
+        // MP: only allow selecting the local player's buildings.
+        if (!IsLocallyOwned(building.gameObject))
+        {
+            // Keep current selection state untouched — non-owned click is a no-op.
+            return;
+        }
+
         if (selectedBuilding != null && selectedBuilding != building)
             selectedBuilding.Deselect();
 
@@ -656,10 +674,35 @@ public class UnitSelector : MonoBehaviour
     private void AddToSelection(SelectableUnit unit)
     {
         if (selectedUnits.Contains(unit)) return;
+        if (!IsLocallyOwned(unit.gameObject)) return;    // MP: skip non-owned units
         selectedUnits.Add(unit);
         unit.Select();
         RefreshDozerBuildPanel();
         RefreshTransportPanel();
+    }
+
+    /// <summary>
+    /// In multiplayer, returns true ONLY when <paramref name="go"/>'s
+    /// GameEntity is owned by this client's LocalPlayerId. In single-player
+    /// (or when no NetworkManager is present), always returns true. A null
+    /// or missing GameEntity is treated as owned (preserves legacy behaviour
+    /// for unstamped scene objects).
+    /// </summary>
+    private static bool IsLocallyOwned(GameObject go)
+    {
+        if (!NetworkManagerRTS.IsMultiplayerEnabled) return true;
+        if (go == null) return false;
+
+        GameEntity e = go.GetComponent<GameEntity>();
+        if (e == null) e = go.GetComponentInParent<GameEntity>();
+        if (e == null) return true;     // unstamped — let it pass
+
+        int local = NetworkManagerRTS.LocalPlayerId;
+        if (e.ownerPlayerId == local) return true;
+
+        Debug.Log("[UnitSelector] Cannot select non-owned unit in multiplayer " +
+                  $"('{go.name}', owner {e.ownerPlayerId}, local {local}).");
+        return false;
     }
 
     /// <summary>
@@ -680,6 +723,7 @@ public class UnitSelector : MonoBehaviour
     private void AddAircraftToSelection(SelectableAircraft aircraft)
     {
         if (selectedAircraft.Contains(aircraft)) return;
+        if (!IsLocallyOwned(aircraft.gameObject)) return;    // MP: skip non-owned aircraft
         selectedAircraft.Add(aircraft);
         aircraft.Select();
     }
@@ -832,6 +876,44 @@ public class UnitSelector : MonoBehaviour
         }
 
         return anyInfantry;
+    }
+
+    // ------------------------------------------------------------------ //
+    // Entity-id collection for CommandDispatcher
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Snapshot the current selection's <see cref="GameEntity.EntityId"/>s into
+    /// a single array (ground units + aircraft). <see cref="GameEntity.EnsureOn"/>
+    /// adds the component on the fly if it's missing — covers the transition
+    /// period before <c>Tools → RTS → Multiplayer Prep → Add GameEntity To
+    /// Prefabs</c> has been run.
+    /// </summary>
+    private string[] CollectSelectionEntityIds()
+    {
+        int total = selectedUnits.Count + selectedAircraft.Count;
+        if (total == 0) return System.Array.Empty<string>();
+
+        var ids = new string[total];
+        int w = 0;
+        for (int i = 0; i < selectedUnits.Count; i++)
+        {
+            SelectableUnit u = selectedUnits[i];
+            if (u == null) continue;
+            ids[w++] = GameEntity.EnsureOn(u.gameObject).EntityId;
+        }
+        for (int i = 0; i < selectedAircraft.Count; i++)
+        {
+            SelectableAircraft a = selectedAircraft[i];
+            if (a == null) continue;
+            ids[w++] = GameEntity.EnsureOn(a.gameObject).EntityId;
+        }
+
+        // Trim if any nulls were skipped above.
+        if (w == total) return ids;
+        var trimmed = new string[w];
+        System.Array.Copy(ids, trimmed, w);
+        return trimmed;
     }
 
     // ------------------------------------------------------------------ //

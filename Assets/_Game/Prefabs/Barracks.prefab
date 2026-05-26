@@ -108,6 +108,7 @@ GameObject:
   - component: {fileID: 417896357903518783}
   - component: {fileID: 7968098694769365108}
   - component: {fileID: 1318301335758536971}
+  - component: {fileID: 7971542051478861693}
   m_Layer: 9
   m_Name: Barracks
   m_TagString: Untagged
@@ -302,6 +303,24 @@ MonoBehaviour:
   ignoreRenderers:
   - {fileID: 3440114328757286546}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+--- !u!114 &7971542051478861693
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1810595053945247796}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: Barracks
+  ownerPlayerId: 0
+  teamId: 0
+  overrideTeamFromHealth: 1
+  entityType: 1
 --- !u!1 &2959900171283818254
 GameObject:
   m_ObjectHideFlags: 0

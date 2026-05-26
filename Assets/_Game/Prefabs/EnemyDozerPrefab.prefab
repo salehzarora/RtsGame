@@ -429,6 +429,7 @@ GameObject:
   - component: {fileID: 6746676327573545583}
   - component: {fileID: 8367743816237614556}
   - component: {fileID: 9166752908233134368}
+  - component: {fileID: 6274986435918435603}
   m_Layer: 6
   m_Name: EnemyDozerPrefab
   m_TagString: Untagged
@@ -559,6 +560,24 @@ MonoBehaviour:
   buildSpeedMultiplier: 1
   canBuild: 1
   pathRefreshInterval: 0.5
+--- !u!114 &6274986435918435603
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4043882492954966604}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06a8d8b2bd584494ca7da834a5e9eb79, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameEntity
+  entityId: 
+  prefabTypeId: EnemyDozer
+  ownerPlayerId: 1
+  teamId: 1
+  overrideTeamFromHealth: 1
+  entityType: 0
 --- !u!1 &4311268424122125393
 GameObject:
   m_ObjectHideFlags: 0

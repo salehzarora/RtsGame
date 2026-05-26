@@ -245,7 +245,10 @@ public class Airfield : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     private readonly GameObject[] parked = new GameObject[MaxSlots];
-    private PlayerResourceManager resourceManager;
+    // Phase 3: owner-aware bank lookup via ResourceBank.For(OwnerId) on spend.
+    private GameEntity selfEntity;
+    private int OwnerId => (selfEntity ?? (selfEntity = GetComponent<GameEntity>())) != null
+        ? selfEntity.ownerPlayerId : 0;
 
     // ------------------------------------------------------------------ //
     // Runtime — takeoff queue
@@ -285,10 +288,7 @@ public class Airfield : MonoBehaviour
 
     private void Awake()
     {
-        resourceManager = FindAnyObjectByType<PlayerResourceManager>();
-
-        if (resourceManager == null)
-            Debug.LogError($"Airfield on '{name}': No PlayerResourceManager found in scene.");
+        selfEntity = GetComponent<GameEntity>();
 
         if (slots == null || slots.Length != MaxSlots)
         {
@@ -421,11 +421,8 @@ public class Airfield : MonoBehaviour
             return;
         }
 
-        if (resourceManager == null)
-        {
-            Debug.LogError($"[Airfield] Cannot produce Strike Jet: PlayerResourceManager missing.");
-            return;
-        }
+        // Phase 3: owner-aware bank resolution happens at the spend site below
+        // — no early-bind PlayerResourceManager reference any more.
 
         PowerConsumer power = GetComponent<PowerConsumer>();
         if (power != null && !power.IsPowered)
@@ -449,10 +446,18 @@ public class Airfield : MonoBehaviour
             return;
         }
 
-        if (!resourceManager.CanAfford(strikeJetCost))
+        int ownerId = OwnerId;
+        PlayerResourceManager bank = ResourceBank.For(ownerId);
+        if (bank == null)
+        {
+            Debug.LogError($"[Airfield] Cannot produce Strike Jet: " +
+                           $"no PlayerResourceManager registered for owner {ownerId}.");
+            return;
+        }
+        if (!bank.CanAfford(strikeJetCost))
         {
             Debug.LogWarning($"[Airfield] Not enough resources to produce Strike Jet. " +
-                             $"Need {strikeJetCost}, have {resourceManager.CurrentResources}.");
+                             $"Need {strikeJetCost}, have {bank.CurrentResources} (owner {ownerId}).");
             return;
         }
 
@@ -471,11 +476,11 @@ public class Airfield : MonoBehaviour
         }
 
         parked[slotIndex] = jet;
-        resourceManager.SpendResources(strikeJetCost);
+        bank.SpendResources(strikeJetCost);
 
         Debug.Log($"[Airfield] Strike Jet produced in slot {slotIndex} at {slot.position:F1}. " +
                   $"Free slots: {FreeSlotCount}/{MaxSlots}. " +
-                  $"Remaining resources: {resourceManager.CurrentResources}.");
+                  $"Remaining resources (owner {ownerId}): {bank.CurrentResources}.");
     }
 
     // ------------------------------------------------------------------ //
