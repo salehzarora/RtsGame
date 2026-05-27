@@ -92,25 +92,56 @@ public class WorkerGatherer : MonoBehaviour
 
     // ------------------------------------------------------------------ //
 
+    private Health ownHealth;
+    private bool   subscribedToDeath;
+
     private void Awake()
     {
         movement = GetComponent<UnitMovement>();
         agent    = GetComponent<NavMeshAgent>();
 
-        // Auto-find a CommandCenter that matches THIS worker's owner. In
-        // single-player there's only one CC, so this resolves identically to
-        // the legacy behaviour. In multiplayer there are two; pick the
-        // closest one whose owner matches this worker.
+        // Initial resolve. In MP this typically picks the WRONG cc because
+        // the worker's GameEntity.ownerPlayerId is still the prefab default
+        // (0) at Awake time — the dispatcher applies the real owner
+        // immediately AFTER Instantiate returns. So we explicitly
+        // re-resolve on every owner-sensitive transition below (gathering,
+        // moving to base, depositing). Awake's pick is just a sensible
+        // starting value for SP.
         if (commandCenter == null)
             commandCenter = ResolveOwnerCommandCenter();
-
-        if (commandCenter == null)
-            Debug.LogWarning($"[Worker:{name}] No CommandCenter found for owner " +
-                             $"{GetWorkerOwnerId()}. Worker cannot deposit until one exists.");
 
         if (FindAnyObjectByType<PlayerResourceManager>() == null)
             Debug.LogWarning($"[Worker:{name}] No PlayerResourceManager found. " +
                              "Deposits will be ignored until one exists.");
+
+        // Phase 10.5 — clear the gather job on death so a worker killed via
+        // the network's EntityDestroyed event (or a local-Die with a
+        // destroyDelay > 0) never deposits, never picks a new node, and
+        // never updates the state machine after it should have stopped.
+        ownHealth = GetComponent<Health>();
+        if (ownHealth != null)
+        {
+            ownHealth.OnDeath += HandleOwnDeath;
+            subscribedToDeath  = true;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (subscribedToDeath && ownHealth != null)
+            ownHealth.OnDeath -= HandleOwnDeath;
+    }
+
+    private void HandleOwnDeath()
+    {
+        GameEntity ge = GetComponent<GameEntity>();
+        string idForLog = ge != null ? ge.EntityId : name;
+        Debug.Log($"[WorkerGatherer] Worker {idForLog} stopped because entity destroyed.");
+
+        // Cancel any in-flight movement so the NavMeshAgent isn't still
+        // pursuing a destination during destroyDelay.
+        if (movement != null) movement.Stop();
+        ClearJobAndGoIdle();
     }
 
     private int GetWorkerOwnerId()
@@ -121,8 +152,16 @@ public class WorkerGatherer : MonoBehaviour
 
     /// <summary>
     /// Pick the closest <see cref="CommandCenter"/> whose owner matches this
-    /// worker. Falls back to ANY CommandCenter (for the single-player /
-    /// transition path where ids may not be stamped yet).
+    /// worker.
+    ///
+    /// MP rule: in multiplayer (worker has a real owner) we NEVER fall back
+    /// to a non-matching CC — depositing to the opponent's bank was the
+    /// Bug 1 symptom. Returns null if no owner-matching CC exists.
+    ///
+    /// SP rule: when no MP owner is established (worker owner is the
+    /// neutral/default value and we're not in a multiplayer match), we
+    /// fall back to any CommandCenter in the scene so legacy single-player
+    /// keeps working with one CC.
     /// </summary>
     private CommandCenter ResolveOwnerCommandCenter()
     {
@@ -137,10 +176,45 @@ public class WorkerGatherer : MonoBehaviour
             float d = (cc.transform.position - transform.position).sqrMagnitude;
             if (d < bestDist) { best = cc; bestDist = d; }
         }
-        // Fallback: any CC. Keeps single-player working even if a designer
-        // hasn't run the multiplayer scene tool.
-        if (best == null && all.Length > 0) best = all[0];
-        return best;
+        if (best != null) return best;
+
+        // No owner-matching CC. In MP, return null — depositing into the
+        // opponent's CC would route resources to the wrong bank.
+        if (NetworkManagerRTS.IsMultiplayerEnabled) return null;
+
+        // SP fallback: any CC. Keeps legacy single-player working.
+        return all.Length > 0 ? all[0] : null;
+    }
+
+    /// <summary>
+    /// Re-resolve <see cref="commandCenter"/> if the cached reference no
+    /// longer matches THIS worker's owner. Cheap O(N) scan over the small
+    /// number of CCs in the scene; called at the points where the worker
+    /// commits to a CC (start of return trip, deposit) so a late
+    /// ApplyOwnership call doesn't strand the worker on the wrong base.
+    /// </summary>
+    private void EnsureOwnerMatchingCommandCenter()
+    {
+        int myOwner = GetWorkerOwnerId();
+
+        if (commandCenter != null &&
+            commandCenter.OwnerPlayerId == myOwner) return;
+
+        CommandCenter resolved = ResolveOwnerCommandCenter();
+        if (resolved == null)
+        {
+            Debug.LogWarning($"[Worker:{name}] No CommandCenter for owner {myOwner} — " +
+                             "deposit will be skipped until one exists.");
+            commandCenter = null;
+            return;
+        }
+        if (resolved != commandCenter)
+        {
+            int prev = commandCenter != null ? commandCenter.OwnerPlayerId : -999;
+            Debug.Log($"[Worker:{name}] CommandCenter rebound: owner={myOwner} " +
+                      $"(was target owner={prev}) → '{resolved.name}'.");
+            commandCenter = resolved;
+        }
     }
 
     private void Update()
@@ -229,9 +303,15 @@ public class WorkerGatherer : MonoBehaviour
         carryAmount = targetNode.Gather();
         Debug.Log($"[Worker:{name}] Gathered {carryAmount}.");
 
+        // Re-resolve the CC NOW (start of return trip) so a late
+        // ApplyOwnership call on this worker doesn't route the deposit to
+        // the opponent's CommandCenter (Bug 1).
+        EnsureOwnerMatchingCommandCenter();
+
         if (commandCenter == null)
         {
-            Debug.LogWarning($"[Worker:{name}] No CommandCenter — dropping {carryAmount} and going idle.");
+            Debug.LogWarning($"[Worker:{name}] No CommandCenter for owner " +
+                             $"{GetWorkerOwnerId()} — dropping {carryAmount} and going idle.");
             carryAmount = 0;
             state = WorkerState.Idle;
             return;
@@ -239,7 +319,8 @@ public class WorkerGatherer : MonoBehaviour
 
         movement.MoveTo(commandCenter.transform.position);
         state = WorkerState.MovingToBase;
-        Debug.Log($"[Worker:{name}] Returning to CommandCenter at " +
+        Debug.Log($"[Worker:{name}] Returning to CommandCenter '{commandCenter.name}' " +
+                  $"(owner {commandCenter.OwnerPlayerId}) at " +
                   $"{commandCenter.transform.position:F1} carrying {carryAmount}.");
     }
 
@@ -272,9 +353,33 @@ public class WorkerGatherer : MonoBehaviour
         {
             Debug.LogWarning($"[Worker:{name}] Deposit skipped — CommandCenter is null.");
         }
+        else if (commandCenter.OwnerPlayerId != GetWorkerOwnerId())
+        {
+            // Last-line owner gate. The owner-matching CC may have changed
+            // (built mid-trip), or this worker's owner was updated late;
+            // either way, depositing here would credit the wrong bank.
+            // Reroute to a freshly-resolved owner-matching CC.
+            int wOwner  = GetWorkerOwnerId();
+            int ccOwner = commandCenter.OwnerPlayerId;
+            Debug.LogWarning($"[WorkerGatherer] Deposit rejected: worker owner={wOwner}, " +
+                             $"cc owner={ccOwner}. Re-resolving and retrying.");
+            EnsureOwnerMatchingCommandCenter();
+            if (commandCenter != null && commandCenter.OwnerPlayerId == wOwner)
+            {
+                movement.MoveTo(commandCenter.transform.position);
+                state = WorkerState.MovingToBase;
+                return;
+            }
+            Debug.LogWarning($"[Worker:{name}] Deposit dropped — no owner-matching " +
+                             $"CommandCenter for owner {wOwner}.");
+        }
         else
         {
-            int amount = carryAmount;
+            int amount   = carryAmount;
+            int wOwner   = GetWorkerOwnerId();
+            int ccOwner  = commandCenter.OwnerPlayerId;
+            Debug.Log($"[WorkerGatherer] Worker owner={wOwner} depositing to " +
+                      $"CommandCenter owner={ccOwner}");
             commandCenter.Deposit(amount);
             Debug.Log($"[Worker:{name}] Deposited {amount}.");
         }

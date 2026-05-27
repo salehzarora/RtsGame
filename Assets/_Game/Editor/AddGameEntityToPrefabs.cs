@@ -31,6 +31,15 @@ public static class AddGameEntityToPrefabs
         public EntityType entityType;
         public int        ownerId;
         public int        teamId;
+        /// <summary>
+        /// If true, the GameEntity infers owner/team from <see cref="Health"/>
+        /// on Awake. Most prefabs want this so single-player keeps working
+        /// off Health.team alone. Buildings that are spawned multiplayer-aware
+        /// (CommandCenter, anything constructed via ConstructionSite) need
+        /// this set to <c>false</c> so the dispatcher's
+        /// <c>ApplyOwnership(cmd.playerId)</c> is authoritative.
+        /// </summary>
+        public bool       overrideTeamFromHealth;
     }
 
     private const int PlayerId = GameEntity.PlayerOwnerId; // 0
@@ -51,6 +60,11 @@ public static class AddGameEntityToPrefabs
         Spec("Assets/_Game/Prefabs/StrikeJetPrefab.prefab",      "StrikeJet",       EntityType.Aircraft, PlayerId),
 
         // ------- Player buildings -------
+        // Phase 10: CommandCenterPrefab uses overrideTeamFromHealth=false so the
+        // dispatcher's ApplyOwnership(cmd.playerId) stays authoritative when
+        // a Dozer finishes construction — otherwise the freshly-spawned CC
+        // would always read back as Player team / owner 0.
+        Spec("Assets/_Game/Prefabs/CommandCenterPrefab.prefab",     "CommandCenter",    EntityType.Building, PlayerId, overrideTeamFromHealth: false),
         Spec("Assets/_Game/Prefabs/Barracks.prefab",                "Barracks",         EntityType.Building, PlayerId),
         Spec("Assets/_Game/Prefabs/PowerPlantPrefab.prefab",        "PowerPlant",       EntityType.Building, PlayerId),
         Spec("Assets/_Game/Prefabs/VehicleFactoryPrefab.prefab",    "VehicleFactory",   EntityType.Building, PlayerId),
@@ -65,15 +79,17 @@ public static class AddGameEntityToPrefabs
         Spec("Assets/_Game/Prefabs/EnemyMachineGunDefensePrefab.prefab","EnemyMachineGunDefense",EntityType.Building, EnemyId),
     };
 
-    private static PrefabSpec Spec(string path, string typeId, EntityType et, int ownerAndTeam)
+    private static PrefabSpec Spec(string path, string typeId, EntityType et, int ownerAndTeam,
+                                   bool overrideTeamFromHealth = true)
     {
         return new PrefabSpec
         {
-            assetPath    = path,
-            prefabTypeId = typeId,
-            entityType   = et,
-            ownerId      = ownerAndTeam,
-            teamId       = ownerAndTeam,
+            assetPath              = path,
+            prefabTypeId           = typeId,
+            entityType             = et,
+            ownerId                = ownerAndTeam,
+            teamId                 = ownerAndTeam,
+            overrideTeamFromHealth = overrideTeamFromHealth,
         };
     }
 
@@ -118,7 +134,7 @@ public static class AddGameEntityToPrefabs
                 ge.entityType             = spec.entityType;
                 ge.ownerPlayerId          = spec.ownerId;
                 ge.teamId                 = spec.teamId;
-                ge.overrideTeamFromHealth = true;
+                ge.overrideTeamFromHealth = spec.overrideTeamFromHealth;
                 // Clear any baked entityId — we never want all spawns to share one.
                 ge.EditorResetId();
 

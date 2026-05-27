@@ -119,6 +119,16 @@ public class TeamColorMarker : MonoBehaviour
     }
 
     /// <summary>
+    /// Public façade for <see cref="RepaintFromContext"/>. Phase 9 callers
+    /// (most importantly <see cref="GameEntity.ApplyOwnership"/>) invoke this
+    /// when the entity's owner changes mid-life, so the marker re-evaluates
+    /// the slot palette and pulls the correct owner colour. Without this,
+    /// a unit produced under owner 0 keeps the Player-0 tint even after its
+    /// owner is reassigned to player 1.
+    /// </summary>
+    public void ForceRepaint() => RepaintFromContext();
+
+    /// <summary>
     /// Resolve which colour this marker should currently display, then call
     /// <see cref="ApplyColor"/>.
     ///   • MP + owner registered → MultiplayerColors slot colour.

@@ -112,14 +112,30 @@ public class PlayerFactionManager : MonoBehaviour
 
     /// <summary>
     /// Sets the team color and immediately re-applies it to every live
-    /// <see cref="TeamColorMarker"/>. Safe to call from the main menu.
+    /// <see cref="TeamColorMarker"/>. Safe to call from the main menu in SP.
+    ///
+    /// Phase 10.9 — MULTIPLAYER GUARD. In multiplayer, color selection
+    /// comes from each player's Photon custom properties (set by the
+    /// lobby UI) and is broadcast via the MatchStart payload into
+    /// <see cref="MultiplayerColors"/>. The local main-menu pick must
+    /// not override that — doing so would silently recolour the opponent's
+    /// units on this client and was the source of the "APC passengers
+    /// sometimes blue instead of red" bug. So in MP this method records
+    /// the value (for UI/debug consistency) but skips the global repaint.
     /// </summary>
     public void SetColor(Color color, string displayName)
     {
         SelectedColor     = color;
         SelectedColorName = string.IsNullOrEmpty(displayName) ? "Custom" : displayName;
-        Debug.Log($"[PlayerFaction] Color selected: {SelectedColorName}");
 
+        if (NetworkManagerRTS.IsMultiplayerEnabled)
+        {
+            Debug.Log("[Color] Multiplayer mode: using owner color mapping, " +
+                      "not main-menu selected color.");
+            return;
+        }
+
+        Debug.Log($"[PlayerFaction] Color selected: {SelectedColorName}");
         ApplyColorToAllExistingMarkers();
         OnColorChanged?.Invoke(color);
     }

@@ -214,6 +214,13 @@ public class GameEntity : MonoBehaviour
         ownerPlayerId = newOwnerId;
         teamId        = newOwnerId;
         ApplyLocalTeamPerspective();
+
+        // Phase 10.7 — push the owner color through the canonical applier.
+        // OwnerColorApplier looks up MultiplayerColors[ownerPlayerId] and
+        // paints every TeamColorMarker beneath this entity, so spawned
+        // units / passenger reactivations / constructed buildings all paint
+        // consistently across clients.
+        OwnerColorApplier.ApplyToEntity(gameObject);
     }
 
     /// <summary>

@@ -410,6 +410,12 @@ public class EnemyBuildAI : MonoBehaviour
 
         // team = Enemy so UnitSelector ignores it on player right-click resume.
         site.Initialise(finalPrefab, cost, buildTime, label, Quaternion.identity, Health.Team.Enemy);
+        // Phase 10.1 — stamp the canonical owner so the final building
+        // inherits Enemy ownership in ConstructionSite.Complete. Without
+        // this the bug-fix would leave the AI's buildings unowned (they
+        // worked before only because the post-spawn GameEntity stamping
+        // happened to put them in the right team via Health.team).
+        site.SetOwner(GameEntity.EnemyOwnerId);
         site.OnComplete += HandleSiteComplete;
 
         enemyDozer.AssignBuildOrder(site);

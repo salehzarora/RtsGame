@@ -344,15 +344,25 @@ public class NetworkManagerRTS : MonoBehaviour
 
     /// <summary>
     /// Phase 6 overload — create a room with an explicit name AND a
-    /// <c>mapId</c> stored in custom room properties. <see cref="MapRegistry"/>
-    /// resolves the mapId to a <see cref="MapDefinition"/> on every client.
-    /// Pass <paramref name="roomName"/>=null to let Photon auto-name the room.
+    /// <c>mapId</c> stored in custom room properties.
     /// </summary>
     public void CreateRoom(string roomName, string mapId)
     {
+        CreateRoom(roomName, mapId, DefaultStartingResources);
+    }
+
+    /// <summary>
+    /// Phase 8 overload — also stores the lobby-selected
+    /// <paramref name="startingResources"/> as a custom room property so
+    /// <see cref="NetworkMatchCoordinator"/> can broadcast it in the
+    /// MatchStart payload. Both clients end up with the same starting bank.
+    /// </summary>
+    public void CreateRoom(string roomName, string mapId, int startingResources)
+    {
 #if PHOTON_UNITY_NETWORKING
-        pendingMapId    = string.IsNullOrEmpty(mapId) ? MapRegistry.DefaultMapId : mapId;
-        pendingRoomName = roomName;
+        pendingMapId             = string.IsNullOrEmpty(mapId) ? MapRegistry.DefaultMapId : mapId;
+        pendingRoomName          = roomName;
+        pendingStartingResources = Mathf.Max(0, startingResources);
 
         if (!PhotonNetwork.IsConnected)
         {
@@ -366,6 +376,9 @@ public class NetworkManagerRTS : MonoBehaviour
         Debug.LogWarning("[NetworkRTS] CreateRoom() requested but Photon PUN is not installed.");
 #endif
     }
+
+    /// <summary>Default starting bank balance when the host doesn't pick one.</summary>
+    public const int DefaultStartingResources = 10000;
 
     /// <summary>
     /// Phase 6 — join a room by its name (as opposed to JoinRandomRoom).
@@ -441,7 +454,13 @@ public class NetworkManagerRTS : MonoBehaviour
 
     // Photon room-properties keys. Use these constants when reading
     // CurrentRoom.CustomProperties or writing in CreateRoom.
-    public const string RoomMapPropKey = "mapId";
+    public const string RoomMapPropKey               = "mapId";
+    public const string RoomStartingResourcesPropKey = "startingResources";
+
+    // Phase 8 — startingResources pending value. Flushed into the room's
+    // custom properties at DoCreateRoom time so every joining client can
+    // read it before MatchStart.
+    private int pendingStartingResources = DefaultStartingResources;
 
     // ------------------------------------------------------------------ //
     // Phase 6 — cached room list for the lobby UI's browser
@@ -484,9 +503,16 @@ public class NetworkManagerRTS : MonoBehaviour
         // Custom room properties:
         //   • mapId — stored so every joining client can resolve the same
         //     MapDefinition and (later) load the right scene / world.
-        // CustomRoomPropertiesForLobby exposes mapId to the room-list view
-        // so the browser can render the map name without joining.
-        Hashtable roomProps = new Hashtable { { RoomMapPropKey, pendingMapId ?? MapRegistry.DefaultMapId } };
+        //   • startingResources — host's chosen starting bank amount. Read
+        //     by NetworkMatchCoordinator at MatchStart and broadcast to all
+        //     clients so each ResourceBank initialises to the same value.
+        // CustomRoomPropertiesForLobby exposes both to the room-list view
+        // so the browser can show the map name + resources without joining.
+        Hashtable roomProps = new Hashtable
+        {
+            { RoomMapPropKey,               pendingMapId ?? MapRegistry.DefaultMapId },
+            { RoomStartingResourcesPropKey, pendingStartingResources },
+        };
 
         RoomOptions opts = new RoomOptions
         {
@@ -495,14 +521,20 @@ public class NetworkManagerRTS : MonoBehaviour
             IsOpen                           = true,
             PublishUserId                    = false,
             CustomRoomProperties             = roomProps,
-            CustomRoomPropertiesForLobby     = new[] { RoomMapPropKey },
+            CustomRoomPropertiesForLobby     = new[]
+            {
+                RoomMapPropKey,
+                RoomStartingResourcesPropKey,
+            },
         };
         bool ok = PhotonNetwork.CreateRoom(
             pendingRoomName,     // null → Photon auto-names
             opts,
             TypedLobby.Default);
         Debug.Log($"[NetworkRTS] CreateRoom(name='{(pendingRoomName ?? "<auto>")}', " +
-                  $"mapId='{pendingMapId}') — returned {ok}.");
+                  $"mapId='{pendingMapId}', startingResources={pendingStartingResources}) " +
+                  $"— returned {ok}.");
+        Debug.Log($"[RoomRules] Created room with startingResources={pendingStartingResources}");
     }
 
     private void DoJoinRandomRoom()

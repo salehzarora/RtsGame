@@ -37,6 +37,11 @@ public static class SetupNetworkManager
         bool addedManager     = EnsureComponent<NetworkManagerRTS>(go, out NetworkManagerRTS _);
         bool addedRelay       = EnsureComponent<NetworkCommandRelay>(go, out NetworkCommandRelay _);
         bool addedCoordinator = EnsureComponent<NetworkMatchCoordinator>(go, out NetworkMatchCoordinator _);
+        // Phase 10.3 — match-state event bus (damage / death / resource sync).
+        bool addedMatchEvents = EnsureComponent<NetworkMatchEvents>(go, out NetworkMatchEvents _);
+        // Phase 10.7 — periodic state snapshot + runtime sync validator.
+        bool addedStateSync   = EnsureComponent<NetworkEntityStateSync>(go, out NetworkEntityStateSync _);
+        bool addedValidator   = EnsureComponent<NetworkSyncValidator>(go, out NetworkSyncValidator _);
 
         EditorUtility.SetDirty(go);
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
@@ -45,7 +50,10 @@ public static class SetupNetworkManager
                   $"{(created ? "created" : "found")}. " +
                   $"NetworkManagerRTS: {(addedManager ? "added" : "already present")}, " +
                   $"NetworkCommandRelay: {(addedRelay ? "added" : "already present")}, " +
-                  $"NetworkMatchCoordinator: {(addedCoordinator ? "added" : "already present")}.");
+                  $"NetworkMatchCoordinator: {(addedCoordinator ? "added" : "already present")}, " +
+                  $"NetworkMatchEvents: {(addedMatchEvents ? "added" : "already present")}, " +
+                  $"NetworkEntityStateSync: {(addedStateSync ? "added" : "already present")}, " +
+                  $"NetworkSyncValidator: {(addedValidator ? "added" : "already present")}.");
 
 #if PHOTON_UNITY_NETWORKING
         Debug.Log("[SetupNetworkManager] Photon PUN detected (PHOTON_UNITY_NETWORKING " +

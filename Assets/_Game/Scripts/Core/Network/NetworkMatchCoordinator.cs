@@ -45,7 +45,8 @@ public class NetworkMatchCoordinator : MonoBehaviour
     /// <summary>Photon event code reserved for MatchStart broadcasts.</summary>
     public const byte MatchStartEventCode = 2;     // 1 is PlayerCommand
 
-    private const byte PayloadVersion = 1;
+    // Payload v2 added startingResources at index 5.
+    private const byte PayloadVersion = 2;
 
     // ------------------------------------------------------------------ //
     // Public read-only API
@@ -123,14 +124,19 @@ public class NetworkMatchCoordinator : MonoBehaviour
     /// <returns>True if MatchStart will fire (now or imminently).</returns>
     public bool RequestMatchStart(Color localColor)
     {
-        // Single-player or no NetworkManager: fire immediately.
+        // Single-player or no NetworkManager: fire immediately. SP doesn't
+        // override starting resources — use the SP scene's whatever-it-was
+        // baked value by passing the project default (PlayerResourceManager
+        // already initialised in Awake; SetCurrent only runs when the host
+        // explicitly picked a value in the lobby).
         if (NetworkManagerRTS.Instance == null || !NetworkManagerRTS.Instance.multiplayerMode)
         {
             Debug.Log("[MultiplayerMatch] Single-player Play — firing OnMatchStarted immediately.");
             ApplyMatchStartLocally(
                 player0Actor: 1, player1Actor: 2,
                 player0Color: localColor,
-                player1Color: MultiplayerColors.DefaultPlayer1Color);
+                player1Color: MultiplayerColors.DefaultPlayer1Color,
+                startingResources: -1);     // -1 = "don't override; keep current bank value"
             return true;
         }
 
@@ -198,6 +204,18 @@ public class NetworkMatchCoordinator : MonoBehaviour
         Debug.Log($"[MultiplayerMatch] Player0 color = {p0Name}");
         Debug.Log($"[MultiplayerMatch] Player1 color = {p1Name}");
 
+        // Phase 8 — read startingResources from room properties. Falls back
+        // to the NetworkManager default if the host's lobby UI didn't set it.
+        int startingResources = NetworkManagerRTS.DefaultStartingResources;
+        if (PhotonNetwork.CurrentRoom.CustomProperties != null &&
+            PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(
+                NetworkManagerRTS.RoomStartingResourcesPropKey, out object srObj) &&
+            srObj is int srInt)
+        {
+            startingResources = srInt;
+        }
+        Debug.Log($"[MultiplayerMatch] Starting resources = {startingResources}");
+
         object[] payload = new object[]
         {
             PayloadVersion,
@@ -205,6 +223,7 @@ public class NetworkMatchCoordinator : MonoBehaviour
             player1Actor,
             ColorToVec3(p0Color),
             ColorToVec3(p1Color),
+            startingResources,
         };
 
         Debug.Log($"[MultiplayerMatch] Master starting match. " +
@@ -239,8 +258,14 @@ public class NetworkMatchCoordinator : MonoBehaviour
             Color p0Col = Vec3ToColor((Vector3)payload[3]);
             Color p1Col = Vec3ToColor((Vector3)payload[4]);
 
+            // Phase 8 — startingResources at index 5. Older payloads (v1)
+            // didn't carry it; fall back to the project default so a mixed
+            // build doesn't crash.
+            int startingResources = NetworkManagerRTS.DefaultStartingResources;
+            if (payload.Length > 5 && payload[5] is int sr) startingResources = sr;
+
             Debug.Log($"[MultiplayerMatch] Received MatchStart.");
-            ApplyMatchStartLocally(p0Actor, p1Actor, p0Col, p1Col);
+            ApplyMatchStartLocally(p0Actor, p1Actor, p0Col, p1Col, startingResources);
         }
         catch (System.Exception e)
         {
@@ -283,7 +308,8 @@ public class NetworkMatchCoordinator : MonoBehaviour
 
     private void ApplyMatchStartLocally(
         int player0Actor, int player1Actor,
-        Color player0Color, Color player1Color)
+        Color player0Color, Color player1Color,
+        int startingResources)
     {
         Player0ActorNumber = player0Actor;
         Player1ActorNumber = player1Actor;
@@ -300,9 +326,33 @@ public class NetworkMatchCoordinator : MonoBehaviour
         Debug.Log($"[TeamColor] Applied color RGB({player1Color.r:F2}," +
                   $"{player1Color.g:F2},{player1Color.b:F2}) to owner 1.");
 
+        Debug.Log($"[MultiplayerMatch] MatchStart startingResources={startingResources}");
         Debug.Log($"[MultiplayerMatch] LocalPlayerId = {NetworkManagerRTS.LocalPlayerId}.");
         Debug.Log($"[MultiplayerMatch] Player0 actor = {player0Actor}, " +
                   $"Player1 actor = {player1Actor}.");
+
+        // Reveal hidden gameplay roots (Player0Base / Player1Base /
+        // Environment) BEFORE writing into the per-owner banks. Activation
+        // synchronously runs Awake on every PlayerResourceManager inside the
+        // bases, registering them under their ownerPlayerId. Without this
+        // ordering, the SetCurrent calls below would land on the wrong bank
+        // (or no bank) because Player1Base's manager hadn't woken yet.
+        OnMatchStarted?.Invoke();
+
+        // Phase 10.2 — apply the host-selected starting resources to BOTH
+        // per-owner banks. -1 is the SP sentinel meaning "don't override;
+        // keep existing values". ResourceBank.SetCurrent is owner-strict so
+        // each write lands on the bank whose ownerPlayerId matches.
+        if (startingResources >= 0)
+        {
+            ResourceBank.SetCurrent(0, startingResources);
+            ResourceBank.SetCurrent(1, startingResources);
+
+            int after0 = ResourceBank.Current(0);
+            int after1 = ResourceBank.Current(1);
+            Debug.Log($"[Resources] Player 0 starting resources set to {after0}");
+            Debug.Log($"[Resources] Player 1 starting resources set to {after1}");
+        }
 
         // Diagnostic: sanity-check that the scene-baked Workers / CCs carry
         // the right ownerPlayerId. If either prints owner=0 for Player 1's
@@ -310,8 +360,6 @@ public class NetworkMatchCoordinator : MonoBehaviour
         // re-run SetupMultiplayerMatchMap then AddGameEntityToSceneObjects.
         LogBaseOwnership(0);
         LogBaseOwnership(1);
-
-        OnMatchStarted?.Invoke();
 
         Debug.Log("[MultiplayerMatch] Applied ownership and local perspective.");
     }

@@ -64,6 +64,18 @@ public class MultiplayerLobbyUI : MonoBehaviour
     public Button createRoomConfirmButton;
     public Button createRoomBackButton;
 
+    [Tooltip("Phase 8 — cycle button. Each click advances through " +
+             "startingResourcesOptions and updates createRoomStartingResourcesLabel.")]
+    public Button createRoomStartingResourcesButton;
+    public TextMeshProUGUI createRoomStartingResourcesLabel;
+
+    [Tooltip("Allowed values for the host's starting-resources picker. " +
+             "MUST match the spec: 5000 / 10000 / 20000 / 30000 / 40000 / 50000.")]
+    public int[] startingResourcesOptions = { 5000, 10000, 20000, 30000, 40000, 50000 };
+
+    /// <summary>Currently-selected index into <see cref="startingResourcesOptions"/>.</summary>
+    private int startingResourcesIndex = 1;     // default → 10000
+
     [Header("Room list controls")]
     public Button roomListRefreshButton;
     public Button roomListBackButton;
@@ -78,6 +90,9 @@ public class MultiplayerLobbyUI : MonoBehaviour
     [Header("Lobby controls")]
     public TextMeshProUGUI lobbyRoomNameLabel;
     public TextMeshProUGUI lobbyMapLabel;
+    [Tooltip("Phase 8 — read-only label showing the host's chosen starting " +
+             "resources value (read from the Photon room's custom properties).")]
+    public TextMeshProUGUI lobbyStartingResourcesLabel;
     public TextMeshProUGUI lobbyPlayer0Label;
     public TextMeshProUGUI lobbyPlayer1Label;
     public Image           lobbyPlayer0ColorSwatch;
@@ -202,6 +217,9 @@ public class MultiplayerLobbyUI : MonoBehaviour
         // Create room
         if (createRoomConfirmButton != null) createRoomConfirmButton.onClick.AddListener(OnClickCreateRoomConfirm);
         if (createRoomBackButton    != null) createRoomBackButton.onClick.AddListener(() => ShowPanel(onlineMenuPanel));
+        if (createRoomStartingResourcesButton != null)
+            createRoomStartingResourcesButton.onClick.AddListener(OnClickCycleStartingResources);
+        RefreshStartingResourcesLabel();
 
         // Room list
         if (roomListRefreshButton != null) roomListRefreshButton.onClick.AddListener(RefreshRoomListRows);
@@ -296,9 +314,39 @@ public class MultiplayerLobbyUI : MonoBehaviour
         string roomName = createRoomNameInput != null ? createRoomNameInput.text.Trim() : null;
         if (string.IsNullOrEmpty(roomName)) roomName = "Room " + Random.Range(100, 1000);
 
+        int startingResources = GetSelectedStartingResources();
+
         NetworkManagerRTS.Instance.multiplayerMode = true;
-        NetworkManagerRTS.Instance.CreateRoom(roomName, MapRegistry.DefaultMapId);
+        NetworkManagerRTS.Instance.CreateRoom(
+            roomName, MapRegistry.DefaultMapId, startingResources);
         // OnJoinedRoom will fire and HandleRoomJoined switches us to the LobbyPanel.
+    }
+
+    // ------------------------------------------------------------------ //
+    // Starting-resources picker
+    // ------------------------------------------------------------------ //
+
+    private void OnClickCycleStartingResources()
+    {
+        if (startingResourcesOptions == null || startingResourcesOptions.Length == 0) return;
+        startingResourcesIndex =
+            (startingResourcesIndex + 1) % startingResourcesOptions.Length;
+        RefreshStartingResourcesLabel();
+    }
+
+    private void RefreshStartingResourcesLabel()
+    {
+        if (createRoomStartingResourcesLabel == null) return;
+        createRoomStartingResourcesLabel.text =
+            "Starting Resources: " + GetSelectedStartingResources();
+    }
+
+    private int GetSelectedStartingResources()
+    {
+        if (startingResourcesOptions == null || startingResourcesOptions.Length == 0)
+            return NetworkManagerRTS.DefaultStartingResources;
+        int idx = Mathf.Clamp(startingResourcesIndex, 0, startingResourcesOptions.Length - 1);
+        return startingResourcesOptions[idx];
     }
 
     // ------------------------------------------------------------------ //
@@ -332,10 +380,19 @@ public class MultiplayerLobbyUI : MonoBehaviour
                 }
                 bool full = info.PlayerCount >= info.MaxPlayers && info.MaxPlayers > 0;
 
+                int srVal = NetworkManagerRTS.DefaultStartingResources;
+                if (info.CustomProperties != null &&
+                    info.CustomProperties.TryGetValue(
+                        NetworkManagerRTS.RoomStartingResourcesPropKey, out object srObj) &&
+                    srObj is int srInt)
+                {
+                    srVal = srInt;
+                }
+
                 if (i < roomListRowLabels.Length && roomListRowLabels[i] != null)
                     roomListRowLabels[i].text =
-                        $"{info.Name}   {info.PlayerCount}/{info.MaxPlayers}   [{mapName}]" +
-                        (full ? "   (FULL)" : "");
+                        $"{info.Name}   {info.PlayerCount}/{info.MaxPlayers}   [{mapName}]   " +
+                        $"Resources {srVal}" + (full ? "   (FULL)" : "");
 
                 string capturedName = info.Name;
                 b.onClick.RemoveAllListeners();
@@ -395,6 +452,20 @@ public class MultiplayerLobbyUI : MonoBehaviour
             mapId = s;
         if (lobbyMapLabel != null)
             lobbyMapLabel.text = "Map: " + MapRegistry.DisplayNameOrId(mapId);
+
+        // Phase 8 — starting-resources lobby display.
+        if (lobbyStartingResourcesLabel != null)
+        {
+            int startingResources = NetworkManagerRTS.DefaultStartingResources;
+            if (room.CustomProperties != null &&
+                room.CustomProperties.TryGetValue(
+                    NetworkManagerRTS.RoomStartingResourcesPropKey, out object srObj) &&
+                srObj is int srInt)
+            {
+                startingResources = srInt;
+            }
+            lobbyStartingResourcesLabel.text = "Starting Resources: " + startingResources;
+        }
 
         // Sort players by ActorNumber to derive slot mapping.
         var sorted = new List<Player>(room.Players.Values);

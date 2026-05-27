@@ -229,18 +229,21 @@ public static class SetupRTSHUD
         InsetTitleStrip(dozerBuildPanel);
         dozerBuildPanel.gameObject.SetActive(false);
 
-        // 5 buttons in a single row centred vertically.
+        // Phase 10: 6 buttons in a single row. CommandCenter at index 0 since
+        // it's the canonical "build this first" entry in the new MP flow.
+        Button btnDozerBuildCC       = CreateIconButton(dozerBuildPanel, "BtnDozerBuildCommandCenter",
+                                          "Command Center", "1000", BtnBarracksColor,         GridPos(0, 0, 6, 1));
         Button btnDozerBuildBarracks = CreateIconButton(dozerBuildPanel, "BtnDozerBuildBarracks",
-                                          "Barracks", "100", BtnBarracksColor,            GridPos(0, 0, 5, 1));
+                                          "Barracks", "100", BtnBarracksColor,                GridPos(1, 0, 6, 1));
         Button btnDozerBuildPower    = CreateIconButton(dozerBuildPanel, "BtnDozerBuildPowerPlant",
-                                          "Power Plant", "150", BtnPowerColor,             GridPos(1, 0, 5, 1));
+                                          "Power Plant", "150", BtnPowerColor,                GridPos(2, 0, 6, 1));
         Button btnDozerBuildVF       = CreateIconButton(dozerBuildPanel, "BtnDozerBuildVehicleFactory",
-                                          "Vehicle Factory", "300", BtnVehicleFactoryColor, GridPos(2, 0, 5, 1));
+                                          "Vehicle Factory", "300", BtnVehicleFactoryColor,   GridPos(3, 0, 6, 1));
         Button btnDozerBuildAirfield = CreateIconButton(dozerBuildPanel, "BtnDozerBuildAirfield",
-                                          "Airfield", "600", BtnAirfieldColor,              GridPos(3, 0, 5, 1));
+                                          "Airfield", "600", BtnAirfieldColor,                GridPos(4, 0, 6, 1));
         Button btnDozerBuildMGD      = CreateIconButton(dozerBuildPanel, "BtnDozerBuildMachineGunDefense",
-                                          "MG Defense", "250", BtnMGDefenseColor,           GridPos(4, 0, 5, 1));
-        Debug.Log("[SetupRTSHUD] ✓ DozerBuildPanel (5 icon buttons, single row)");
+                                          "MG Defense", "250", BtnMGDefenseColor,             GridPos(5, 0, 6, 1));
+        Debug.Log("[SetupRTSHUD] ✓ DozerBuildPanel (6 icon buttons, single row)");
 
         // -- 5d. TransportPanel -----------------------------------------
         RectTransform transportPanel = CreateInset(GetInner(centerSection), "TransportPanel");
@@ -386,6 +389,8 @@ public static class SetupRTSHUD
         hud.dozerBuildAirfieldLabel           = btnDozerBuildAirfield.GetComponentInChildren<TextMeshProUGUI>(true);
         hud.dozerBuildMachineGunDefenseButton = btnDozerBuildMGD.gameObject;
         hud.dozerBuildMachineGunDefenseLabel  = btnDozerBuildMGD.GetComponentInChildren<TextMeshProUGUI>(true);
+        hud.dozerBuildCommandCenterButton     = btnDozerBuildCC.gameObject;
+        hud.dozerBuildCommandCenterLabel      = btnDozerBuildCC.GetComponentInChildren<TextMeshProUGUI>(true);
 
         // Transport panel (group)
         hud.transportPanel             = transportPanel.gameObject;
@@ -429,6 +434,7 @@ public static class SetupRTSHUD
         WireButton(btnDozerBuildVF,       hud, nameof(RTSHUD.OnClickDozerBuildVehicleFactory));
         WireButton(btnDozerBuildAirfield, hud, nameof(RTSHUD.OnClickDozerBuildAirfield));
         WireButton(btnDozerBuildMGD,      hud, nameof(RTSHUD.OnClickDozerBuildMachineGunDefense));
+        WireButton(btnDozerBuildCC,       hud, nameof(RTSHUD.OnClickDozerBuildCommandCenter));
         WireButton(btnUnloadAll,       hud, nameof(RTSHUD.OnClickUnloadAll));
         WireButton(slotButtons[0],     hud, nameof(RTSHUD.OnClickUnloadSlot0));
         WireButton(slotButtons[1],     hud, nameof(RTSHUD.OnClickUnloadSlot1));

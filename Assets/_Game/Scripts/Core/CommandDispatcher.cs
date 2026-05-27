@@ -333,11 +333,31 @@ public static class CommandDispatcher
             // MP this also re-keys Health.team into the local client's
             // perspective. In SP this is a no-op for owner=0 (matches the
             // prefab's default team).
+            // Phase 9: ApplyOwnership now also force-repaints sibling
+            // TeamColorMarkers so the spawned unit's colour matches the
+            // owner immediately — fixes the "Player 1's worker spawns
+            // orange" symptom.
             GameEntity spawned = EntityRegistry.Find(cmd.spawnEntityId);
+            int producerOwner = -1;
+            if (cmd.selectedEntityIds != null && cmd.selectedEntityIds.Length > 0)
+            {
+                GameEntity prod = EntityRegistry.Find(cmd.selectedEntityIds[0]);
+                if (prod != null) producerOwner = prod.ownerPlayerId;
+            }
+            Debug.Log($"[CommandDispatcher] Execute Produce {cmd.productionType} " +
+                      $"cmd.playerId={cmd.playerId} producerOwner={producerOwner}");
+
             if (spawned != null) spawned.ApplyOwnership(cmd.playerId);
 
+            // Spam-production diagnostic — if the unit never registered, the
+            // hotkey or button path bypassed SetNextSpawnId / Instantiate.
+            bool registered = spawned != null;
+            Debug.Log($"[Produce] Spawned {cmd.productionType} id={cmd.spawnEntityId} " +
+                      $"owner={cmd.playerId} registered={registered}");
             Debug.Log($"[NetworkSpawn] Assigned entityId {cmd.spawnEntityId} " +
                       $"(owner {cmd.playerId}) to {cmd.productionType}.");
+            Debug.Log($"[Ownership] {cmd.productionType} entityId={cmd.spawnEntityId} " +
+                      $"owner={cmd.playerId}");
         }
     }
 
@@ -361,8 +381,8 @@ public static class CommandDispatcher
         {
             Debug.LogWarning($"[CommandDispatcher] Build command has unsupported " +
                              $"buildingType '{cmd.productionType}'. Expected one of " +
-                             "Barracks, PowerPlant, VehicleFactory, Airfield, MachineGunDefense " +
-                             "(or 'Machine Gun Defense' for the legacy label). Ignoring.");
+                             "Barracks, PowerPlant, VehicleFactory, Airfield, MachineGunDefense, " +
+                             "CommandCenter (or 'Machine Gun Defense' for the legacy label). Ignoring.");
             return;
         }
 
@@ -381,7 +401,34 @@ public static class CommandDispatcher
 
         Debug.Log($"[CommandDispatcher] Execute Build: {cmd.productionType} at " +
                   $"{cmd.targetPosition:F1} (site id '{cmd.spawnEntityId}', " +
-                  $"final id '{cmd.secondaryEntityId}', dozer id '{dozerId}').");
+                  $"final id '{cmd.secondaryEntityId}', dozer id '{dozerId}', " +
+                  $"cmd.playerId={cmd.playerId}).");
+
+        // Phase 10.1 — cross-check that the requested owner actually matches
+        // the dozer's owner. cmd.playerId was supplied by the issuing client;
+        // dozer.ownerPlayerId is canonical and synchronised across clients.
+        // If they disagree, reject the command — a buggy or hostile client
+        // can't make another player's dozer build for it.
+        //
+        // We don't reject on missing-dozer (could be a legitimate race with a
+        // dozer killed between Issue and replay). The site still spawns under
+        // cmd.playerId; only the dozer-assignment step in BPM no-ops in that
+        // case, mirroring pre-existing behaviour.
+        if (string.IsNullOrEmpty(dozerId))
+        {
+            Debug.LogWarning("[CommandDispatcher] Build rejected — no dozer entityId in command.");
+            return;
+        }
+
+        GameEntity dozerEntity = EntityRegistry.Find(dozerId);
+        if (dozerEntity != null && dozerEntity.ownerPlayerId != cmd.playerId)
+        {
+            Debug.LogWarning($"[CommandDispatcher] Build rejected — cmd.playerId=" +
+                             $"{cmd.playerId} but dozer '{dozerEntity.name}' " +
+                             $"ownerPlayerId={dozerEntity.ownerPlayerId}. " +
+                             "A client may not build with another player's dozer.");
+            return;
+        }
 
         BuildingPlacementManager bpm = Object.FindAnyObjectByType<BuildingPlacementManager>();
         if (bpm == null)
@@ -394,23 +441,16 @@ public static class CommandDispatcher
         // Hand BPM a fully-described placement — all params come from the
         // command, none from BPM's local placement-mode state. This is what
         // lets a remote client (which never entered placement mode) execute
-        // the same Build command.
+        // the same Build command. cmd.playerId is the validated owner; BPM
+        // stamps it onto the construction site at spawn time, so the final
+        // building inherits the correct owner on every client.
         bpm.ExecuteConfirmedDozerPlacement(
             cmd.targetPosition,
             cmd.productionType,
             dozerId,
             cmd.spawnEntityId,
-            cmd.secondaryEntityId);
-
-        // Phase 3: stamp ownership on the spawned construction site. The
-        // final building, when it completes later, will inherit its own id
-        // via SetNextSpawnId — but since it's spawned later we apply that
-        // ownership in ConstructionSite.Complete instead.
-        if (!string.IsNullOrEmpty(cmd.spawnEntityId))
-        {
-            GameEntity siteEntity = EntityRegistry.Find(cmd.spawnEntityId);
-            if (siteEntity != null) siteEntity.ApplyOwnership(cmd.playerId);
-        }
+            cmd.secondaryEntityId,
+            cmd.playerId);
     }
 
     /// <summary>
@@ -429,6 +469,7 @@ public static class CommandDispatcher
             case "Airfield":
             case "MachineGunDefense":
             case "Machine Gun Defense": // current BPM label
+            case "CommandCenter":       // Phase 10 — Dozer-buildable CC
                 return true;
             default:
                 return false;

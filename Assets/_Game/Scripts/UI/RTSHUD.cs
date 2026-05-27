@@ -143,6 +143,10 @@ public class RTSHUD : MonoBehaviour
     public GameObject dozerBuildMachineGunDefenseButton;
     public TextMeshProUGUI dozerBuildMachineGunDefenseLabel;
 
+    [Tooltip("Construction button — CommandCenter (Phase 10). Wired to OnClickDozerBuildCommandCenter.")]
+    public GameObject dozerBuildCommandCenterButton;
+    public TextMeshProUGUI dozerBuildCommandCenterLabel;
+
     [Header("Transport Panel (shown when an APC is selected)")]
     [Tooltip("Bottom-left panel shown only when at least one selected unit carries " +
              "an APCTransport. Holds the title, 6 passenger slots, and the Unload All " +
@@ -611,6 +615,12 @@ public class RTSHUD : MonoBehaviour
     /// plus a fresh network-allocated <c>spawnEntityId</c> for the spawned
     /// unit. Both clients (issuer + remote replay) see the same spawn id and
     /// the resulting unit registers under that id in <see cref="EntityRegistry"/>.
+    ///
+    /// Phase 9 — <c>cmd.playerId</c> is derived from the PRODUCER's
+    /// <see cref="GameEntity.ownerPlayerId"/>, not from the local client's
+    /// id. This way a Player 1 worker produced from Player 1's CommandCenter
+    /// always carries <c>playerId = 1</c>, even if a later refactor moved
+    /// LocalCommandPlayerId resolution around.
     /// </summary>
     private void IssueProduceCommand(Component producer, string productionType, string expectedBuilding)
     {
@@ -622,11 +632,31 @@ public class RTSHUD : MonoBehaviour
         }
 
         GameEntity ge = GameEntity.EnsureOn(producer.gameObject);
+        int producerOwner = ge.ownerPlayerId;
+
+        // MP guard: refuse to issue a Produce command for a building you
+        // don't own. UnitSelector.IsLocallyOwned already prevents selecting
+        // a non-owned producer; this is the second line of defense.
+        if (NetworkManagerRTS.IsMultiplayerEnabled)
+        {
+            int local = NetworkManagerRTS.LocalPlayerId;
+            if (producerOwner != local)
+            {
+                Debug.LogWarning($"[RTSHUD] Produce {productionType} blocked — " +
+                                 $"producer '{ge.name}' owned by player {producerOwner}, " +
+                                 $"local player is {local}.");
+                return;
+            }
+        }
+
+        Debug.Log($"[RTSHUD] Produce {productionType} from {expectedBuilding} owner=" +
+                  $"{producerOwner} localPlayer={NetworkManagerRTS.LocalPlayerId}");
+
         // Pre-allocate the id the spawned unit will adopt so the produce
         // command can carry it to remote clients.
         string spawnId = NetworkEntityIdAllocator.Allocate();
         CommandDispatcher.Issue(
-            PlayerCommand.Produce(GameEntity.LocalCommandPlayerId, ge.EntityId, productionType, spawnId));
+            PlayerCommand.Produce(producerOwner, ge.EntityId, productionType, spawnId));
     }
 
     // ================================================================== //
@@ -671,6 +701,7 @@ public class RTSHUD : MonoBehaviour
             if (dozerBuildVehicleFactoryLabel     != null) dozerBuildVehicleFactoryLabel.text     = $"Vehicle Factory - {placementManager.vehicleFactoryCost}";
             if (dozerBuildAirfieldLabel           != null) dozerBuildAirfieldLabel.text           = $"Airfield - {placementManager.airfieldCost}";
             if (dozerBuildMachineGunDefenseLabel  != null) dozerBuildMachineGunDefenseLabel.text  = $"MG Defense - {placementManager.machineGunDefenseCost}";
+            if (dozerBuildCommandCenterLabel      != null) dozerBuildCommandCenterLabel.text      = $"Command Center - {placementManager.commandCenterCost}";
         }
     }
 
@@ -721,6 +752,13 @@ public class RTSHUD : MonoBehaviour
         placementManager.StartDozerBuildMachineGunDefense(currentDozer);
     }
 
+    /// <summary>Called by the Dozer-build Command Center button (Phase 10).</summary>
+    public void OnClickDozerBuildCommandCenter()
+    {
+        if (!ValidateDozerBuildClick("Command Center")) return;
+        placementManager.StartDozerBuildCommandCenter(currentDozer);
+    }
+
     private bool ValidateDozerBuildClick(string label)
     {
         if (currentDozer == null)
@@ -733,6 +771,26 @@ public class RTSHUD : MonoBehaviour
         {
             Debug.LogWarning($"[RTSHUD] {label} build clicked but no BuildingPlacementManager is in the scene.");
             return false;
+        }
+
+        // Phase 10.1 — defense-in-depth. UnitSelector already only adds
+        // locally-owned dozers to the selection, so currentDozer is
+        // normally already local-owned by the time we get here. But a stale
+        // reference (dozer destroyed mid-frame, scene reload, etc.) could
+        // sneak through; double-check the GameEntity in MP and reject if
+        // the dozer's owner isn't this client's LocalPlayerId.
+        if (NetworkManagerRTS.IsMultiplayerEnabled)
+        {
+            GameEntity ge = currentDozer.GetComponent<GameEntity>();
+            int local = NetworkManagerRTS.LocalPlayerId;
+            int dozerOwner = ge != null ? ge.ownerPlayerId : GameEntity.NeutralOwnerId;
+            if (ge == null || dozerOwner != local)
+            {
+                Debug.LogWarning($"[RTSHUD] {label} build click rejected — selected dozer " +
+                                 $"owner={dozerOwner} but LocalPlayerId={local}. " +
+                                 "Only the dozer's owner can issue build commands.");
+                return false;
+            }
         }
         return true;
     }

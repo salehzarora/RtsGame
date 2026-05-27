@@ -50,6 +50,12 @@ public class Health : MonoBehaviour
     /// <summary>Fired once, just before the GameObject is destroyed.</summary>
     public event System.Action OnDeath;
 
+    // Phase 10.3 — once death has fired (or been applied from the network)
+    // we ignore further damage / death events. Prevents double-Destroy and
+    // double-OnDeath when a local hit and a network EntityDestroyed event
+    // race.
+    private bool dying;
+
     // ------------------------------------------------------------------ //
 
     private void Awake()
@@ -62,10 +68,20 @@ public class Health : MonoBehaviour
     /// <summary>Apply <paramref name="amount"/> damage. Triggers death at 0.</summary>
     public void TakeDamage(float amount)
     {
+        if (dying) return;
         if (CurrentHealth <= 0f) return;            // already dead
 
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         OnHealthChanged?.Invoke(CurrentHealth, maxHealth);
+
+        // Phase 10.3 — master-authoritative damage sync. Every client runs
+        // local damage independently (no latency added); the master also
+        // broadcasts the resulting newHealth so any divergence (timing,
+        // projectile miss, etc.) gets snapped on receive. Non-master
+        // broadcasts are gated inside NetworkMatchEvents.ShouldBroadcast.
+        // Also gated when this method is reached via an inbound network
+        // event (IsApplyingNetworkEvent=true) so we don't echo.
+        BroadcastDamageIfMaster(amount);
 
         if (CurrentHealth <= 0f)
             Die();
@@ -79,9 +95,63 @@ public class Health : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
+    // Phase 10.3 — network-driven apply paths
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Snap <see cref="CurrentHealth"/> to <paramref name="newHealth"/> from
+    /// a master-broadcast ApplyDamage event. We don't subtract relative
+    /// amounts here — master is authoritative for the resulting value, so
+    /// we trust it absolutely. If the snap brings us to zero, run the local
+    /// death path (which will NOT re-broadcast because
+    /// <see cref="NetworkMatchEvents.IsApplyingNetworkEvent"/> is on).
+    /// </summary>
+    public void ApplyDamageFromNetwork(float amountForLog, float newHealth)
+    {
+        ApplyDamageFromNetwork(amountForLog, newHealth, null);
+    }
+
+    /// <summary>
+    /// Overload that also logs the attacker entity id for diagnostics.
+    /// </summary>
+    public void ApplyDamageFromNetwork(float amountForLog, float newHealth, string attackerId)
+    {
+        if (dying) return;
+
+        float clamped = Mathf.Clamp(newHealth, 0f, maxHealth);
+        Debug.Log($"[NetDamage] Apply target health {CurrentHealth} -> {clamped}" +
+                  (string.IsNullOrEmpty(attackerId) ? "" : $" (attacker {attackerId})"));
+        CurrentHealth = clamped;
+        OnHealthChanged?.Invoke(CurrentHealth, maxHealth);
+
+        if (CurrentHealth <= 0f)
+            Die();
+    }
+
+    /// <summary>
+    /// Destroy this entity in response to a network EntityDestroyed event.
+    /// Idempotent — calling twice (because a local Die already ran and the
+    /// broadcast then arrived, or vice versa) is safe.
+    /// </summary>
+    public void DestroyFromNetwork()
+    {
+        if (dying) return;
+        Die();
+    }
+
+    // ------------------------------------------------------------------ //
 
     private void Die()
     {
+        if (dying) return;
+        dying = true;
+
+        // Broadcast destruction BEFORE the OnDeath chain — listeners may
+        // unregister entity ids that the broadcast helper would otherwise
+        // need to look up. NetworkMatchEvents itself gates non-master and
+        // suppress-flag broadcasts internally.
+        BroadcastDestroyIfMaster();
+
         OnDeath?.Invoke();
 
         if (destroyDelay > 0f)
@@ -94,5 +164,25 @@ public class Health : MonoBehaviour
     {
         yield return new WaitForSeconds(seconds);
         Destroy(gameObject);
+    }
+
+    // ------------------------------------------------------------------ //
+    // Broadcast helpers — small wrappers so the call sites above stay
+    // readable. All MP gating lives inside NetworkMatchEvents.
+    // ------------------------------------------------------------------ //
+
+    private void BroadcastDamageIfMaster(float amount)
+    {
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge == null) return;     // no id → can't address on the wire
+        NetworkMatchEvents.BroadcastApplyDamage(
+            ge.EntityId, attackerEntityId: string.Empty, amount, CurrentHealth);
+    }
+
+    private void BroadcastDestroyIfMaster()
+    {
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge == null) return;
+        NetworkMatchEvents.BroadcastEntityDestroyed(ge.EntityId, killerEntityId: string.Empty);
     }
 }

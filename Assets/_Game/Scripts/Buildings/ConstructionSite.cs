@@ -88,6 +88,20 @@ public class ConstructionSite : MonoBehaviour
     public DozerBuilder AssignedDozer { get; private set; }
 
     /// <summary>
+    /// Canonical owner that commissioned the site (= the Dozer's owner at
+    /// build-command time). Stamped by <see cref="BuildingPlacementManager.SpawnConstructionSite"/>
+    /// via <see cref="SetOwner"/> immediately after spawn so the final
+    /// building inherits the correct owner in <see cref="Complete"/> even if
+    /// no <see cref="GameEntity"/> is present on the site (legacy prefab) or
+    /// the dispatcher's post-spawn <c>EntityRegistry.Find</c> misses.
+    ///
+    /// Defaults to <see cref="GameEntity.NeutralOwnerId"/> (-1). Any value
+    /// other than that is treated as authoritative by <see cref="Complete"/>;
+    /// only when it stays neutral do we fall back to the site's GameEntity.
+    /// </summary>
+    public int OwnerPlayerId { get; private set; } = GameEntity.NeutralOwnerId;
+
+    /// <summary>
     /// Fires once when construction completes, immediately before this site
     /// destroys itself. The argument is the freshly spawned final building
     /// instance. Used by enemy AI (and any future code) to parent / decorate
@@ -152,6 +166,19 @@ public class ConstructionSite : MonoBehaviour
         networkFinalBuildingEntityId = entityId ?? "";
     }
 
+    /// <summary>
+    /// Stamps the canonical owner onto the site. Called once by
+    /// <see cref="BuildingPlacementManager.SpawnConstructionSite"/> (and by
+    /// <see cref="AI.EnemyBuildAI"/>) immediately after spawn. The value is
+    /// read in <see cref="Complete"/> when the final building inherits
+    /// ownership — so even if no GameEntity exists on this site, the final
+    /// building still lands with the right owner.
+    /// </summary>
+    public void SetOwner(int ownerPlayerId)
+    {
+        OwnerPlayerId = ownerPlayerId;
+    }
+
     // ------------------------------------------------------------------ //
     // Dozer ↔ Site
     // ------------------------------------------------------------------ //
@@ -196,6 +223,17 @@ public class ConstructionSite : MonoBehaviour
     // Completion — swap the placeholder for the final building
     // ------------------------------------------------------------------ //
 
+    /// <summary>
+    /// Network-driven completion. Called by <see cref="NetworkMatchEvents"/>
+    /// when a ConstructionComplete event arrives. Runs the normal Complete
+    /// pipeline; the IsComplete guard makes a re-entry from the broadcast
+    /// loop a no-op. Idempotent.
+    /// </summary>
+    public void ForceCompleteFromNetwork()
+    {
+        Complete();
+    }
+
     private void Complete()
     {
         if (IsComplete) return;
@@ -230,13 +268,43 @@ public class ConstructionSite : MonoBehaviour
             Debug.Log($"[NetworkSpawn] Final building '{BuildingLabel}' adopted " +
                       $"entityId={networkFinalBuildingEntityId}.");
 
-        // Phase 3: inherit ownership from this site so the final building
-        // ends up on the same team / owner on every client. The site got its
-        // ownership stamped by CommandDispatcher.ExecuteBuild after spawn.
-        GameEntity selfEntity = GetComponent<GameEntity>();
+        // Inherit ownership from this site so the final building ends up on
+        // the same team / owner on every client.
+        //
+        // Owner resolution priority (Phase 10.1 fix):
+        //   1. OwnerPlayerId — stamped at spawn time by BPM /
+        //      EnemyBuildAI. This is the canonical source and avoids
+        //      depending on a sibling GameEntity (the construction site
+        //      prefab historically had none, which silently dropped
+        //      ownership on every Dozer-built building).
+        //   2. Sibling GameEntity.ownerPlayerId — legacy fallback for any
+        //      caller that stamped only the GameEntity without calling
+        //      SetOwner.
+        //   3. Skip (warn) — would leave the final building with owner 0
+        //      from the prefab default, which is the bug we're fixing.
+        // ApplyOwnership force-repaints the final building's TeamColorMarker
+        // so the colour matches the owner immediately.
+        GameEntity selfEntity   = GetComponent<GameEntity>();
         GameEntity placedEntity = placed.GetComponent<GameEntity>();
-        if (selfEntity != null && placedEntity != null)
-            placedEntity.ApplyOwnership(selfEntity.ownerPlayerId);
+
+        int ownerForFinal = OwnerPlayerId;
+        if (ownerForFinal == GameEntity.NeutralOwnerId && selfEntity != null)
+            ownerForFinal = selfEntity.ownerPlayerId;
+
+        if (placedEntity != null && ownerForFinal != GameEntity.NeutralOwnerId)
+        {
+            placedEntity.ApplyOwnership(ownerForFinal);
+            Debug.Log($"[Construction] Final {BuildingLabel} owner={ownerForFinal} " +
+                      $"(site OwnerPlayerId={OwnerPlayerId}, " +
+                      $"selfEntity.owner={(selfEntity != null ? selfEntity.ownerPlayerId.ToString() : "none")}).");
+        }
+        else if (placedEntity != null)
+        {
+            Debug.LogWarning($"[Construction] {BuildingLabel} completed with NO " +
+                             "canonical owner — final building keeps prefab default " +
+                             "ownership. This indicates the spawn path failed to call " +
+                             "ConstructionSite.SetOwner. Check BPM / EnemyBuildAI.");
+        }
 
         // Ensure placed building is on the Building layer (mirrors BPM behaviour).
         int buildingLayer = LayerMask.NameToLayer("Building");
@@ -259,6 +327,18 @@ public class ConstructionSite : MonoBehaviour
         // Notify subscribers (e.g. EnemyBuildAI) before we destroy ourselves —
         // they may want to parent / decorate the placed building.
         OnComplete?.Invoke(placed);
+
+        // Phase 10.6 — mirror completion to the other clients. The broadcast
+        // gate inside NetworkMatchEvents skips when we're already applying a
+        // received event, so the receiver's call back into Complete via
+        // ForceCompleteFromNetwork doesn't echo. Any-client gate so whichever
+        // side finishes first wins; the receive side's "site already gone /
+        // final building exists" check makes a stale broadcast harmless.
+        string finalIdForBroadcast = placedEntity != null ? placedEntity.EntityId : networkFinalBuildingEntityId;
+        string siteIdForBroadcast  = selfEntity   != null ? selfEntity.EntityId   : string.Empty;
+        if (!string.IsNullOrEmpty(siteIdForBroadcast))
+            NetworkMatchEvents.BroadcastConstructionComplete(
+                siteIdForBroadcast, ownerForFinal, finalIdForBroadcast, BuildingLabel);
 
         Destroy(gameObject);
     }

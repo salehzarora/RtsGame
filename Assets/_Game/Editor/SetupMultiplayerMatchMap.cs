@@ -5,9 +5,13 @@ using UnityEngine;
 /// <summary>
 /// One-click editor tool that prepares the active scene for a 1-vs-1 Photon
 /// match. Creates two player bases on opposite corners of the map, each with
-/// its own CommandCenter + Worker + nearby ResourceNodes + per-owner
-/// <see cref="PlayerResourceManager"/>. Also disables enemy AI roots so the
-/// AI bot doesn't run in multiplayer.
+/// a single Dozer + nearby ResourceNodes + per-owner
+/// <see cref="PlayerResourceManager"/>. The CommandCenter is no longer
+/// spawned at match start — players must build their own CC via the Dozer
+/// build menu (Phase 10). Also disables enemy AI roots so the AI bot doesn't
+/// run in multiplayer, and auto-binds the freshly-built CommandCenterPrefab
+/// onto the scene's <see cref="BuildingPlacementManager"/> so the Dozer's
+/// "Command Center" button works at runtime.
 ///
 /// Menu: Tools → RTS → Match → Setup Multiplayer Match Map
 ///
@@ -21,7 +25,7 @@ using UnityEngine;
 ///   • Photon connection — that's the runtime/UI flow.
 ///
 /// After running, re-run <c>Add GameEntity To Scene Objects</c> so the new
-/// CommandCenters, Workers, and ResourceNodes get deterministic ids.
+/// Dozers and ResourceNodes get deterministic ids.
 /// </summary>
 public static class SetupMultiplayerMatchMap
 {
@@ -64,6 +68,10 @@ public static class SetupMultiplayerMatchMap
         //    + team perspective remap on match start).
         EnsureMatchStarter();
 
+        // 4. Auto-bind the CommandCenterPrefab onto the scene's BPM so the
+        //    Dozer "Command Center" build button has a prefab to spawn.
+        BindCommandCenterPrefabOntoBPM();
+
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 
         // Post-run verification — surface any silent failures (missing prefabs,
@@ -87,21 +95,53 @@ public static class SetupMultiplayerMatchMap
             return;
         }
 
-        bool hasCC     = root.GetComponentInChildren<CommandCenter>(true)         != null;
-        bool hasWorker = root.GetComponentInChildren<WorkerGatherer>(true)        != null;
-        bool hasBank   = root.GetComponentInChildren<PlayerResourceManager>(true) != null;
+        bool hasDozer = root.GetComponentInChildren<DozerBuilder>(true)         != null;
+        bool hasBank  = root.GetComponentInChildren<PlayerResourceManager>(true) != null;
 
-        if (!hasCC)
-            Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' missing a CommandCenter child.");
-        if (!hasWorker)
-            Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' missing a Worker child — Player " +
-                           $"{playerId} will start without a Worker on every client.");
+        if (!hasDozer)
+            Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' missing a Dozer child — Player " +
+                           $"{playerId} will start without any unit. Check that " +
+                           "Assets/_Game/Prefabs/DozerPrefab.prefab exists.");
         if (!hasBank)
             Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' missing a PlayerResourceManager " +
                            $"with ownerPlayerId={playerId}.");
 
-        if (hasCC && hasWorker && hasBank)
-            Debug.Log($"[MultiplayerMatch] ✓ '{baseName}' verified: CC + Worker + bank present.");
+        if (hasDozer && hasBank)
+            Debug.Log($"[MultiplayerMatch] ✓ '{baseName}' verified: Dozer + bank present " +
+                      "(CC is now buildable via the Dozer's build menu).");
+    }
+
+    // ================================================================== //
+    // BPM auto-binding (Dozer needs a CommandCenterPrefab to spawn)
+    // ================================================================== //
+
+    private static void BindCommandCenterPrefabOntoBPM()
+    {
+        BuildingPlacementManager bpm = Object.FindFirstObjectByType<BuildingPlacementManager>(
+            FindObjectsInactive.Include);
+        if (bpm == null)
+        {
+            Debug.LogWarning("[MultiplayerMatch] No BuildingPlacementManager found in the " +
+                             "scene — Dozer 'Command Center' button will not work at runtime. " +
+                             "Run the single-player Setup Clean Match Map first to create " +
+                             "GameManager+BPM, then re-run this tool.");
+            return;
+        }
+
+        GameObject ccPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+            CreateCommandCenterPrefab.PrefabPath);
+        if (ccPrefab == null)
+        {
+            Debug.LogError($"[MultiplayerMatch] ✗ {CreateCommandCenterPrefab.PrefabPath} not found. " +
+                           "Run Tools → RTS → Construction → Create CommandCenter Prefab first, " +
+                           "or use the All-In-One tool which chains both steps.");
+            return;
+        }
+
+        bpm.commandCenterPrefab = ccPrefab;
+        EditorUtility.SetDirty(bpm);
+        Debug.Log($"[MultiplayerMatch]   BuildingPlacementManager.commandCenterPrefab = " +
+                  $"'{ccPrefab.name}' (cost={bpm.commandCenterCost}).");
     }
 
     // ================================================================== //
@@ -130,110 +170,72 @@ public static class SetupMultiplayerMatchMap
         bank.startingResources = StartingResources;
         EditorUtility.SetDirty(bank);
 
-        // --- CommandCenter -------------------------------------------------
-        CommandCenter cc = BuildCommandCenter(root.transform, color, playerId, buildingLayer);
-        Debug.Log($"[MultiplayerMatch] Player {playerId} base created at {basePos:F1} " +
-                  $"with CommandCenter '{cc.name}'.");
+        // --- Starting Dozer (Phase 10) ------------------------------------
+        // No CC, no Worker — each player starts with a single Dozer and has
+        // to build the CC from there. This shortens the lobby-to-action loop
+        // and proves out the construction-ownership flow.
+        BuildStartingDozer(root.transform, basePos, playerId, unitLayer);
 
-        // --- Worker --------------------------------------------------------
-        BuildWorker(root.transform, basePos, playerId, unitLayer);
+        Debug.Log($"[MultiplayerMatch] Player {playerId} base created at {basePos:F1} " +
+                  "with Dozer-only start (Phase 10).");
 
         // --- Resource nodes ringed around the base -------------------------
         BuildResourceRing(root.transform, basePos, resourceLayer);
 
         EditorUtility.SetDirty(root);
+
+        // Suppress unused-parameter warnings — Phase 10 no longer needs the
+        // buildingLayer here (the CC is built at runtime via BPM) and the
+        // color was only used to tint the scene-baked CC.
+        _ = buildingLayer;
+        _ = color;
     }
 
-    private static CommandCenter BuildCommandCenter(Transform parent, Color color, int playerId, int buildingLayer)
+    private static void BuildStartingDozer(Transform parent, Vector3 basePos, int playerId, int unitLayer)
     {
-        GameObject ccGO = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        ccGO.name = $"CommandCenter_P{playerId}";
-        ccGO.transform.SetParent(parent, false);
-        ccGO.transform.localPosition = Vector3.zero;
-        ccGO.transform.localScale = new Vector3(6f, 4f, 6f);
-
-        if (buildingLayer >= 0) ccGO.layer = buildingLayer;
-
-        // Visual — set a unique material instance so we don't tint the shared one.
-        Renderer rend = ccGO.GetComponent<Renderer>();
-        if (rend != null)
+        GameObject dozerPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+            "Assets/_Game/Prefabs/DozerPrefab.prefab");
+        if (dozerPrefab == null)
         {
-            Material instance = new Material(rend.sharedMaterial != null ? rend.sharedMaterial : new Material(Shader.Find("Universal Render Pipeline/Lit")));
-            instance.color = color;
-            rend.sharedMaterial = instance;
-        }
-
-        // Components (mirroring SetupCleanMatchMap's player CC pattern).
-        ccGO.AddComponent<CommandCenter>();
-        ccGO.AddComponent<SelectableBuilding>();
-        ccGO.AddComponent<CommandCenterProducer>();
-
-        Health hp = ccGO.AddComponent<Health>();
-        // Phase 3 perspective: scene-baked team is just an initial value; the
-        // MultiplayerMatchStarter will re-key it at runtime based on the local
-        // player's perspective. We bake Player team for ALL CCs so single-
-        // player playtest of this scene still works.
-        hp.team = Health.Team.Player;
-        hp.maxHealth = 500f;
-
-        UnitCategory cat = ccGO.AddComponent<UnitCategory>();
-        cat.category = UnitCategory.Category.Building;
-
-        GameEntity ge = ccGO.AddComponent<GameEntity>();
-        ge.ownerPlayerId          = playerId;
-        ge.teamId                 = playerId;
-        ge.entityType             = EntityType.Building;
-        ge.prefabTypeId           = "CommandCenter";
-        ge.overrideTeamFromHealth = false;     // owner is authoritative here
-        EditorUtility.SetDirty(ge);
-
-        Debug.Log($"[MultiplayerMatch] Player{playerId} CommandCenter stamped " +
-                  $"with ownerPlayerId={playerId}.");
-
-        return ccGO.GetComponent<CommandCenter>();
-    }
-
-    private static void BuildWorker(Transform parent, Vector3 basePos, int playerId, int unitLayer)
-    {
-        GameObject workerPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-            "Assets/_Game/Prefabs/WorkerPrefab.prefab");
-        if (workerPrefab == null)
-        {
-            Debug.LogError("[MultiplayerMatch] WorkerPrefab.prefab NOT FOUND at " +
-                           "Assets/_Game/Prefabs/WorkerPrefab.prefab — Player " +
-                           $"{playerId} starts WITHOUT a Worker. Run Tools → RTS → Units → " +
-                           "Repair Worker Prefab and re-run Setup Multiplayer Match Map.");
+            Debug.LogError("[MultiplayerMatch] DozerPrefab.prefab NOT FOUND at " +
+                           "Assets/_Game/Prefabs/DozerPrefab.prefab — Player " +
+                           $"{playerId} starts WITHOUT a Dozer. Run Tools → RTS → " +
+                           "Construction → Repair Construction System and re-run " +
+                           "Setup Multiplayer Match Map.");
             return;
         }
 
-        Vector3 workerWorld = basePos + new Vector3(4f, 0f, 0f);
-        GameObject w = (GameObject)PrefabUtility.InstantiatePrefab(workerPrefab);
-        w.name = $"Worker_P{playerId}";
-        w.transform.SetParent(parent, true);
-        w.transform.position = workerWorld;
+        // Drop the dozer slightly offset from the base centre so its
+        // NavMeshAgent has room to rotate without overlapping the resource
+        // ring.
+        Vector3 dozerWorld = basePos + new Vector3(0f, 0f, 4f);
+        GameObject d = (GameObject)PrefabUtility.InstantiatePrefab(dozerPrefab);
+        d.name = $"Dozer_P{playerId}";
+        d.transform.SetParent(parent, true);
+        d.transform.position = dozerWorld;
 
         if (unitLayer >= 0)
         {
-            w.layer = unitLayer;
-            foreach (Transform t in w.GetComponentsInChildren<Transform>(true))
+            d.layer = unitLayer;
+            foreach (Transform t in d.GetComponentsInChildren<Transform>(true))
                 t.gameObject.layer = unitLayer;
         }
 
-        // Tag ownership. The scene-stamper now respects overrideTeamFromHealth=false
-        // and preserves these values, so Player 1's Worker keeps owner=1 even
-        // though its prefab clone has Health.team=Player.
-        GameEntity ge = w.GetComponent<GameEntity>();
-        if (ge == null) ge = w.AddComponent<GameEntity>();
+        // Tag ownership — owner authoritative. Scene stamper now respects
+        // overrideTeamFromHealth=false so the explicit ownerPlayerId survives
+        // across re-stamps.
+        GameEntity ge = d.GetComponent<GameEntity>();
+        if (ge == null) ge = d.AddComponent<GameEntity>();
         ge.ownerPlayerId          = playerId;
         ge.teamId                 = playerId;
         ge.entityType             = EntityType.Unit;
-        ge.prefabTypeId           = "Worker";
+        ge.prefabTypeId           = "Dozer";
         ge.overrideTeamFromHealth = false;
         EditorUtility.SetDirty(ge);
-        EditorUtility.SetDirty(w);
+        EditorUtility.SetDirty(d);
 
-        Debug.Log($"[MultiplayerMatch] Player{playerId} Worker stamped " +
-                  $"with ownerPlayerId={playerId}, name='{w.name}'.");
+        Debug.Log($"[MultiplayerMatch] Player{playerId} Dozer stamped " +
+                  $"with ownerPlayerId={playerId}, name='{d.name}'.");
     }
 
     private static void BuildResourceRing(Transform parent, Vector3 basePos, int resourceLayer)

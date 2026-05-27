@@ -62,4 +62,25 @@ public class GameStateManager : MonoBehaviour
         Debug.Log("[GameState] Game started.");
         OnGameStarted?.Invoke();
     }
+
+    /// <summary>
+    /// Fired when <see cref="ResetToMenu"/> brings gameplay back to the
+    /// pre-match state. Subscribers (UnitSelector, building placement,
+    /// HUD) clear their per-match local state in response.
+    /// </summary>
+    public event System.Action OnGameReset;
+
+    /// <summary>
+    /// Brings the game state back to its pre-match condition so that the
+    /// main menu can be shown again and a new match can be started later.
+    /// Triggered by the ESC pause menu's Return-to-Main-Menu button.
+    /// Idempotent — calling twice is safe.
+    /// </summary>
+    public void ResetToMenu()
+    {
+        if (!IsGameStarted) return;
+        IsGameStarted = false;
+        Debug.Log("[GameState] Reset to menu.");
+        OnGameReset?.Invoke();
+    }
 }

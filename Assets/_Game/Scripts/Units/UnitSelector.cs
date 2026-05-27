@@ -185,68 +185,93 @@ public class UnitSelector : MonoBehaviour
             return;
         }
 
-        // S → Soldier (Barracks only). Silent no-op otherwise.
+        // Phase 10.4 — every hotkey routes through CommandDispatcher.Issue
+        // via DispatchProduce. Calling vp.ProduceArtilleryTank() etc.
+        // DIRECTLY would skip the command broadcast, the deterministic
+        // spawn-id slot, and the ApplyOwnership stamp — which is exactly
+        // what caused spam-produced units to come out unowned and invisible
+        // to the remote client.
         if (sPressed)
         {
             UnitProducer up = selectedBuilding.GetComponent<UnitProducer>();
-            if (up != null && up.CanProduceSoldier) up.ProduceSoldier();
+            if (up != null && up.CanProduceSoldier) DispatchProduce(up, "Soldier");
         }
-
-        // R → RPG Soldier (Barracks only). Silent no-op otherwise.
         if (rPressed)
         {
             UnitProducer up = selectedBuilding.GetComponent<UnitProducer>();
-            if (up != null && up.CanProduceRPGSoldier) up.ProduceRPGSoldier();
+            if (up != null && up.CanProduceRPGSoldier) DispatchProduce(up, "RPGSoldier");
         }
-
-        // W → Worker (CommandCenter only). Silent no-op otherwise.
         if (wPressed)
         {
             CommandCenterProducer wp = selectedBuilding.GetComponent<CommandCenterProducer>();
-            if (wp != null && wp.CanProduceWorker) wp.ProduceWorker();
+            if (wp != null && wp.CanProduceWorker) DispatchProduce(wp, "Worker");
         }
-
-        // D → Dozer (CommandCenter only). Silent no-op otherwise.
         if (dPressed)
         {
             CommandCenterProducer wp = selectedBuilding.GetComponent<CommandCenterProducer>();
-            if (wp != null && wp.CanProduceDozer) wp.ProduceDozer();
+            if (wp != null && wp.CanProduceDozer) DispatchProduce(wp, "Dozer");
         }
-
-        // H → Humvee (VehicleFactory only). Silent no-op otherwise.
         if (hPressed)
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
-            if (vp != null && vp.CanProduceHumvee) vp.ProduceHumvee();
+            if (vp != null && vp.CanProduceHumvee) DispatchProduce(vp, "Humvee");
         }
-
-        // T → Artillery Tank (VehicleFactory only). Silent no-op otherwise.
         if (tPressed)
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
-            if (vp != null && vp.CanProduceArtilleryTank) vp.ProduceArtilleryTank();
+            if (vp != null && vp.CanProduceArtilleryTank) DispatchProduce(vp, "ArtilleryTank");
         }
-
-        // M → Missile Launcher (VehicleFactory only). Silent no-op otherwise.
         if (mPressed)
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
-            if (vp != null && vp.CanProduceMissileLauncher) vp.ProduceMissileLauncher();
+            if (vp != null && vp.CanProduceMissileLauncher) DispatchProduce(vp, "MissileLauncher");
         }
-
-        // A → APC (VehicleFactory only). Silent no-op otherwise.
         if (aPressed)
         {
             VehicleFactoryProducer vp = selectedBuilding.GetComponent<VehicleFactoryProducer>();
-            if (vp != null && vp.CanProduceAPC) vp.ProduceAPC();
+            if (vp != null && vp.CanProduceAPC) DispatchProduce(vp, "APC");
         }
-
-        // J → Strike Jet (Airfield only). Silent no-op otherwise.
         if (jPressed)
         {
             Airfield af = selectedBuilding.GetComponent<Airfield>();
-            if (af != null && af.CanProduceStrikeJet) af.ProduceStrikeJet();
+            if (af != null && af.CanProduceStrikeJet) DispatchProduce(af, "StrikeJet");
         }
+    }
+
+    /// <summary>
+    /// Routes a hotkey production through the same path the HUD buttons
+    /// use: allocate a deterministic spawn id, build a
+    /// <see cref="PlayerCommand.Produce"/>, hand it to
+    /// <see cref="CommandDispatcher.Issue"/>. In multiplayer this fans the
+    /// command out to the remote client so the unit spawns on both sides,
+    /// and the dispatcher's <c>ApplyOwnership</c> step stamps the canonical
+    /// owner. In single-player the path collapses to the same local
+    /// instantiate the legacy hotkey did.
+    /// </summary>
+    private static void DispatchProduce(Component producer, string productionType)
+    {
+        if (producer == null) return;
+
+        GameEntity ge = GameEntity.EnsureOn(producer.gameObject);
+        int producerOwner = ge.ownerPlayerId;
+
+        if (NetworkManagerRTS.IsMultiplayerEnabled)
+        {
+            int local = NetworkManagerRTS.LocalPlayerId;
+            if (producerOwner != local)
+            {
+                Debug.LogWarning($"[UnitSelector] Produce {productionType} blocked — " +
+                                 $"producer '{ge.name}' owned by player {producerOwner}, " +
+                                 $"local player is {local}.");
+                return;
+            }
+        }
+
+        string spawnId = NetworkEntityIdAllocator.Allocate();
+        Debug.Log($"[Produce] Source {producer.GetType().Name} owner={producerOwner}");
+        Debug.Log($"[Produce] Command playerId={producerOwner} spawnId={spawnId} type={productionType}");
+        CommandDispatcher.Issue(
+            PlayerCommand.Produce(producerOwner, ge.EntityId, productionType, spawnId));
     }
 
     // ------------------------------------------------------------------ //
@@ -490,8 +515,27 @@ public class UnitSelector : MonoBehaviour
 
             if (node != null && !node.IsDepleted)
             {
+                GameEntity nodeGe = node.GetComponent<GameEntity>();
+                string nodeId    = nodeGe != null ? nodeGe.EntityId : string.Empty;
+
                 foreach (SelectableUnit unit in selectedUnits)
-                    unit.GetComponent<WorkerGatherer>()?.SetGatherTarget(node);
+                {
+                    WorkerGatherer w = unit.GetComponent<WorkerGatherer>();
+                    if (w == null) continue;
+
+                    // Local apply runs first so the issuing client sees the
+                    // worker react instantly.
+                    w.SetGatherTarget(node);
+
+                    // Mirror the gather order onto every other client so its
+                    // local copy of this worker enters the same state machine
+                    // (move → gather → return → deposit). Without the
+                    // broadcast the remote client's worker idles while the
+                    // issuing client's worker animates — that was Bug 1.
+                    GameEntity wGe = w.GetComponent<GameEntity>();
+                    if (wGe != null && !string.IsNullOrEmpty(nodeId))
+                        NetworkMatchEvents.BroadcastWorkerGather(wGe.EntityId, nodeId);
+                }
 
                 attackMarker?.Hide();
                 return;
@@ -700,8 +744,8 @@ public class UnitSelector : MonoBehaviour
         int local = NetworkManagerRTS.LocalPlayerId;
         if (e.ownerPlayerId == local) return true;
 
-        Debug.Log("[UnitSelector] Cannot select non-owned unit in multiplayer " +
-                  $"('{go.name}', owner {e.ownerPlayerId}, local {local}).");
+        Debug.Log($"[UnitSelector] Cannot select entity {e.EntityId} owner={e.ownerPlayerId} " +
+                  $"local={local} ('{go.name}').");
         return false;
     }
 
@@ -727,6 +771,13 @@ public class UnitSelector : MonoBehaviour
         selectedAircraft.Add(aircraft);
         aircraft.Select();
     }
+
+    /// <summary>
+    /// Public façade for <see cref="DeselectAll"/>. Used by the ESC pause
+    /// menu when returning to the main menu — drops every unit/aircraft
+    /// from the current selection and collapses the dependent HUD panels.
+    /// </summary>
+    public void ClearSelection() => DeselectAll();
 
     private void DeselectAll()
     {
@@ -873,6 +924,16 @@ public class UnitSelector : MonoBehaviour
             InfantryBoardingAgent ba = unit.GetComponent<InfantryBoardingAgent>();
             if (ba == null) ba = unit.gameObject.AddComponent<InfantryBoardingAgent>();
             ba.StartBoarding(apc);
+
+            // Phase 10.7 — mirror the boarding intent onto the other client
+            // so its local copy of the passenger gets the same
+            // InfantryBoardingAgent and visibly walks to the APC. Without
+            // this the remote sees the passenger stand still until the
+            // PassengerLoaded broadcast hides it abruptly.
+            GameEntity paxGe = unit.GetComponent<GameEntity>();
+            GameEntity apcGe = apc.GetComponent<GameEntity>();
+            if (paxGe != null && apcGe != null)
+                NetworkMatchEvents.BroadcastBoardingStarted(paxGe.EntityId, apcGe.EntityId);
         }
 
         return anyInfantry;

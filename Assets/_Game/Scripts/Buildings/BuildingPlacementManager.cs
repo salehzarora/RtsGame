@@ -59,6 +59,15 @@ public class BuildingPlacementManager : MonoBehaviour
     [Tooltip("Resource cost for placing a Machine Gun Defense")]
     public int machineGunDefenseCost = 250;
 
+    // Phase 10 — CommandCenter buildable via the Dozer build menu. In MP
+    // each player now starts with just a Dozer and constructs their own CC
+    // before producing Worker / Dozer.
+    [Tooltip("CommandCenter prefab — built by a Dozer in the new MP flow. " +
+             "Create via Tools → RTS → Construction → Create CommandCenter Prefab.")]
+    public GameObject commandCenterPrefab;
+    [Tooltip("Resource cost for placing a CommandCenter")]
+    public int commandCenterCost = 1000;
+
     [Tooltip("Y offset so the building sits on the ground surface (half the building's world height)")]
     public float placementHeightOffset = 0.75f;
 
@@ -303,6 +312,26 @@ public class BuildingPlacementManager : MonoBehaviour
             return;
         }
 
+        // Phase 10.1 — strict local-owner gate. The dozer MUST belong to this
+        // client's LocalPlayerId in multiplayer; the HUD already only shows
+        // the build panel for locally-owned dozers (UnitSelector filter), but
+        // this is the defense-in-depth check that prevents a stale reference
+        // or a fabricated UI event from starting a build with someone else's
+        // dozer.
+        GameEntity dozerEntity = dozer.GetComponent<GameEntity>();
+        if (NetworkManagerRTS.IsMultiplayerEnabled)
+        {
+            int localId = NetworkManagerRTS.LocalPlayerId;
+            int dozerOwner = dozerEntity != null ? dozerEntity.ownerPlayerId : GameEntity.NeutralOwnerId;
+            if (dozerEntity == null || dozerOwner != localId)
+            {
+                Debug.LogWarning($"[Placement] Rejected {label} build — dozer '{dozer.name}' " +
+                                 $"owner={dozerOwner} but LocalPlayerId={localId}. " +
+                                 "A client may only build with its own Dozer.");
+                return;
+            }
+        }
+
         activeMode  = PlacementMode.DozerSite;
         activeDozer = dozer;
         TryEnterPlacementMode(buildingPrefab, cost, label);
@@ -327,6 +356,10 @@ public class BuildingPlacementManager : MonoBehaviour
     /// <summary>Convenience wrapper — Machine Gun Defense build by Dozer.</summary>
     public void StartDozerBuildMachineGunDefense(DozerBuilder dozer) =>
         StartDozerBuildingPlacement(dozer, machineGunDefensePrefab, machineGunDefenseCost, "Machine Gun Defense");
+
+    /// <summary>Convenience wrapper — CommandCenter build by Dozer (Phase 10).</summary>
+    public void StartDozerBuildCommandCenter(DozerBuilder dozer) =>
+        StartDozerBuildingPlacement(dozer, commandCenterPrefab, commandCenterCost, "CommandCenter");
 
     // ------------------------------------------------------------------ //
     // Placement mode entry / exit
@@ -488,9 +521,27 @@ public class BuildingPlacementManager : MonoBehaviour
             // "place site here" intent that a future networked layer will
             // need to replicate. ExecuteBuild calls back into
             // ExecuteConfirmedDozerPlacement with the same position + ids.
-            string dozerId = activeDozer != null
-                ? GameEntity.EnsureOn(activeDozer.gameObject).EntityId
-                : "";
+            //
+            // Phase 10.1 — owner authority. The dozer MUST have a GameEntity
+            // with a non-neutral owner. If it doesn't, we refuse to issue
+            // the command at all (no LocalCommandPlayerId fallback) — that
+            // fallback could place the building under whichever client
+            // happened to confirm it, bypassing the actual dozer's
+            // ownership.
+            GameEntity dozerEntity = activeDozer != null
+                ? GameEntity.EnsureOn(activeDozer.gameObject) : null;
+            if (dozerEntity == null
+                || dozerEntity.ownerPlayerId == GameEntity.NeutralOwnerId)
+            {
+                Debug.LogError($"[Placement] Refused to issue {activeLabel} build — " +
+                               "active dozer has no valid GameEntity / ownerPlayerId. " +
+                               "Cancelling placement to avoid creating an unowned building.");
+                CancelPlacement();
+                return;
+            }
+
+            string dozerId      = dozerEntity.EntityId;
+            int    dozerOwnerId = dozerEntity.ownerPlayerId;
 
             // Mint two ids in one go so they don't interleave with other
             // allocations: one for the construction site itself, one for the
@@ -499,8 +550,15 @@ public class BuildingPlacementManager : MonoBehaviour
             string siteId  = ids[0];
             string finalId = ids[1];
 
+            Debug.Log($"[BPM] Build {activeLabel} using dozer entityId='{dozerId}' " +
+                      $"owner={dozerOwnerId} cmd.playerId={dozerOwnerId}");
+
+            // cmd.playerId IS the dozer's owner, full stop. Dispatcher will
+            // re-validate this against the dozer it resolves by id, so a
+            // forged command from a misbehaving client is rejected on the
+            // receiver too.
             CommandDispatcher.Issue(PlayerCommand.Build(
-                GameEntity.LocalCommandPlayerId, dozerId, activeLabel, pos, siteId, finalId));
+                dozerOwnerId, dozerId, activeLabel, pos, siteId, finalId));
         }
         else
         {
@@ -539,13 +597,19 @@ public class BuildingPlacementManager : MonoBehaviour
     /// site at <paramref name="pos"/> sharing
     /// <paramref name="siteEntityId"/>, and the dozer (if resolvable)
     /// assigned to it.
+    ///
+    /// <paramref name="ownerPlayerId"/> is the canonical owner the site (and
+    /// the final building it spawns) must adopt. The dispatcher passes
+    /// <c>cmd.playerId</c> here after validating it against the dozer's
+    /// GameEntity, so the spawn path no longer guesses ownership.
     /// </summary>
     public void ExecuteConfirmedDozerPlacement(
         Vector3 pos,
         string  buildingType,
         string  dozerEntityId,
         string  siteEntityId,
-        string  finalBuildingEntityId)
+        string  finalBuildingEntityId,
+        int     ownerPlayerId)
     {
         // Resolve prefab + cost from the building-type string. Lets the
         // remote replay path work without needing BPM's placement state.
@@ -567,7 +631,8 @@ public class BuildingPlacementManager : MonoBehaviour
                 dozer = dozerEntity.GetComponent<DozerBuilder>();
         }
 
-        SpawnConstructionSite(prefab, cost, buildingType, pos, dozer, siteEntityId, finalBuildingEntityId);
+        SpawnConstructionSite(prefab, cost, buildingType, pos, dozer,
+                              siteEntityId, finalBuildingEntityId, ownerPlayerId);
     }
 
     /// <summary>
@@ -586,6 +651,7 @@ public class BuildingPlacementManager : MonoBehaviour
             case "Airfield":             cost = airfieldCost;          return airfieldPrefab;
             case "MachineGunDefense":
             case "Machine Gun Defense":  cost = machineGunDefenseCost; return machineGunDefensePrefab;
+            case "CommandCenter":        cost = commandCenterCost;     return commandCenterPrefab;
         }
         cost = 0;
         return null;
@@ -597,6 +663,14 @@ public class BuildingPlacementManager : MonoBehaviour
     /// path and the remote replay path. Pushes the network-allocated id via
     /// <see cref="GameEntity.SetNextSpawnId"/> so the spawned site's
     /// GameEntity adopts it during Awake.
+    ///
+    /// <paramref name="ownerPlayerId"/> is THE canonical owner — both the
+    /// site's <see cref="ConstructionSite.OwnerPlayerId"/> (used by
+    /// <see cref="ConstructionSite.Complete"/> to stamp the final building)
+    /// AND the bank that gets charged for <paramref name="cost"/> derive
+    /// from this parameter. The dispatcher validates the value against the
+    /// dozer's <see cref="GameEntity.ownerPlayerId"/> before getting here,
+    /// so there's no further guess-work to do in SpawnConstructionSite.
     /// </summary>
     private void SpawnConstructionSite(
         GameObject finalPrefab,
@@ -605,7 +679,8 @@ public class BuildingPlacementManager : MonoBehaviour
         Vector3    pos,
         DozerBuilder dozer,
         string     siteEntityId,
-        string     finalBuildingEntityId)
+        string     finalBuildingEntityId,
+        int        ownerPlayerId)
     {
         if (constructionSitePrefab == null)
         {
@@ -613,18 +688,13 @@ public class BuildingPlacementManager : MonoBehaviour
             return;
         }
 
-        // Push the network-allocated site id BEFORE Instantiate so
-        // GameEntity.Awake on the site picks it up.
-        GameEntity.SetNextSpawnId(siteEntityId);
-        GameObject siteGO;
-        try
-        {
-            siteGO = Instantiate(constructionSitePrefab, pos, Quaternion.identity);
-        }
-        finally
-        {
-            GameEntity.SetNextSpawnId(null);
-        }
+        // Instantiate the construction site (prefab carries no GameEntity by
+        // default). We push the spawn-id slot LATER, right before EnsureOn
+        // adds the GameEntity at runtime — that AddComponent triggers Awake
+        // which consumes the preset. Pushing before Instantiate (the legacy
+        // ordering) wouldn't help here because no GameEntity exists yet to
+        // consume the slot.
+        GameObject siteGO = Instantiate(constructionSitePrefab, pos, Quaternion.identity);
         siteGO.name = $"{label} (Construction Site)";
 
         int buildingLayer = LayerMask.NameToLayer("Building");
@@ -643,6 +713,35 @@ public class BuildingPlacementManager : MonoBehaviour
             return;
         }
 
+        // OWNERSHIP — phase 10.1 fix. Stamp BOTH the GameEntity (so
+        // EntityRegistry can find the site by id) AND the ConstructionSite's
+        // own OwnerPlayerId field (canonical, used by Complete()) before any
+        // other side-effect can read them. This is what makes the final
+        // building inherit the correct owner on every client, even when the
+        // construction site prefab carries no GameEntity by default.
+        //
+        // Order matters: push the network-allocated id INTO the slot, then
+        // call EnsureOn — EnsureOn's AddComponent<GameEntity>() fires
+        // Awake, which consumes the slot. Always clear the slot in finally
+        // so no leak into the next spawn.
+        GameEntity.SetNextSpawnId(siteEntityId);
+        GameEntity siteEntity;
+        try
+        {
+            siteEntity = GameEntity.EnsureOn(siteGO);
+        }
+        finally
+        {
+            GameEntity.SetNextSpawnId(null);
+        }
+        if (siteEntity != null)
+        {
+            siteEntity.entityType   = EntityType.Building;
+            siteEntity.prefabTypeId = label + "Site";
+            siteEntity.ApplyOwnership(ownerPlayerId);
+        }
+        site.SetOwner(ownerPlayerId);
+
         site.Initialise(finalPrefab, cost, dozerBuildTime, label, Quaternion.identity);
         // Phase 2: also hand the site the final-building id so that, when it
         // completes, the spawned building can adopt the same id on every client.
@@ -650,18 +749,15 @@ public class BuildingPlacementManager : MonoBehaviour
 
         if (dozer != null) dozer.AssignBuildOrder(site);
 
-        // Phase 3: charge the bank that matches the dozer's owner. Both clients
-        // execute this on Build replay; each charges the same owner's bank, so
-        // the per-player balance stays consistent across clients.
-        int ownerId = dozer != null && dozer.GetComponent<GameEntity>() != null
-            ? dozer.GetComponent<GameEntity>().ownerPlayerId
-            : 0;
-        PlayerResourceManager bank = ResourceBank.For(ownerId);
+        // Charge the bank that matches the canonical owner. Both clients
+        // execute this on Build replay; each charges the same owner's bank,
+        // so the per-player balance stays consistent across clients.
+        PlayerResourceManager bank = ResourceBank.For(ownerPlayerId);
         if (bank != null) bank.SpendResources(cost);
 
         Debug.Log($"[NetworkSpawn] Construction site '{label}' placed at {pos:F1} " +
-                  $"with siteId='{siteEntityId}', finalId='{finalBuildingEntityId}'. " +
-                  $"Remaining resources (owner {ownerId}): " +
+                  $"with siteId='{siteEntityId}', finalId='{finalBuildingEntityId}', " +
+                  $"owner={ownerPlayerId}. Remaining resources (owner {ownerPlayerId}): " +
                   $"{(bank != null ? bank.CurrentResources : 0)}");
     }
 

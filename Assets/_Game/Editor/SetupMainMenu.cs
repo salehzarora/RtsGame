@@ -17,14 +17,16 @@ using UnityEngine.UI;
 /// Idempotent — destroys and rebuilds MainMenuCanvas from scratch each run,
 /// so re-running cannot leave duplicate menus in the scene.
 ///
-/// What it creates:
+/// What it creates (Phase 10.9 — color picker removed):
 ///   • MainMenuCanvas (Screen Space Overlay, sort order 1000 — above HUD)
 ///     ├── Background          (full-screen dark panel)
 ///     ├── Title               ("RTS Prototype")
-///     ├── ArmyLabel           ("Army: Default Army")
-///     ├── ColorLabel          ("Color: Blue")
-///     ├── ColorButtonRow      (Blue / Red / Green / Yellow / Orange / Purple)
-///     └── PlayButton          ("Play")
+///     ├── BtnSinglePlayer     ("Single Player")
+///     └── BtnOnline           ("Online")
+///
+/// Color selection happens in the multiplayer lobby UI now (per-player
+/// Photon properties); single-player uses PlayerFactionManager's
+/// Inspector defaultColor.
 ///
 /// Also ensured on the GameManager GameObject (created if missing):
 ///   • PlayerFactionManager
@@ -42,19 +44,12 @@ public static class SetupMainMenu
 
     private static readonly Color BgColor       = new Color(0.05f, 0.07f, 0.10f, 0.95f);
     private static readonly Color TitleColor    = new Color(1.00f, 0.95f, 0.85f);
-    private static readonly Color LabelColor    = new Color(0.90f, 0.90f, 0.95f);
     private static readonly Color PlayBtnColor  = new Color(0.30f, 0.65f, 0.30f);
+    private static readonly Color OnlineBtnColor = new Color(0.32f, 0.50f, 0.70f);
 
-    // Color-button swatches (must match MainMenuController.OnClickColor* values).
-    private static readonly (string label, Color color, string method)[] ColorSwatches =
-    {
-        ("Blue",   new Color(0.20f, 0.55f, 1.00f), nameof(MainMenuController.OnClickColorBlue)),
-        ("Red",    new Color(0.92f, 0.20f, 0.20f), nameof(MainMenuController.OnClickColorRed)),
-        ("Green",  new Color(0.25f, 0.80f, 0.32f), nameof(MainMenuController.OnClickColorGreen)),
-        ("Yellow", new Color(1.00f, 0.85f, 0.18f), nameof(MainMenuController.OnClickColorYellow)),
-        ("Orange", new Color(1.00f, 0.55f, 0.10f), nameof(MainMenuController.OnClickColorOrange)),
-        ("Purple", new Color(0.65f, 0.30f, 0.85f), nameof(MainMenuController.OnClickColorPurple)),
-    };
+    // Phase 10.9 — the legacy color swatch row was removed. Color selection
+    // lives in the multiplayer lobby UI (per-player Photon properties);
+    // SP uses PlayerFactionManager's Inspector defaultColor.
 
     // ------------------------------------------------------------------ //
     // Entry
@@ -98,93 +93,41 @@ public static class SetupMainMenu
             (RectTransform)canvas.transform,
             "Title", "RTS Prototype",
             anchorMin: new Vector2(0.5f, 1f), anchorMax: new Vector2(0.5f, 1f),
-            anchoredPos: new Vector2(0f, -160f),
+            anchoredPos: new Vector2(0f, -200f),
             size: new Vector2(800f, 90f),
             fontSize: 64,
             color: TitleColor,
             alignment: TextAlignmentOptions.Center);
         title.fontStyle = FontStyles.Bold;
 
-        // Army label
-        TextMeshProUGUI armyLabel = CreateTMPText(
-            (RectTransform)canvas.transform,
-            "ArmyLabel", "Army: Default Army",
-            anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-            anchoredPos: new Vector2(0f, 140f),
-            size: new Vector2(600f, 50f),
-            fontSize: 32,
-            color: LabelColor,
-            alignment: TextAlignmentOptions.Center);
-
-        // Color label
-        TextMeshProUGUI colorLabel = CreateTMPText(
-            (RectTransform)canvas.transform,
-            "ColorLabel", "Color: Blue",
-            anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-            anchoredPos: new Vector2(0f, 80f),
-            size: new Vector2(600f, 50f),
-            fontSize: 28,
-            color: LabelColor,
-            alignment: TextAlignmentOptions.Center);
-
-        // Color button row (6 swatches centered horizontally)
-        const float swatchSize = 80f;
-        const float swatchGap  = 16f;
-        int   count = ColorSwatches.Length;
-        float rowWidth = count * swatchSize + (count - 1) * swatchGap;
-        float startX   = -rowWidth * 0.5f + swatchSize * 0.5f;
-
         // MainMenuController has to exist before we can wire buttons.
+        // Phase 10.9 — the color picker is gone. Only canvas refs are wired.
         MainMenuController controller = GetOrAddComponent<MainMenuController>(gm);
-        controller.menuCanvas       = canvas.gameObject;
-        controller.hudCanvas        = hudCanvas != null ? hudCanvas.gameObject : null;
-        controller.armyLabel        = armyLabel;
-        controller.colorLabel       = colorLabel;
-        controller.defaultColor     = ColorSwatches[0].color; // Blue
-        controller.defaultColorName = ColorSwatches[0].label;
+        controller.menuCanvas = canvas.gameObject;
+        controller.hudCanvas  = hudCanvas != null ? hudCanvas.gameObject : null;
         EditorUtility.SetDirty(controller);
-        _ = pfm; // suppress unused warning — manager will be discovered by controller at runtime
+        _ = pfm; // manager discovered at runtime
 
-        for (int i = 0; i < count; i++)
-        {
-            (string label, Color color, string method) sw = ColorSwatches[i];
-            float x = startX + i * (swatchSize + swatchGap);
-
-            Button swatchBtn = CreateButton(
-                (RectTransform)canvas.transform,
-                $"BtnColor{sw.label}", sw.label,
-                sw.color,
-                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-                anchoredPos: new Vector2(x, -20f),
-                size:        new Vector2(swatchSize, swatchSize));
-
-            WireButton(swatchBtn, controller, sw.method);
-        }
-
-        // Single Player button — was "Play" pre-Phase-6. Same wiring target;
-        // the new OnClickSinglePlayer just forces multiplayerMode=false and
-        // calls into the existing OnClickPlay flow.
+        // Single Player button — centred above the Online button.
         Button singlePlayer = CreateButton(
             (RectTransform)canvas.transform,
             "BtnSinglePlayer", "Single Player",
             PlayBtnColor,
             anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-            anchoredPos: new Vector2(0f, -160f),
+            anchoredPos: new Vector2(0f, 40f),
             size:        new Vector2(360f, 70f));
         singlePlayer.GetComponentInChildren<TextMeshProUGUI>(true).fontSize = 28;
-
         WireButton(singlePlayer, controller, nameof(MainMenuController.OnClickSinglePlayer));
 
         // Online button — opens MultiplayerLobbyUI's OnlineMenuPanel.
         Button online = CreateButton(
             (RectTransform)canvas.transform,
             "BtnOnline", "Online",
-            new Color(0.32f, 0.50f, 0.70f),    // sky-blue grey — matches debug-panel Connect button
+            OnlineBtnColor,
             anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
-            anchoredPos: new Vector2(0f, -245f),
+            anchoredPos: new Vector2(0f, -50f),
             size:        new Vector2(360f, 70f));
         online.GetComponentInChildren<TextMeshProUGUI>(true).fontSize = 28;
-
         WireButton(online, controller, nameof(MainMenuController.OnClickOnline));
 
         // Ensure the menu renders above the gameplay HUD (sort order 1000 > 999).
@@ -195,7 +138,8 @@ public static class SetupMainMenu
 
         Debug.Log("[SetupMainMenu] ── Done. ──\n" +
                   "  • Press Play in Unity → menu shows first.\n" +
-                  "  • Pick a color, press Play → HUD appears, gameplay starts.\n" +
+                  "  • Press Single Player → HUD appears, gameplay starts.\n" +
+                  "  • Press Online → opens the multiplayer lobby (color selection lives there).\n" +
                   "  • For team-color accents to apply, also run:\n" +
                   "      Tools → RTS → Setup → Apply Team Color Markers To Prefabs");
     }

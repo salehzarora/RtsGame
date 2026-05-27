@@ -79,6 +79,51 @@ public static class ResourceBank
         if (m != null) m.AddResources(amount);
     }
 
+    /// <summary>
+    /// Authoritatively set the owner's current resources to
+    /// <paramref name="amount"/>. Used at MatchStart to apply the host-
+    /// selected starting balance from the room property.
+    ///
+    /// Owner-strict (Phase 10.2). Does NOT use <see cref="For"/>'s
+    /// any-bank fallback — that fallback could route Player 1's
+    /// starting-resources write into Player 0's bank if Player 1's bank
+    /// hadn't woken up yet (e.g. when GameplayWorldRoot still has
+    /// Player1Base inactive). Resolution order:
+    ///
+    ///   1. <see cref="s_byOwner"/> registration matching <paramref name="ownerId"/>.
+    ///   2. Scene scan (INCLUDING inactive objects) for a
+    ///      <see cref="PlayerResourceManager"/> whose
+    ///      <see cref="PlayerResourceManager.ownerPlayerId"/> matches.
+    ///   3. Log a warning and no-op.
+    /// </summary>
+    public static void SetCurrent(int ownerId, int amount)
+    {
+        if (s_byOwner.TryGetValue(ownerId, out PlayerResourceManager registered) && registered != null)
+        {
+            registered.SetResources(amount);
+            return;
+        }
+
+        // Scene fallback — include inactive so a base still hidden by
+        // GameplayWorldRoot is still found. We pick the FIRST manager whose
+        // ownerPlayerId field matches; the Awake-time registration that
+        // happens later will fold this same instance into s_byOwner.
+        PlayerResourceManager[] all = Object.FindObjectsByType<PlayerResourceManager>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (all[i] == null) continue;
+            if (all[i].ownerPlayerId != ownerId) continue;
+            all[i].SetResources(amount);
+            return;
+        }
+
+        Debug.LogWarning($"[Resources] SetCurrent({ownerId}, {amount}) — no " +
+                         "PlayerResourceManager in scene with matching ownerPlayerId. " +
+                         "The MP match map tool should have created one per base; " +
+                         "re-run Tools → RTS → Match → Setup Multiplayer Match Map.");
+    }
+
     /// <summary>Hard-clear, used by tests.</summary>
     public static void Clear() => s_byOwner.Clear();
 }

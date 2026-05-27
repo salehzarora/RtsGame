@@ -121,6 +121,8 @@ public static class SetupMultiplayerLobbyUI
         ui.createRoomMapLabel      = create.mapLabel;
         ui.createRoomConfirmButton = create.createBtn;
         ui.createRoomBackButton    = create.backBtn;
+        ui.createRoomStartingResourcesButton = create.startingResourcesBtn;
+        ui.createRoomStartingResourcesLabel  = create.startingResourcesLabel;
 
         ui.roomListRefreshButton = list.refreshBtn;
         ui.roomListBackButton    = list.backBtn;
@@ -129,6 +131,7 @@ public static class SetupMultiplayerLobbyUI
 
         ui.lobbyRoomNameLabel       = lobby.roomNameLabel;
         ui.lobbyMapLabel            = lobby.mapLabel;
+        ui.lobbyStartingResourcesLabel = lobby.startingResourcesLabel;
         ui.lobbyPlayer0Label        = lobby.p0Label;
         ui.lobbyPlayer1Label        = lobby.p1Label;
         ui.lobbyPlayer0ColorSwatch  = lobby.p0Swatch;
@@ -190,26 +193,36 @@ public static class SetupMultiplayerLobbyUI
         public TMP_InputField nameInput;
         public TextMeshProUGUI mapLabel;
         public Button createBtn, backBtn;
+        public Button startingResourcesBtn;
+        public TextMeshProUGUI startingResourcesLabel;
     }
 
     private static CreateRoomRefs BuildCreateRoomPanel(Transform parent)
     {
         CreateRoomRefs r = new CreateRoomRefs();
-        r.root = CreateBorderedPanel(parent, "CreateRoomPanel", w: 600f, h: 400f);
+        // Phase 8: panel taller to fit the starting-resources cycle button.
+        r.root = CreateBorderedPanel(parent, "CreateRoomPanel", w: 600f, h: 480f);
 
         _ = CreateLabel(r.root, "Title", "CREATE ROOM", topY: 30f, height: 40f,
             fontSize: 26, color: TitleAmb, bold: true);
 
         _ = CreateLabel(r.root, "NameInputLabel", "Room name:",
-            topY: 100f, height: 24f, fontSize: 16, color: BodyText, bold: false);
+            topY: 90f, height: 24f, fontSize: 16, color: BodyText, bold: false);
         r.nameInput = CreateInputField(r.root, "RoomNameInput", placeholder: "My Room",
-            topY: 128f, height: 40f);
+            topY: 118f, height: 40f);
 
         r.mapLabel = CreateLabel(r.root, "MapLabel",
             "Map: " + MapRegistry.DisplayNameOrId(MapRegistry.DefaultMapId),
-            topY: 190f, height: 24f, fontSize: 18, color: BodyText, bold: false);
+            topY: 180f, height: 24f, fontSize: 18, color: BodyText, bold: false);
 
-        r.createBtn = MakeBtn(r.root, "CreateButton", "Create",         BtnSuccess, 240f, 280f, 50f);
+        // Starting-resources cycle button. The label text is set by
+        // MultiplayerLobbyUI.RefreshStartingResourcesLabel at runtime; the
+        // initial "Starting Resources: 10000" is just the editor preview.
+        r.startingResourcesBtn = MakeBtn(r.root, "StartingResourcesButton",
+            "Starting Resources: 10000", BtnHighlight, topY: 230f, w: 360f, h: 44f);
+        r.startingResourcesLabel = r.startingResourcesBtn.GetComponentInChildren<TextMeshProUGUI>(true);
+
+        r.createBtn = MakeBtn(r.root, "CreateButton", "Create",         BtnSuccess, 320f, 280f, 50f);
 
         r.backBtn = MakeBtnBottom(r.root, "BackButton", "Back", BtnDanger, 280f, 50f);
         return r;
@@ -263,7 +276,7 @@ public static class SetupMultiplayerLobbyUI
     private class LobbyPanelRefs
     {
         public RectTransform root;
-        public TextMeshProUGUI roomNameLabel, mapLabel;
+        public TextMeshProUGUI roomNameLabel, mapLabel, startingResourcesLabel;
         public TextMeshProUGUI p0Label, p1Label, statusLabel;
         public Image p0Swatch, p1Swatch;
         public Button[]  colorBtns;
@@ -284,6 +297,9 @@ public static class SetupMultiplayerLobbyUI
             topY: 75f, height: 22f, fontSize: 16, color: BodyText, bold: false);
         r.mapLabel      = CreateLabel(r.root, "MapName", "Map: —",
             topY: 100f, height: 22f, fontSize: 16, color: BodyText, bold: false);
+        r.startingResourcesLabel = CreateLabel(r.root, "StartingResources",
+            "Starting Resources: —",
+            topY: 125f, height: 22f, fontSize: 16, color: BodyText, bold: false);
 
         // Player slot 0
         r.p0Swatch = CreateSwatch(r.root, "Player0Swatch", topLeft: new Vector2(60f, 145f), size: 36f);

@@ -55,6 +55,15 @@ public class PlayerResourceManager : MonoBehaviour
         if (amount <= 0) return;
         CurrentResources += amount;
         Debug.Log($"[Resources] Player {ownerPlayerId} +{amount}  →  Total: {CurrentResources}");
+
+        // Phase 10.3 — master-authoritative broadcast. Local mutation has
+        // already run identically on every client (both run AddResources via
+        // CommandCenter.Deposit at the same point in their local sim); the
+        // master ALSO broadcasts the absolute newAmount so any drift gets
+        // snapped on the non-master side. Non-master + suppressed callers
+        // are gated inside NetworkMatchEvents.ShouldBroadcast.
+        NetworkMatchEvents.BroadcastResourceChanged(
+            ownerPlayerId, CurrentResources, amount, "WorkerDeposit");
     }
 
     /// <summary>Returns true if this bank currently has at least <paramref name="amount"/>.</summary>
@@ -76,6 +85,55 @@ public class PlayerResourceManager : MonoBehaviour
 
         CurrentResources -= amount;
         Debug.Log($"[Resources] Player {ownerPlayerId} -{amount}  →  Total: {CurrentResources}");
+
+        NetworkMatchEvents.BroadcastResourceChanged(
+            ownerPlayerId, CurrentResources, -amount, "Spend");
         return true;
+    }
+
+    /// <summary>
+    /// Authoritative reset of <see cref="CurrentResources"/> to
+    /// <paramref name="amount"/>. Used at MatchStart so both clients agree
+    /// on the host-selected starting balance. Clamps negative values to 0.
+    ///
+    /// Defensive: also writes <see cref="startingResources"/> so that if
+    /// this is called BEFORE <see cref="Awake"/> runs (e.g. on a base that
+    /// is still hidden by <see cref="GameplayWorldRoot"/> at MatchStart),
+    /// the subsequent Awake initialises <see cref="CurrentResources"/> to
+    /// the right value instead of the prefab default.
+    /// </summary>
+    public void SetResources(int amount)
+    {
+        int next = Mathf.Max(0, amount);
+        startingResources = next;
+        CurrentResources  = next;
+        Debug.Log($"[Resources] Player {ownerPlayerId} starting resources set to {next}");
+
+        // Phase 10.3 — broadcast the authoritative new amount so any non-
+        // master client that missed the lobby's room property still snaps
+        // to the right value. The master gate inside NetworkMatchEvents
+        // means we only broadcast from the canonical side.
+        NetworkMatchEvents.BroadcastResourceChanged(
+            ownerPlayerId, next, 0, "SetResources");
+    }
+
+    // ------------------------------------------------------------------ //
+    // Phase 10.3 — inbound apply (called by NetworkMatchEvents)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Snap <see cref="CurrentResources"/> to the master-broadcast amount.
+    /// Treats <paramref name="newAmount"/> as absolute (not relative) — the
+    /// master is the canonical source. <paramref name="delta"/> and
+    /// <paramref name="reason"/> are used only for diagnostic logs.
+    /// </summary>
+    public void ApplyFromNetwork(int newAmount, int delta, string reason)
+    {
+        int next = Mathf.Max(0, newAmount);
+        if (next == CurrentResources) return;        // already matches — no log spam
+
+        Debug.Log($"[NetResources] Apply owner={ownerPlayerId} {CurrentResources} -> {next} " +
+                  $"(delta={delta}, reason={reason})");
+        CurrentResources = next;
     }
 }
