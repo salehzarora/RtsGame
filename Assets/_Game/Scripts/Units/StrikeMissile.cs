@@ -73,6 +73,35 @@ public class StrikeMissile : MonoBehaviour
         launched = true;
     }
 
+    /// <summary>
+    /// VISUAL-ONLY launch: flies <paramref name="startPos"/> → <paramref name="endPos"/>
+    /// and flashes on arrival, but applies NO damage (<see cref="targetHealth"/>
+    /// stays null, so <see cref="Impact"/> skips the TakeDamage branch). Spawned
+    /// on NON-OWNER clients from the AircraftFired network event so remote players
+    /// see the strike — the owner's authoritative missile is what actually deals
+    /// damage. <paramref name="endPos"/> is the owner's snapshot impact point, so
+    /// the visual lands where the real missile did even if the target has since
+    /// died/moved.
+    /// </summary>
+    public void LaunchVisual(Vector3 startPos, Vector3 endPos, float speed,
+                             float flashDuration, Color flash)
+    {
+        transform.position  = startPos;
+        targetHealth        = null;     // ← guarantees Impact() deals no damage
+        damageBase          = 0f;
+        damageType          = DamageType.Missile;
+        projectileSpeed     = Mathf.Max(0.01f, speed);
+        impactFlashDuration = flashDuration;
+        flashColor          = flash;
+        this.endPos         = endPos;
+
+        Vector3 dir = endPos - startPos;
+        if (dir.sqrMagnitude > 0.0001f)
+            transform.rotation = Quaternion.LookRotation(dir);
+
+        launched = true;
+    }
+
     // ------------------------------------------------------------------ //
     // Flight
     // ------------------------------------------------------------------ //

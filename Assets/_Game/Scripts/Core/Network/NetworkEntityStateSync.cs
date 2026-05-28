@@ -50,6 +50,15 @@ public class NetworkEntityStateSync : MonoBehaviour
              "Photon event's payload size. Lower for huge unit counts.")]
     [Range(8, 128)] public int maxEntitiesPerTick = 64;
 
+    [Tooltip("Seconds between UNIT TRANSFORM broadcasts. Faster = smoother " +
+             "remote movement at the cost of more bandwidth. 0.1s (10 Hz) is the " +
+             "Phase 10.15 default — at 5 Hz the rotation looked choppy because " +
+             "samples were 200ms apart and the owner could turn 90°+ between " +
+             "them. 10 Hz halves the per-sample delta and combines with the " +
+             "raised RotateTowards speed in UnitMovement to produce smooth " +
+             "remote turning.")]
+    [Range(0.05f, 1f)] public float transformInterval = 0.1f;
+
     // ------------------------------------------------------------------ //
     // Static singleton — receive-side dispatch in NetworkMatchEvents
     // routes through ApplyEntityStateSnapshot which is static for
@@ -59,6 +68,7 @@ public class NetworkEntityStateSync : MonoBehaviour
     public static NetworkEntityStateSync Instance { get; private set; }
 
     private Coroutine senderRoutine;
+    private Coroutine transformRoutine;
     private int       cursor;     // round-robin starting point across ticks
 
     // ------------------------------------------------------------------ //
@@ -81,13 +91,62 @@ public class NetworkEntityStateSync : MonoBehaviour
 
     private void OnEnable()
     {
-        senderRoutine = StartCoroutine(SenderLoop());
+        senderRoutine    = StartCoroutine(SenderLoop());
+        transformRoutine = StartCoroutine(TransformLoop());
     }
 
     private void OnDisable()
     {
-        if (senderRoutine != null) StopCoroutine(senderRoutine);
-        senderRoutine = null;
+        if (senderRoutine    != null) StopCoroutine(senderRoutine);
+        if (transformRoutine != null) StopCoroutine(transformRoutine);
+        senderRoutine    = null;
+        transformRoutine = null;
+    }
+
+    // ================================================================== //
+    // Owner-authoritative transform broadcast — runs on EVERY client at
+    // ~5 Hz. For each entity this client owns AND that has a UnitMovement
+    // (so we know it's a mobile ground unit), emit a UnitTransform event.
+    // The receive path on the other client lerps its local copy. NavMesh
+    // simulation runs only on the owner; non-owner clients have agents
+    // disabled (see UnitMovement.RefreshOwnershipGate).
+    // ================================================================== //
+
+    private System.Collections.IEnumerator TransformLoop()
+    {
+        while (true)
+        {
+            float wait = Mathf.Max(0.05f, transformInterval);
+            yield return new WaitForSeconds(wait);
+
+            if (!NetworkManagerRTS.IsMultiplayerEnabled) continue;
+            int localId = NetworkManagerRTS.LocalPlayerId;
+            if (localId < 0) continue;     // before MatchStart
+
+            foreach (GameEntity ge in EntityRegistry.All())
+            {
+                if (ge == null) continue;
+                if (ge.ownerPlayerId != localId) continue;     // only broadcast OUR units
+                if (!ge.gameObject.activeInHierarchy) continue; // hidden APC passengers skip
+
+                // Mobile entity types only. Ground units (Unit) carry
+                // UnitMovement; aircraft (Aircraft) carry AirUnitController and
+                // move by direct transform manipulation — both are broadcast so
+                // non-owner clients can interpolate them. Buildings / Projectiles
+                // / Resources have no remote movement to sync and are skipped.
+                bool isGroundUnit = ge.entityType == EntityType.Unit
+                                 && ge.GetComponent<UnitMovement>() != null;
+                bool isAircraft   = ge.entityType == EntityType.Aircraft
+                                 && ge.GetComponent<AirUnitController>() != null;
+                if (!isGroundUnit && !isAircraft) continue;
+
+                NetworkMatchEvents.BroadcastUnitTransform(
+                    ge.EntityId,
+                    ge.transform.position,
+                    ge.transform.rotation,
+                    Time.timeAsDouble);
+            }
+        }
     }
 
     // ================================================================== //

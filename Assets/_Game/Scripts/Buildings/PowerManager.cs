@@ -1,15 +1,26 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Tracks the global power supply and demand for all player buildings.
+/// Tracks power supply and demand PER PLAYER (keyed by ownerPlayerId).
 /// Singleton — one instance lives on the GameManager.
 ///
-/// Supply  = sum of all active PowerPlant buildings.
-/// Demand  = sum of all active PowerConsumer buildings.
-/// Powered = Supply >= Demand.
+/// Each owner has an independent grid:
+///   Supply(owner)  = sum of that owner's active PowerPlant buildings.
+///   Demand(owner)  = sum of that owner's active PowerConsumer buildings.
+///   Powered(owner) = Supply(owner) >= Demand(owner).
 ///
-/// Production buildings read IsPowered before allowing unit production.
-/// Console-only for now; UI overlay comes in a later phase.
+/// This mirrors the per-owner resource model (<see cref="ResourceBank"/> /
+/// <see cref="PlayerResourceManager"/>): Player 0's power never affects
+/// Player 1's and vice versa. Because each client deterministically spawns
+/// every building with its <see cref="GameEntity.ownerPlayerId"/> stamped,
+/// the per-owner totals come out identical on every client with no extra
+/// network traffic — power is derived from building presence, which the
+/// custom RaiseEvent construction events already replicate.
+///
+/// Production buildings read <see cref="PowerConsumer.IsPowered"/> (which
+/// resolves to <see cref="IsPoweredFor"/> for that building's owner) before
+/// allowing unit production.
 ///
 /// Setup:
 ///   Add this component to your GameManager GameObject.
@@ -40,53 +51,62 @@ public class PowerManager : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ //
-    // State
+    // Per-owner state
     // ------------------------------------------------------------------ //
 
-    public int TotalSupply { get; private set; }
-    public int TotalDemand { get; private set; }
+    private readonly Dictionary<int, int> supplyByOwner = new Dictionary<int, int>(2);
+    private readonly Dictionary<int, int> demandByOwner = new Dictionary<int, int>(2);
 
-    /// <summary>True when supply covers demand. All powered buildings are operational.</summary>
-    public bool IsPowered => TotalSupply >= TotalDemand;
+    /// <summary>Total supply registered for <paramref name="owner"/> (0 if none).</summary>
+    public int SupplyFor(int owner)
+        => supplyByOwner.TryGetValue(owner, out int v) ? v : 0;
+
+    /// <summary>Total demand registered for <paramref name="owner"/> (0 if none).</summary>
+    public int DemandFor(int owner)
+        => demandByOwner.TryGetValue(owner, out int v) ? v : 0;
+
+    /// <summary>True when <paramref name="owner"/>'s supply covers its own demand.</summary>
+    public bool IsPoweredFor(int owner) => SupplyFor(owner) >= DemandFor(owner);
 
     // ------------------------------------------------------------------ //
-    // Registration — called by PowerPlant and PowerConsumer
+    // Registration — called by PowerPlant and PowerConsumer (owner-keyed)
     // ------------------------------------------------------------------ //
 
-    public void AddSupply(int amount)
+    public void AddSupply(int owner, int amount, string source)
     {
-        TotalSupply += amount;
-        LogStatus($"PowerPlant added +{amount} supply");
+        int total = SupplyFor(owner) + amount;
+        supplyByOwner[owner] = total;
+        LogChange(owner, +amount, total, source);
     }
 
-    public void RemoveSupply(int amount)
+    public void RemoveSupply(int owner, int amount, string source)
     {
-        TotalSupply = Mathf.Max(0, TotalSupply - amount);
-        LogStatus($"PowerPlant removed -{amount} supply");
+        int total = Mathf.Max(0, SupplyFor(owner) - amount);
+        supplyByOwner[owner] = total;
+        LogChange(owner, -amount, total, source);
     }
 
-    public void AddDemand(int amount)
+    public void AddDemand(int owner, int amount, string source)
     {
-        TotalDemand += amount;
-        LogStatus($"Building added +{amount} demand");
+        int total = DemandFor(owner) + amount;
+        demandByOwner[owner] = total;
+        LogChange(owner, +amount, total, source);
     }
 
-    public void RemoveDemand(int amount)
+    public void RemoveDemand(int owner, int amount, string source)
     {
-        TotalDemand = Mathf.Max(0, TotalDemand - amount);
-        LogStatus($"Building removed -{amount} demand");
+        int total = Mathf.Max(0, DemandFor(owner) - amount);
+        demandByOwner[owner] = total;
+        LogChange(owner, -amount, total, source);
     }
 
     // ------------------------------------------------------------------ //
     // Internal
     // ------------------------------------------------------------------ //
 
-    private void LogStatus(string reason)
+    private static void LogChange(int owner, int delta, int total, string source)
     {
-        string status = IsPowered
-            ? $"OK ({TotalSupply - TotalDemand} surplus)"
-            : $"⚠ INSUFFICIENT ({TotalDemand - TotalSupply} short)";
-
-        Debug.Log($"[Power] {reason}. Supply: {TotalSupply} / Demand: {TotalDemand} — {status}");
+        Debug.Log($"[Power] owner={owner} delta={delta} total={total} " +
+                  $"source={(string.IsNullOrEmpty(source) ? "?" : source)}");
     }
 }

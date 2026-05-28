@@ -284,9 +284,25 @@ public class NetworkMatchCoordinator : MonoBehaviour
     {
         // If we leave mid-match, reset coordinator state so a re-join can
         // run a fresh MatchStart sequence.
-        IsMatchStarted = false;
+        ResetForNewMatch();
+    }
+#endif
+
+    /// <summary>
+    /// Public reset entry used by <see cref="MatchSessionResetter"/> when
+    /// the player returns to the main menu. Mirrors the OnLeftRoom path
+    /// but works in SP too (no Photon callback fires there). Clears the
+    /// slot mapping back to the SP default of "this client is player 0".
+    /// </summary>
+    public void ResetForNewMatch()
+    {
+        IsMatchStarted     = false;
+        Player0ActorNumber = 1;
+        Player1ActorNumber = 2;
+        Debug.Log("[MultiplayerMatch] Coordinator reset for new match.");
     }
 
+#if PHOTON_UNITY_NETWORKING
     private static int[] GetSortedActorNumbers()
     {
         if (!PhotonNetwork.InRoom) return System.Array.Empty<int>();

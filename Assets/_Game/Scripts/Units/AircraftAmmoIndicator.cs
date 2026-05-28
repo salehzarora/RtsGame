@@ -61,11 +61,13 @@ public class AircraftAmmoIndicator : MonoBehaviour
 
     private Transform         ownerTransform;
     private AircraftWeapon    weapon;
+    private GameEntity        ownerEntity;
     private Camera            cam;
     private GameObject[]      dots;
     private Material          filledMat;
     private Material          emptyMat;
     private int               lastObservedAmmo = -1;
+    private bool              dotsVisible      = true;
 
     // ------------------------------------------------------------------ //
     // Unity lifecycle
@@ -82,9 +84,11 @@ public class AircraftAmmoIndicator : MonoBehaviour
         }
 
         // The brain isn't strictly required for the indicator, but its presence
-        // identifies the parent as an aircraft. The weapon is the actual data source.
+        // identifies the parent as an aircraft. The weapon is the ammo data
+        // source; the GameEntity is the ownership source for visibility.
         AirUnitController controller = owner.GetComponent<AirUnitController>();
-        weapon = owner.GetComponent<AircraftWeapon>();
+        weapon      = owner.GetComponent<AircraftWeapon>();
+        ownerEntity = owner.GetComponent<GameEntity>();
 
         if (controller == null || weapon == null)
         {
@@ -94,23 +98,40 @@ public class AircraftAmmoIndicator : MonoBehaviour
             return;
         }
 
-        // Hide for non-player aircraft so enemy ammo isn't leaked through the HUD.
-        Health h = owner.GetComponent<Health>();
-        if (h == null || h.team != Health.Team.Player)
-        {
-            gameObject.SetActive(false);
-            return;
-        }
-
         ownerTransform = owner;
         cam = Camera.main;
         EnsureMaterials();
         BuildDots(weapon.maxAmmo);
+
+        // Start hidden. LateUpdate decides visibility from ownership once it's
+        // resolved — the local player's own aircraft show the dots, enemies
+        // never do. Starting hidden avoids a one-frame ammo flash on the enemy
+        // client before ApplyOwnership stamps the real owner. We do NOT
+        // deactivate this GameObject, so LateUpdate keeps running to re-resolve.
+        SetDotsVisible(false);
+        dotsVisible = false;
     }
 
     private void LateUpdate()
     {
         if (weapon == null || ownerTransform == null) return;
+
+        // Ownership-driven visibility: the ammo count is shown only for the
+        // LOCAL player's own aircraft. "My faction" is LocalPlayerId in MP and
+        // PlayerOwnerId (0) in single-player / pre-match. Enemy aircraft (incl.
+        // SP enemy jets) never show the count, so it can't be read off the
+        // world-space indicator. Re-evaluated each frame so it settles once
+        // ApplyOwnership stamps the real owner; toggled only on change.
+        int localFaction = NetworkManagerRTS.IsMultiplayerEnabled
+            ? NetworkManagerRTS.LocalPlayerId
+            : GameEntity.PlayerOwnerId;
+        bool show = ownerEntity != null && ownerEntity.ownerPlayerId == localFaction;
+        if (show != dotsVisible)
+        {
+            SetDotsVisible(show);
+            dotsVisible = show;
+        }
+        if (!show) return;     // hidden for enemies — skip positioning + colour refresh
 
         // Follow the parent, billboard to the camera.
         transform.position = ownerTransform.position + Vector3.up * heightOffset;
@@ -129,6 +150,20 @@ public class AircraftAmmoIndicator : MonoBehaviour
             Refresh(ammo);
             lastObservedAmmo = ammo;
         }
+    }
+
+    /// <summary>
+    /// Show/hide every ammo dot. Toggles the dot GameObjects (not this
+    /// component's GameObject) so the indicator stays active and
+    /// <see cref="LateUpdate"/> keeps running — letting visibility re-resolve
+    /// when ownership is applied.
+    /// </summary>
+    private void SetDotsVisible(bool visible)
+    {
+        if (dots == null) return;
+        for (int i = 0; i < dots.Length; i++)
+            if (dots[i] != null && dots[i].activeSelf != visible)
+                dots[i].SetActive(visible);
     }
 
     // ------------------------------------------------------------------ //

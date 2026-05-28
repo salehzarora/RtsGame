@@ -291,6 +291,15 @@ public class AirUnitController : MonoBehaviour
     public Transform   HomeSlot     => homeSlot;
     public long        LaunchGroupId { get; private set; }
 
+    /// <summary>
+    /// True when THIS client simulates the aircraft (single-player, pre-match,
+    /// or our owned aircraft in MP). False on non-owner clients, where the
+    /// aircraft is a pure visual driven by the owner's transform broadcasts —
+    /// the FSM and weapon are skipped so there is no divergent flight and no
+    /// duplicate damage. Mirrors <see cref="UnitMovement.LocallyControlled"/>.
+    /// </summary>
+    public bool LocallyControlled { get; private set; } = true;
+
     /// <summary>Forwarding accessor — actual ammo lives on AircraftWeapon. Kept for callers (HUD, debug).</summary>
     public int CurrentAmmo => weapon != null ? weapon.CurrentAmmo : 0;
 
@@ -305,6 +314,10 @@ public class AirUnitController : MonoBehaviour
     private Health         health;
     private Transform      homeSlot;
     private Health         target;
+
+    // MP ownership gate + remote-visual playback (non-owner clients).
+    private GameEntity selfEntity;
+    private readonly RemoteTransformInterpolator remoteInterp = new RemoteTransformInterpolator();
 
     // Parked-repair tracking: one log line when repair starts (damaged → first
     // tick), one when it completes (reaches max). repairingThisSession is true
@@ -373,6 +386,77 @@ public class AirUnitController : MonoBehaviour
         // Cached for the parked-repair tick. Null is acceptable (e.g. test
         // dummies without a Health component) — repair just no-ops in that case.
         health = GetComponent<Health>();
+
+        // Aircraft-specific remote-interpolation tuning (set in code so a stale
+        // serialized value can't reintroduce backtracking). Aircraft are fast and
+        // bank continuously, so we DISABLE forward dead-reckoning — on a packet
+        // gap the interpolator holds the newest sample instead of predicting
+        // along the pre-turn heading (which overshot and then snapped back). A
+        // slightly longer delay than ground units gives more buffer headroom so
+        // starvation is rare. snapDistance stays at the default for real teleports
+        // (landing/parking snaps).
+        remoteInterp.maxExtrapolationSeconds = 0f;
+        remoteInterp.interpolationDelay      = 0.22f;
+
+        // MP ownership gate. On non-owner clients the FSM/weapon are skipped and
+        // the aircraft is driven purely by the owner's transform broadcasts.
+        selfEntity = GetComponent<GameEntity>();
+        if (selfEntity != null)
+            selfEntity.OnOwnershipApplied += HandleOwnershipApplied;
+        RefreshOwnershipGate();
+    }
+
+    private void OnDestroy()
+    {
+        if (selfEntity != null)
+            selfEntity.OnOwnershipApplied -= HandleOwnershipApplied;
+    }
+
+    private void HandleOwnershipApplied(int newOwner)
+    {
+        RefreshOwnershipGate();
+    }
+
+    /// <summary>
+    /// Recomputes <see cref="LocallyControlled"/> from ownership, mirroring
+    /// <see cref="UnitMovement.RefreshOwnershipGate"/>. SP / pre-match / owned →
+    /// locally controlled (run the FSM). MP non-owner → remote visual only.
+    /// Resets the interpolator on any transition so playback restarts cleanly.
+    /// </summary>
+    private void RefreshOwnershipGate()
+    {
+        bool prev = LocallyControlled;
+
+        if (!NetworkManagerRTS.IsMultiplayerEnabled)
+        {
+            LocallyControlled = true;
+        }
+        else
+        {
+            int local = NetworkManagerRTS.LocalPlayerId;
+            int owner = selfEntity != null ? selfEntity.ownerPlayerId : GameEntity.PlayerOwnerId;
+            // Before MatchStart LocalPlayerId is -1 → treat as locally controlled.
+            LocallyControlled = (local < 0) || (owner == local);
+        }
+
+        if (LocallyControlled != prev)
+        {
+            remoteInterp.Reset();
+            Debug.Log($"[Aircraft:{name}] Owner gate → " +
+                      $"{(LocallyControlled ? "locally controlled (FSM runs)" : "remote visual only")}.");
+        }
+    }
+
+    /// <summary>
+    /// Remote-receive path — called from
+    /// <see cref="NetworkMatchEvents.HandleUnitTransform"/> on non-owner clients
+    /// with the owner's timestamped transform. Buffers the sample; <see cref="Update"/>
+    /// interpolates toward it. No-op on the owner (its FSM is authoritative).
+    /// </summary>
+    public void SetRemoteTransform(Vector3 pos, Quaternion rot, double senderTime)
+    {
+        if (LocallyControlled) return;
+        remoteInterp.Receive(transform, pos, rot, senderTime);
     }
 
     // ------------------------------------------------------------------ //
@@ -410,6 +494,11 @@ public class AirUnitController : MonoBehaviour
     /// </summary>
     public void AttackTarget(Health enemy, long groupId = 0L)
     {
+        // Remote (non-owner) clients are visual-only — the owner is authoritative
+        // for the sortie and its damage. The command still replays here via the
+        // dispatcher, but we ignore it; the remote jet follows synced transforms.
+        if (!LocallyControlled) return;
+
         if (enemy == null || enemy.team == Health.Team.Player)
         {
             Debug.LogWarning($"[Aircraft:{name}] Invalid attack target — ignoring.");
@@ -470,6 +559,9 @@ public class AirUnitController : MonoBehaviour
     /// </summary>
     public void FlyToPoint(Vector3 worldPos, long groupId = 0L)
     {
+        // Remote (non-owner) clients are visual-only — see AttackTarget.
+        if (!LocallyControlled) return;
+
         if (State == FlightState.AttackRun || State == FlightState.AttackEgress)
         {
             Debug.Log($"[Aircraft:{name}] Mid-attack — ignoring patrol command.");
@@ -575,6 +667,17 @@ public class AirUnitController : MonoBehaviour
 
     private void Update()
     {
+        // Non-owner remote clients: this aircraft is a pure visual driven by the
+        // owner's transform broadcasts. Skip the entire FSM + weapon so there is
+        // no divergent flight and no local missile/damage (authority stays with
+        // the owner; damage/death arrive via the existing ApplyDamage /
+        // EntityDestroyed events).
+        if (!LocallyControlled)
+        {
+            remoteInterp.Apply(transform);
+            return;
+        }
+
         // Stamp the moment any state change happened — landing-state timeouts
         // read elapsed time off this. Cheap: only one Time.time write per
         // actual transition. Initial value is recorded on the very first tick.

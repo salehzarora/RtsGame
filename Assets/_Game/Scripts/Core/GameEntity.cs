@@ -124,6 +124,13 @@ public class GameEntity : MonoBehaviour
 
     private void Awake()
     {
+        // A serialized id means this is a SCENE-BAKED entity (the editor tools
+        // stamped a deterministic id). A spawned unit's prefab ships with an
+        // empty id and gets one from the spawn-id slot below. We capture this
+        // BEFORE id resolution so the match-start self-heal at the end of Awake
+        // can target scene-baked entities only.
+        bool sceneBaked = !string.IsNullOrEmpty(entityId);
+
         // 1. Resolve the entity id. Priority order:
         //    a) entityId baked into the serialized field (scene-stamped object).
         //    b) NextSpawnId preset — the spawner pushed a deterministic id
@@ -145,6 +152,36 @@ public class GameEntity : MonoBehaviour
         // 3. Register with the global lookup. Registry handles dup-id warnings
         //    so we don't fail silently on bad data.
         EntityRegistry.Register(this);
+
+        // 4. Match-start self-heal for scene-baked entities (Phase 10.16).
+        //    The starting Dozer lives inside a base that GameplayWorldRoot keeps
+        //    INACTIVE until MatchStart, so it registers AFTER the one-shot
+        //    MultiplayerMatchStarter → RemapAllForLocalPerspective pass and can
+        //    miss it — leaving Health.team on the prefab default and read as
+        //    hostile by friendly auto-attack. Produced units never hit this
+        //    because CommandDispatcher.ExecuteProduce stamps ApplyOwnership at
+        //    spawn. Route scene-baked entities through the SAME ApplyOwnership
+        //    path now so owner/team/color and combat perspective all agree.
+        //
+        //    Guards keep this inert outside the one situation it fixes:
+        //      • sceneBaked            — never touches spawned units' path.
+        //      • ownerPlayerId >= 0    — skip neutral (resource nodes).
+        //      • IsMultiplayerEnabled  — no-op in single-player.
+        //      • IsMatchStarted        — only after slot mapping is authoritative.
+        //      • LocalPlayerId >= 0    — our slot is known, so the Player/Enemy
+        //                                perspective resolves correctly.
+        //    Idempotent: a later RemapAllForLocalPerspective re-apply is a no-op.
+        if (sceneBaked
+            && ownerPlayerId >= 0
+            && NetworkManagerRTS.IsMultiplayerEnabled
+            && NetworkMatchCoordinator.Instance != null
+            && NetworkMatchCoordinator.Instance.IsMatchStarted
+            && NetworkManagerRTS.LocalPlayerId >= 0)
+        {
+            Debug.Log($"[GameEntity] Scene-baked '{name}' (owner {ownerPlayerId}) " +
+                      "registered mid-match — adopting canonical ownership via ApplyOwnership.");
+            ApplyOwnership(ownerPlayerId);
+        }
     }
 
     private void OnDestroy()
@@ -209,6 +246,15 @@ public class GameEntity : MonoBehaviour
     ///     local player id is known, so scene-baked entities adopt the
     ///     correct perspective on each client.
     /// </summary>
+    /// <summary>
+    /// Fires AFTER <see cref="ApplyOwnership"/> has stamped the new owner
+    /// and the color applier has repainted. Components that need to react
+    /// to ownership transitions (e.g. <see cref="UnitMovement"/> toggling
+    /// its NavMeshAgent based on whether THIS client is the owner) subscribe
+    /// in their Awake and re-evaluate on every fire.
+    /// </summary>
+    public event System.Action<int> OnOwnershipApplied;
+
     public void ApplyOwnership(int newOwnerId)
     {
         ownerPlayerId = newOwnerId;
@@ -216,11 +262,11 @@ public class GameEntity : MonoBehaviour
         ApplyLocalTeamPerspective();
 
         // Phase 10.7 — push the owner color through the canonical applier.
-        // OwnerColorApplier looks up MultiplayerColors[ownerPlayerId] and
-        // paints every TeamColorMarker beneath this entity, so spawned
-        // units / passenger reactivations / constructed buildings all paint
-        // consistently across clients.
         OwnerColorApplier.ApplyToEntity(gameObject);
+
+        // Phase 10.14 — let movement / per-owner gameplay components
+        // re-gate themselves now that the canonical owner is set.
+        OnOwnershipApplied?.Invoke(newOwnerId);
     }
 
     /// <summary>

@@ -387,9 +387,15 @@ public class RTSHUD : MonoBehaviour
             return;
         }
 
-        int supply = powerManager.TotalSupply;
-        int demand = powerManager.TotalDemand;
-        bool powered = powerManager.IsPowered;
+        // Per-player power: show only the LOCAL player's grid. In SP /
+        // pre-MatchStart, LocalPlayerId is -1 → fall back to owner 0 (the
+        // single-player faction). Mirrors RefreshResources' local-bank logic.
+        int localPid = NetworkManagerRTS.LocalPlayerId;
+        if (localPid < 0) localPid = GameEntity.PlayerOwnerId;
+
+        int supply = powerManager.SupplyFor(localPid);
+        int demand = powerManager.DemandFor(localPid);
+        bool powered = powerManager.IsPoweredFor(localPid);
 
         string warning = powered ? "" : " ⚠ LOW";
         powerText.text  = $"Power: {supply} / {demand}{warning}";

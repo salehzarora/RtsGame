@@ -180,17 +180,30 @@ public static class CommandDispatcher
             else if (ac != null) aircraft.Add(ac);
         }
 
-        // Formation positions — keep the same centred-grid logic as before so
-        // the command path produces visually identical movement.
+        // Formation positions — same centred-grid logic on every client, so
+        // each unit's slot is deterministic regardless of who replays the
+        // command.
         Vector3[] positions = GetFormationPositions(cmd.targetPosition, ground.Count);
         for (int i = 0; i < ground.Count; i++)
         {
             SelectableUnit u = ground[i];
             UnitMovement mv  = u.GetComponent<UnitMovement>();
-            if (mv != null) mv.MoveTo(positions[i]);
+            if (mv != null)
+            {
+                // Phase 10.14 — only the OWNER client runs the NavMeshAgent.
+                // Non-owner clients receive UnitTransform broadcasts at 5 Hz
+                // and lerp their transform; calling MoveTo there would
+                // either no-op (the agent is disabled) or, worse, fight
+                // the lerp.
+                if (mv.LocallyControlled)
+                {
+                    mv.MoveTo(positions[i]);
+                }
+            }
 
-            // Re-aim the auto-attack scan around the new guard position so a
-            // moved unit doesn't keep trying to defend its old spawn point.
+            // Re-aim the auto-attack scan around the new guard position even
+            // on remote clients — it's a local heuristic that doesn't move
+            // the unit, only changes which targets the guard considers.
             u.GetComponent<GroundAutoAttackController>()?.NotifyManualMove(positions[i]);
         }
 

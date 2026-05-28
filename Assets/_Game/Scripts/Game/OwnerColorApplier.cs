@@ -58,7 +58,25 @@ public static class OwnerColorApplier
             markers[i].ApplyColor(color);
         }
 
+        // Phase 10.13 — also push through to every TeamColorApplier in the
+        // hierarchy. The applier (used by SoldierVisualRoot for the
+        // SkinnedMeshRenderer body slots) previously read
+        // PlayerFactionManager.SelectedColor at OnEnable, which made every
+        // soldier paint with the local client's pick instead of the unit's
+        // owner color. The applier is now owner-aware (resolves via
+        // GetColorForOwner internally), and this hook makes sure the
+        // post-spawn ApplyOwnership pass also triggers it — closing the
+        // race where OnEnable runs with the prefab-default owner=0 before
+        // the dispatcher stamps the real owner.
+        TeamColorApplier[] appliers = go.GetComponentsInChildren<TeamColorApplier>(true);
+        for (int i = 0; i < appliers.Length; i++)
+        {
+            if (appliers[i] == null) continue;
+            appliers[i].ForceRepaint();
+        }
+
         Debug.Log($"[OwnerColor] Applied color RGB({color.r:F2},{color.g:F2},{color.b:F2}) " +
-                  $"to entity={ge.EntityId} owner={ownerId} ('{go.name}')");
+                  $"to entity={ge.EntityId} owner={ownerId} ('{go.name}') — " +
+                  $"markers={markers.Length} appliers={appliers.Length}");
     }
 }

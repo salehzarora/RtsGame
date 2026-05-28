@@ -232,9 +232,11 @@ public class AircraftWeapon : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     /// <summary>
-    /// Builds and launches a single <see cref="StrikeMissile"/> projectile.
-    /// The projectile handles its own flight, damage application, and impact
-    /// flash. We just configure its visual + handoff parameters.
+    /// Builds and launches a single damaging <see cref="StrikeMissile"/>. Runs
+    /// ONLY on the owner (the FSM/weapon are gated off on non-owner clients), so
+    /// it also broadcasts an AircraftFired event telling other clients to spawn
+    /// a VISUAL-ONLY copy — that way remote players see the strike while damage
+    /// stays single-sourced here.
     /// </summary>
     private void SpawnMissile(Transform firePoint, Health target)
     {
@@ -242,6 +244,40 @@ public class AircraftWeapon : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.down * 0.3f;
 
+        StrikeMissile missile = BuildMissileObject(start);
+        missile.Launch(start, target, missileDamage, damageType,
+                       missileProjectileSpeed, impactFlashDuration, missileColor);
+
+        // Replicate the strike as a visual-only missile on other clients. The
+        // snapshot impact point mirrors StrikeMissile.Launch's own endPos so the
+        // remote visual lands where the authoritative missile did.
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge != null && target != null)
+        {
+            Vector3 targetPos = target.transform.position + Vector3.up * 0.5f;
+            NetworkMatchEvents.BroadcastAircraftFired(ge.EntityId, start, targetPos);
+        }
+    }
+
+    /// <summary>
+    /// Spawn a VISUAL-ONLY missile (no damage) flying <paramref name="start"/> →
+    /// <paramref name="end"/>. Called on NON-OWNER clients from the AircraftFired
+    /// network event so remote players see the strike. Never applies damage —
+    /// authoritative damage is dealt once by the owner's <see cref="SpawnMissile"/>.
+    /// </summary>
+    public void SpawnVisualMissile(Vector3 start, Vector3 end)
+    {
+        StrikeMissile missile = BuildMissileObject(start);
+        missile.LaunchVisual(start, end, missileProjectileSpeed, impactFlashDuration, missileColor);
+    }
+
+    /// <summary>
+    /// Builds the missile GameObject (cube + material + <see cref="StrikeMissile"/>),
+    /// positioned at <paramref name="start"/>. Shared by the damaging and
+    /// visual-only spawn paths so the projectile looks identical on every client.
+    /// </summary>
+    private StrikeMissile BuildMissileObject(Vector3 start)
+    {
         GameObject mGO = GameObject.CreatePrimitive(PrimitiveType.Cube);
         mGO.name                 = "StrikeMissile";
         mGO.transform.position   = start;
@@ -271,8 +307,6 @@ public class AircraftWeapon : MonoBehaviour
             r.receiveShadows    = false;
         }
 
-        StrikeMissile missile = mGO.AddComponent<StrikeMissile>();
-        missile.Launch(start, target, missileDamage, damageType,
-                       missileProjectileSpeed, impactFlashDuration, missileColor);
+        return mGO.AddComponent<StrikeMissile>();
     }
 }

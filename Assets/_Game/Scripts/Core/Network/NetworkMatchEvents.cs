@@ -66,6 +66,8 @@ public class NetworkMatchEvents : MonoBehaviour
     public const byte ConstructionCompleteEventCode  = 9;
     public const byte BoardingStartedEventCode       = 10;
     public const byte EntityStateSnapshotEventCode   = 11;
+    public const byte UnitTransformEventCode         = 12;
+    public const byte AircraftFiredEventCode         = 13;
 
     // ------------------------------------------------------------------ //
     // Reentry guard — set while we're applying a received event so the
@@ -268,6 +270,39 @@ public class NetworkMatchEvents : MonoBehaviour
     }
 
     /// <summary>
+    /// Owner-authoritative transform broadcast (Phase 10.14). Sent by the
+    /// client that owns <paramref name="entityId"/> at the transform rate so
+    /// non-owner clients can interpolate their local copy. NavMeshAgent /
+    /// movement simulation on non-owners is disabled — they're pure receivers.
+    ///
+    /// <paramref name="senderTime"/> (Phase 10.16b) is the sender's
+    /// <c>Time.timeAsDouble</c> at broadcast. Receivers key their snapshot
+    /// buffer off this instead of local arrival time, so network jitter /
+    /// burst delivery no longer warps the interpolation timeline (the cause
+    /// of the stepwise "low-FPS" look on remote units).
+    ///
+    /// Authority gate: any-client. We do NOT use the master-only gate here
+    /// because each client is the source of truth for its own units;
+    /// routing every position through master would add a hop of latency
+    /// for the player issuing the move command.
+    /// </summary>
+    public static void BroadcastUnitTransform(string entityId, Vector3 pos, Quaternion rot,
+                                              double senderTime)
+    {
+#if PHOTON_UNITY_NETWORKING
+        if (!ShouldBroadcastAnyClient()) return;
+
+        object[] payload = { entityId ?? string.Empty, pos, rot, senderTime };
+        // Unreliable — at the transform rate a dropped packet is corrected by
+        // the next, and the interpolation delay absorbs a single drop.
+        PhotonNetwork.RaiseEvent(
+            UnitTransformEventCode, payload,
+            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
+            SendOptions.SendUnreliable);
+#endif
+    }
+
+    /// <summary>
     /// Master-only authoritative snapshot of an entity's owner / active /
     /// health state. Receivers call <see cref="ApplyEntityStateSnapshot"/>
     /// to reconcile drift. Used by <see cref="NetworkEntityStateSync"/> as
@@ -290,6 +325,31 @@ public class NetworkMatchEvents : MonoBehaviour
         // the next will resync. Saves Photon throughput.
         PhotonNetwork.RaiseEvent(
             EntityStateSnapshotEventCode, payload,
+            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
+            SendOptions.SendUnreliable);
+#endif
+    }
+
+    /// <summary>
+    /// Owner→others VISUAL-ONLY strike notification. Broadcast when an owner
+    /// aircraft fires a real (damaging) missile so non-owner clients can spawn a
+    /// cosmetic copy of the projectile. Carries the firing aircraft's id, the
+    /// fire position, and the snapshot impact point. Receivers spawn a
+    /// damage-free <see cref="StrikeMissile"/> — authoritative damage is still
+    /// dealt once by the owner's missile + the existing ApplyDamage path.
+    ///
+    /// Any-client gate (only the owner runs the weapon, so only the owner sends).
+    /// Unreliable: a dropped fire visual is harmless — at worst one missile isn't
+    /// drawn on the remote; the target still dies via the authoritative events.
+    /// </summary>
+    public static void BroadcastAircraftFired(string aircraftId, Vector3 firePos, Vector3 targetPos)
+    {
+#if PHOTON_UNITY_NETWORKING
+        if (!ShouldBroadcastAnyClient()) return;
+
+        object[] payload = { aircraftId ?? string.Empty, firePos, targetPos };
+        PhotonNetwork.RaiseEvent(
+            AircraftFiredEventCode, payload,
             new RaiseEventOptions { Receivers = ReceiverGroup.Others },
             SendOptions.SendUnreliable);
 #endif
@@ -421,6 +481,8 @@ public class NetworkMatchEvents : MonoBehaviour
             case ConstructionCompleteEventCode: HandleConstructionComplete(ev); break;
             case BoardingStartedEventCode:      HandleBoardingStarted(ev);      break;
             case EntityStateSnapshotEventCode:  HandleEntityStateSnapshot(ev);  break;
+            case UnitTransformEventCode:        HandleUnitTransform(ev);        break;
+            case AircraftFiredEventCode:        HandleAircraftFired(ev);        break;
             // Other codes (1=PlayerCommand, 2=MatchStart) are handled by
             // their owner components.
         }
@@ -500,6 +562,64 @@ public class NetworkMatchEvents : MonoBehaviour
         {
             IsApplyingNetworkEvent = prev;
         }
+    }
+
+    private static void HandleUnitTransform(EventData ev)
+    {
+        if (!(ev.CustomData is object[] payload) || payload.Length < 3) return;
+
+        string entityId = payload[0] as string ?? string.Empty;
+        if (string.IsNullOrEmpty(entityId)) return;
+        Vector3    pos = (Vector3)payload[1];
+        Quaternion rot = (Quaternion)payload[2];
+
+        // Phase 10.16b — timestamped payload carries the sender's clock at
+        // index 3. Older builds omit it; fall back to the local receive clock
+        // so a mixed-version session still moves (it just loses the
+        // jitter-immunity the sender timestamp provides).
+        double senderTime = (payload.Length >= 4 && payload[3] is double st)
+            ? st
+            : Time.timeAsDouble;
+
+        GameEntity ge = EntityRegistry.Find(entityId);
+        if (ge == null) return;
+
+        // Ground units carry UnitMovement; aircraft carry AirUnitController and
+        // have no UnitMovement. Route to whichever remote-transform receiver
+        // this entity has so non-owner clients interpolate it the same way.
+        UnitMovement mv = ge.GetComponent<UnitMovement>();
+        if (mv != null)
+        {
+            mv.SetRemoteTransform(pos, rot, senderTime);
+            return;
+        }
+
+        AirUnitController air = ge.GetComponent<AirUnitController>();
+        if (air != null) air.SetRemoteTransform(pos, rot, senderTime);
+    }
+
+    private static void HandleAircraftFired(EventData ev)
+    {
+        if (!(ev.CustomData is object[] payload) || payload.Length < 3) return;
+
+        string  aircraftId = payload[0] as string ?? string.Empty;
+        Vector3 firePos    = (Vector3)payload[1];
+        Vector3 targetPos  = (Vector3)payload[2];
+        if (string.IsNullOrEmpty(aircraftId)) return;
+
+        // Fail safe: the firing aircraft may not exist locally (destroyed,
+        // never spawned). Just skip — there's nothing to draw and no state to
+        // reconcile (this event is purely cosmetic).
+        GameEntity ge = EntityRegistry.Find(aircraftId);
+        if (ge == null) return;
+
+        AircraftWeapon weapon = ge.GetComponent<AircraftWeapon>();
+        if (weapon == null) return;
+
+        // Visual only — never deals damage (SpawnVisualMissile → LaunchVisual
+        // with a null target). Authoritative damage already happened on the
+        // owner; the target's health/death arrive via ApplyDamage / EntityDestroyed.
+        weapon.SpawnVisualMissile(firePos, targetPos);
     }
 
     private static void HandleBoardingStarted(EventData ev)

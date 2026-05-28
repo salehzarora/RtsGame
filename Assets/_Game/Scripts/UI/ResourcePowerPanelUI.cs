@@ -69,7 +69,12 @@ public class ResourcePowerPanelUI : MonoBehaviour
             lookupAttempted = true;
         }
 
-        bool low = powerManager != null && !powerManager.IsPowered;
+        // Per-player power: pulse only when the LOCAL player's grid is short.
+        // SP / pre-MatchStart → owner 0 fallback (matches RTSHUD.RefreshPower).
+        int localPid = NetworkManagerRTS.LocalPlayerId;
+        if (localPid < 0) localPid = GameEntity.PlayerOwnerId;
+
+        bool low = powerManager != null && !powerManager.IsPoweredFor(localPid);
         if (lowPowerIndicator.gameObject.activeSelf != low)
             lowPowerIndicator.gameObject.SetActive(low);
 

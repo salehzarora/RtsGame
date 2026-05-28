@@ -179,7 +179,14 @@ public class EscapeMenuController : MonoBehaviour
         if (GameStateManager.Instance != null)
             GameStateManager.Instance.ResetToMenu();
 
-        // 8. Show the main menu canvas.
+        // 8. Tear down the match's runtime objects + color slots + id
+        //    allocator counter so the NEXT match starts with a clean slate.
+        //    Without this, produced units / constructed buildings from this
+        //    match would survive into the next and keep their previous-match
+        //    colors via stale MultiplayerColors entries.
+        MatchSessionResetter.ResetForNewMatch();
+
+        // 9. Show the main menu canvas.
         if (mainMenuCanvas == null)
             mainMenuCanvas = GameObject.Find("MainMenuCanvas");
         if (mainMenuCanvas != null)

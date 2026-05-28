@@ -128,42 +128,94 @@ public class TeamColorApplier : MonoBehaviour
     // ------------------------------------------------------------------ //
 
     // ------------------------------------------------------------------ //
-    // Faction binding — pull the live player color from PlayerFactionManager
-    // and stay subscribed for future color changes from the menu / settings.
-    // Falls back to the Inspector teamColor if no manager is in the scene.
+    // Owner-aware color binding (Phase 10.13).
+    //
+    // The color painted onto the slots is resolved each time from the
+    // entity's canonical owner — never from the LOCAL client's
+    // PlayerFactionManager.SelectedColor. Resolution order
+    // (PlayerFactionManager.GetColorForOwner):
+    //   1. MultiplayerColors[ownerPlayerId] (set by MatchStart).
+    //   2. PlayerFactionManager.SelectedColor (only when ownerId == 0 and
+    //      no MP slot is registered — i.e. legacy single-player path).
+    //   3. Default slot color.
+    //
+    // We subscribe to MultiplayerColors.OnColorsChanged so a late MatchStart
+    // still triggers a repaint (mirror of TeamColorMarker). The legacy
+    // PlayerFactionManager.OnColorChanged subscription is kept for SP, but
+    // the callback re-resolves from the owner — we never trust the color
+    // it passes as-is, because that color is THIS client's local pick.
     // ------------------------------------------------------------------ //
 
-    private bool subscribed;
+    private bool subscribedPFM;
+    private bool subscribedMP;
 
     private void OnEnable()
     {
-        // Fixed-color slots are independent of the menu — paint them first so
-        // they're correct even if no PlayerFactionManager exists.
+        // Fixed-color slots are independent of any team-color flow.
         ApplyFixedColors();
 
+        // Stay current with MP slot-color changes.
+        MultiplayerColors.OnColorsChanged += HandleColorsChanged;
+        subscribedMP = true;
+
+        // SP backward-compat: if the legacy faction manager exists, listen
+        // for its color changes too. The callback re-resolves from owner,
+        // so the color it passes is ignored — it just triggers a refresh.
         PlayerFactionManager mgr = PlayerFactionManager.Instance;
         if (mgr != null)
         {
-            // Subscribe first so we never miss a color change between now and
-            // the first apply call.
-            mgr.OnColorChanged += ApplyTeamColor;
-            subscribed = true;
-            ApplyTeamColor(mgr.SelectedColor);
+            mgr.OnColorChanged += HandleFactionColorChanged;
+            subscribedPFM = true;
         }
-        else if (applyOnStart)
-        {
-            // No faction system present (preview scene, isolated test rig).
-            // Use the Inspector color as a last-resort fallback.
-            ApplyTeamColor(teamColor);
-        }
+
+        // Initial paint. At this point the spawning prefab's GameEntity
+        // typically still has ownerPlayerId = 0 (the prefab default) —
+        // CommandDispatcher.ApplyOwnership runs AFTER Instantiate and
+        // re-paints us via OwnerColorApplier.ApplyToEntity → ForceRepaint.
+        // If that hook hasn't fired yet (preview scene, designer-placed
+        // unit), we still get the right color via the owner-aware
+        // resolution below.
+        if (applyOnStart || mgr != null)
+            ResolveAndApply();
     }
 
     private void OnDisable()
     {
-        if (!subscribed) return;
-        PlayerFactionManager mgr = PlayerFactionManager.Instance;
-        if (mgr != null) mgr.OnColorChanged -= ApplyTeamColor;
-        subscribed = false;
+        if (subscribedMP)
+        {
+            MultiplayerColors.OnColorsChanged -= HandleColorsChanged;
+            subscribedMP = false;
+        }
+        if (subscribedPFM)
+        {
+            PlayerFactionManager mgr = PlayerFactionManager.Instance;
+            if (mgr != null) mgr.OnColorChanged -= HandleFactionColorChanged;
+            subscribedPFM = false;
+        }
+    }
+
+    private void HandleColorsChanged() => ResolveAndApply();
+    private void HandleFactionColorChanged(Color _) => ResolveAndApply();
+
+    /// <summary>
+    /// Public façade for an owner-aware repaint. Called by
+    /// <see cref="OwnerColorApplier.ApplyToEntity"/> after
+    /// <see cref="GameEntity.ApplyOwnership"/> has stamped the canonical
+    /// owner, so the body slots flip to the right color the instant the
+    /// dispatcher's post-spawn step runs.
+    /// </summary>
+    public void ForceRepaint() => ResolveAndApply();
+
+    private void ResolveAndApply()
+    {
+        // Resolve owner from a sibling or ancestor GameEntity. The applier
+        // lives on a visual-root child (SoldierVisualRoot) so we walk up.
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge == null) ge = GetComponentInParent<GameEntity>();
+
+        int ownerId = ge != null ? ge.ownerPlayerId : GameEntity.PlayerOwnerId;
+        Color resolved = PlayerFactionManager.GetColorForOwner(ownerId);
+        ApplyTeamColor(resolved);
     }
 
     // ------------------------------------------------------------------ //

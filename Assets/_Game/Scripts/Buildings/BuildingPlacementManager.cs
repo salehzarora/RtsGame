@@ -138,6 +138,15 @@ public class BuildingPlacementManager : MonoBehaviour
     private Material      runtimeValidMat;
     private Material      runtimeInvalidMat;
 
+    // Phase 10.12 — reusable MaterialPropertyBlock applied to every ghost
+    // renderer each frame so the ghost is painted by the LOCAL player's
+    // team color (valid) or red (invalid), independent of whatever
+    // ownership-driven MPB the prefab's now-destroyed TeamColorMarker left
+    // behind. See TryEnterPlacementMode / UpdateGhostColor.
+    private static readonly int GhostBaseColorId = Shader.PropertyToID("_BaseColor");
+    private static readonly int GhostColorId     = Shader.PropertyToID("_Color");
+    private MaterialPropertyBlock ghostMpb;
+
     // Active placement session — set by TryEnterPlacementMode
     private GameObject    activePrefab;
     private int           activeCost;
@@ -404,6 +413,19 @@ public class BuildingPlacementManager : MonoBehaviour
             Destroy(mb);
 
         ghostRenderers = ghost.GetComponentsInChildren<Renderer>(true);
+
+        // Phase 10.12 — the prefab's TeamColorMarker.OnEnable ran during
+        // Instantiate (before the strip above destroyed it). It wrote a
+        // MaterialPropertyBlock to every renderer using
+        // MultiplayerColors[GameEntity.ownerPlayerId] — which on the prefab
+        // is the default 0 = slot 0 = Player 1's color. The MPB persists
+        // through the component destroy and overrides whatever color we
+        // later set on the ghost's material. Clear it now so the ghost
+        // tint comes from UpdateGhostColor below, not from a stale
+        // ownership-driven paint.
+        MaterialPropertyBlock empty = new MaterialPropertyBlock();
+        foreach (Renderer r in ghostRenderers)
+            if (r != null) r.SetPropertyBlock(empty);
     }
 
     private void CancelPlacement()
@@ -478,10 +500,35 @@ public class BuildingPlacementManager : MonoBehaviour
 
         isValid = affordable && clearGround;
 
+        // Phase 10.12 — ghost paint:
+        //   Valid   → LOCAL player's team color (per MultiplayerColors lookup
+        //              for the active owner; SP falls back to PFM.SelectedColor).
+        //   Invalid → red.
+        // The runtime material (alpha-blended transparent) provides the
+        // see-through preview look; the MaterialPropertyBlock owns the color
+        // override so the LOCAL client always sees the LOCAL team color
+        // regardless of the prefab's stamped ownerPlayerId. This is what
+        // stops Player 2 from seeing the ghost in Player 1's color.
+        int    localOwner = GetActiveOwnerId();         // dozer-owner in DozerSite, local player in Instant
+        Color  teamColor  = PlayerFactionManager.GetColorForOwner(localOwner);
+        teamColor.a = 0.50f;
+
+        Color tint = isValid
+            ? teamColor
+            : new Color(1.00f, 0.15f, 0.05f, 0.50f);    // red-invalid
+
         Material mat = isValid ? runtimeValidMat : runtimeInvalidMat;
 
+        if (ghostMpb == null) ghostMpb = new MaterialPropertyBlock();
+        ghostMpb.SetColor(GhostBaseColorId, tint);      // URP Lit
+        ghostMpb.SetColor(GhostColorId,     tint);      // Standard / Sprites
+
         foreach (Renderer r in ghostRenderers)
-            r.material = mat;
+        {
+            if (r == null) continue;
+            r.material = mat;                           // instance material (transparent shader)
+            r.SetPropertyBlock(ghostMpb);               // team-color (or red-invalid) override
+        }
     }
 
     // ------------------------------------------------------------------ //
