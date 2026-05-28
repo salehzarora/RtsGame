@@ -38,6 +38,14 @@ public class Health : MonoBehaviour
              "Set ~1.5–2.0 on units that play a death animation so the clip has time to play.")]
     public float destroyDelay = 0f;
 
+    [Tooltip("If true (default), the GameObject is destroyed when health reaches 0 — the " +
+             "normal behaviour for units and buildings. Set FALSE for persistent map " +
+             "objects (e.g. a destructible bridge) that must survive 'death' to show a " +
+             "destroyed visual / act as a path blocker. When false, OnDeath still fires " +
+             "(once) so a DestructibleMapObject can run its destroyed-state transition, " +
+             "but the GameObject and its GameEntity stay registered for network sync.")]
+    public bool destroyObjectOnDeath = true;
+
     // ------------------------------------------------------------------ //
     // Runtime state
     // ------------------------------------------------------------------ //
@@ -154,10 +162,30 @@ public class Health : MonoBehaviour
 
         OnDeath?.Invoke();
 
+        // Persistent map objects opt out of GameObject destruction so they can
+        // present a destroyed visual / blocker. They stay registered in
+        // EntityRegistry so network state sync still reaches them.
+        if (!destroyObjectOnDeath) return;
+
         if (destroyDelay > 0f)
             StartCoroutine(DelayedDestroy(destroyDelay));
         else
             Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Restore this entity to full health and clear the <see cref="dying"/>
+    /// latch so it can take damage and die again. Intended for persistent map
+    /// objects (<see cref="destroyObjectOnDeath"/> == false) that need to be
+    /// reset to their intact state on a match restart / repair. No-op style
+    /// safe to call on a healthy object. Fires <see cref="OnHealthChanged"/>
+    /// so any health bar refreshes.
+    /// </summary>
+    public void ReviveFull()
+    {
+        dying         = false;
+        CurrentHealth = maxHealth;
+        OnHealthChanged?.Invoke(CurrentHealth, maxHealth);
     }
 
     private System.Collections.IEnumerator DelayedDestroy(float seconds)

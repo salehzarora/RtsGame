@@ -11,6 +11,10 @@ public enum EntityType
     Aircraft,
     Resource,
     Projectile,
+    // Neutral, scene-baked interactable map features (destructible bridges,
+    // fuel tanks, garrison buildings, watch towers, tunnel entrances). Added
+    // at the END so existing serialized enum indices are preserved.
+    MapObject,
 }
 
 /// <summary>

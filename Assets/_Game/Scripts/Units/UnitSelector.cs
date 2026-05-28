@@ -441,6 +441,18 @@ public class UnitSelector : MonoBehaviour
             }
         }
 
+        // --- Priority 0.5: interactive map object (garrison / tunnel / attack) ---
+        // Routes a click on a Map system object (garrison building, watch tower,
+        // tunnel entrance, fuel tank, bridge) to the appropriate command. Runs
+        // BEFORE the attack/move branches because map objects live on a non-
+        // combat layer — otherwise a click on a fuel tank would fall through to
+        // the ground-move branch and just walk units behind it.
+        if (MapInteractionRouter.TryRouteRightClick(ray))
+        {
+            attackMarker?.Hide();
+            return;
+        }
+
         // --- Priority 1: enemy unit OR enemy building → attack -----------
         // Raycast against BOTH Unit and Building layers so enemy buildings
         // (e.g. EnemyMachineGunDefense, future enemy bases) become valid

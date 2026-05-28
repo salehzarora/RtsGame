@@ -68,7 +68,9 @@ public static class ValidateMultiplayerOwnership
                 emptyId++;
             }
 
-            if (o == GameEntity.NeutralOwnerId && ge.entityType != EntityType.Resource)
+            if (o == GameEntity.NeutralOwnerId
+                && ge.entityType != EntityType.Resource
+                && ge.entityType != EntityType.MapObject)
             {
                 Debug.LogWarning($"[ValidateOwnership]   ✗ Neutral-owner non-resource: " +
                                  $"'{ge.name}' (type {ge.entityType}). Should this be claimed " +
