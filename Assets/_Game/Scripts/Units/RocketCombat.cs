@@ -250,6 +250,8 @@ public class RocketCombat : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.up * 1.2f;
 
+        AudioManager.SfxAt(GameSound.RocketLaunch, origin);
+
         if (firstShotPending)
         {
             Debug.Log($"[RPG:{name}] First rocket fired immediately.");

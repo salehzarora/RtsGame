@@ -278,6 +278,11 @@ public class AircraftWeapon : MonoBehaviour
     /// </summary>
     private StrikeMissile BuildMissileObject(Vector3 start)
     {
+        // Positional launch sound. BuildMissileObject is the ONE path shared by
+        // the owner's damaging missile and the remotes' visual-only copy, so the
+        // launch is heard on every client without a separate audio event.
+        AudioManager.SfxAt(GameSound.MissileLaunch, start);
+
         GameObject mGO = GameObject.CreatePrimitive(PrimitiveType.Cube);
         mGO.name                 = "StrikeMissile";
         mGO.transform.position   = start;

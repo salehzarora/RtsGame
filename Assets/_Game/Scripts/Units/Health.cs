@@ -92,7 +92,16 @@ public class Health : MonoBehaviour
         BroadcastDamageIfMaster(amount);
 
         if (CurrentHealth <= 0f)
+        {
             Die();
+        }
+        else
+        {
+            // Optional "took a hit" cue (off until a clip is assigned). Heavily
+            // throttled by the SoundEvent's minInterval so sustained fire doesn't
+            // spam it. Death has its own sound below.
+            AudioManager.SfxAt(GameSound.UnitDamaged, transform.position);
+        }
     }
 
     /// <summary>Restore health, capped at maxHealth.</summary>
@@ -160,6 +169,8 @@ public class Health : MonoBehaviour
         // suppress-flag broadcasts internally.
         BroadcastDestroyIfMaster();
 
+        PlayDeathSound();
+
         OnDeath?.Invoke();
 
         // Persistent map objects opt out of GameObject destruction so they can
@@ -198,6 +209,26 @@ public class Health : MonoBehaviour
     // Broadcast helpers — small wrappers so the call sites above stay
     // readable. All MP gating lives inside NetworkMatchEvents.
     // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Positional destruction cue, chosen by the entity's category so buildings
+    /// and units can sound different. Runs on every client (Die fires locally on
+    /// each via the replicated EntityDestroyed event). Map objects are skipped —
+    /// <see cref="DestructibleMapObject"/> plays its own destruction clip.
+    /// </summary>
+    private void PlayDeathSound()
+    {
+        GameEntity ge = GetComponent<GameEntity>();
+        if (ge == null) ge = GetComponentInParent<GameEntity>();
+
+        if (ge != null && ge.entityType == EntityType.MapObject) return;
+
+        GameSound sound = (ge != null && ge.entityType == EntityType.Building)
+            ? GameSound.BuildingDestroyed
+            : GameSound.UnitDeath;
+
+        AudioManager.SfxAt(sound, transform.position);
+    }
 
     private void BroadcastDamageIfMaster(float amount)
     {

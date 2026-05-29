@@ -434,6 +434,10 @@ public class BuildingTurretCombat : MonoBehaviour
         tracer.SetPosition(1, end);
         tracer.enabled = true;
         tracerTimer    = tracerDuration;
+
+        // Positional MG-turret fire. Throttled by the SoundEvent's minInterval
+        // so the fast attackCooldown (~0.15s) doesn't machine-gun the speakers.
+        AudioManager.SfxAt(GameSound.TurretFire, start);
     }
 
     private void TickTracer()

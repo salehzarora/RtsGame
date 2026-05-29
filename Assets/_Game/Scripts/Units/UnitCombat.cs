@@ -355,6 +355,11 @@ public class UnitCombat : MonoBehaviour
         tracer.SetPosition(1, end);
         tracer.enabled = true;
         tracerTimer    = tracerDuration;
+
+        // Positional gunfire — fires on the owner client (combat FSM is gated
+        // off on non-owners). The SoundEvent's minInterval keeps a squad firing
+        // together from turning into a wall of noise.
+        AudioManager.SfxAt(GameSound.Gunfire, start);
     }
 
     private void TickTracer()

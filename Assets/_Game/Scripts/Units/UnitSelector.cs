@@ -504,6 +504,8 @@ public class UnitSelector : MonoBehaviour
                 CommandDispatcher.IssueAttack(
                     GameEntity.LocalCommandPlayerId, attackerIds, targetEntity, targetHealth);
 
+                AudioManager.Sfx(GameSound.UnitAttackOrder);
+
                 if (attackMarker != null)
                 {
                     attackMarker.Show(targetHealth.transform);
@@ -530,10 +532,12 @@ public class UnitSelector : MonoBehaviour
                 GameEntity nodeGe = node.GetComponent<GameEntity>();
                 string nodeId    = nodeGe != null ? nodeGe.EntityId : string.Empty;
 
+                bool anyWorker = false;
                 foreach (SelectableUnit unit in selectedUnits)
                 {
                     WorkerGatherer w = unit.GetComponent<WorkerGatherer>();
                     if (w == null) continue;
+                    anyWorker = true;
 
                     // Local apply runs first so the issuing client sees the
                     // worker react instantly.
@@ -548,6 +552,8 @@ public class UnitSelector : MonoBehaviour
                     if (wGe != null && !string.IsNullOrEmpty(nodeId))
                         NetworkMatchEvents.BroadcastWorkerGather(wGe.EntityId, nodeId);
                 }
+
+                if (anyWorker) AudioManager.Sfx(GameSound.UnitGatherOrder);
 
                 attackMarker?.Hide();
                 return;
@@ -580,6 +586,8 @@ public class UnitSelector : MonoBehaviour
             string[] moverIds = CollectSelectionEntityIds();
             CommandDispatcher.Issue(
                 PlayerCommand.Move(GameEntity.LocalCommandPlayerId, moverIds, groundHit.point));
+
+            AudioManager.Sfx(GameSound.UnitMoveOrder);
         }
     }
 
@@ -651,6 +659,7 @@ public class UnitSelector : MonoBehaviour
 
         selectedBuilding = building;
         selectedBuilding.Select();
+        AudioManager.Sfx(GameSound.UnitSelect);
 
         UnitProducer           soldierProd = building.GetComponent<UnitProducer>();
         CommandCenterProducer  workerProd  = building.GetComponent<CommandCenterProducer>();
@@ -733,6 +742,9 @@ public class UnitSelector : MonoBehaviour
         if (!IsLocallyOwned(unit.gameObject)) return;    // MP: skip non-owned units
         selectedUnits.Add(unit);
         unit.Select();
+        // Local-only selection blip. The SoundEvent's minInterval collapses a
+        // whole drag-box of units (all added in one frame) into a single play.
+        AudioManager.Sfx(GameSound.UnitSelect);
         RefreshDozerBuildPanel();
         RefreshTransportPanel();
     }
@@ -794,6 +806,7 @@ public class UnitSelector : MonoBehaviour
         if (!IsLocallyOwned(aircraft.gameObject)) return;    // MP: skip non-owned aircraft
         selectedAircraft.Add(aircraft);
         aircraft.Select();
+        AudioManager.Sfx(GameSound.UnitSelect);
     }
 
     /// <summary>

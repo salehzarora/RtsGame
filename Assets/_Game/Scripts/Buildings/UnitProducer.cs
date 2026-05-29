@@ -148,6 +148,7 @@ public class UnitProducer : MonoBehaviour
         {
             Debug.LogWarning($"[Power] Not enough power. Production paused. " +
                              $"Build a PowerPlant (P) to restore power.");
+            PlayBlockedSound(ownerId);
             return;
         }
 
@@ -155,6 +156,7 @@ public class UnitProducer : MonoBehaviour
         {
             Debug.LogWarning($"[{name}] Not enough resources to produce {unitLabel}. " +
                              $"Need {cost}, have {bank.CurrentResources} (owner {ownerId}).");
+            PlayBlockedSound(ownerId);
             return;
         }
 
@@ -185,5 +187,18 @@ public class UnitProducer : MonoBehaviour
 
         Debug.Log($"[UnitProducer] {unitLabel} produced by '{name}' at {spawnPos:F1}. " +
                   $"Remaining resources (owner {ownerId}): {bank.CurrentResources}");
+    }
+
+    /// <summary>
+    /// Play the "invalid action" UI sound for a blocked production, but ONLY on
+    /// the client that owns this producer — a remote client replaying the same
+    /// Produce command must stay silent (the error belongs to the issuer). In
+    /// single-player every producer is the local actor.
+    /// </summary>
+    private void PlayBlockedSound(int ownerId)
+    {
+        bool localActor = !NetworkManagerRTS.IsMultiplayerEnabled
+                       || ownerId == NetworkManagerRTS.LocalPlayerId;
+        if (localActor) AudioManager.Sfx(GameSound.UIError);
     }
 }

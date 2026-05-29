@@ -122,6 +122,73 @@ public class ConstructionSite : MonoBehaviour
     // Initialise. Empty in the single-player path → falls back to GUID.
     private string networkFinalBuildingEntityId = "";
 
+    // --- Construction audio ------------------------------------------------ //
+    // A self-owned looping AudioSource that plays only while a dozer is actively
+    // feeding progress, and stops the moment construction completes or the site
+    // is destroyed/cancelled (the source dies with this GameObject). The clip +
+    // base volume come from the AudioManager's SoundLibrary so it's all wired in
+    // one place. Null-safe: stays silent if no AudioManager / clip exists.
+    private AudioSource buildLoopSource;
+    private float       lastProgressTime = -999f;
+    private bool        loopClipResolved;
+    private float       loopEventVolume = 0.5f;
+
+    private void Awake()
+    {
+        buildLoopSource = GetComponent<AudioSource>();
+        if (buildLoopSource == null)
+            buildLoopSource = gameObject.AddComponent<AudioSource>();
+        buildLoopSource.playOnAwake  = false;
+        buildLoopSource.loop         = true;
+        buildLoopSource.spatialBlend = 1f;       // positional
+        buildLoopSource.minDistance  = 12f;
+        buildLoopSource.maxDistance  = 120f;
+        buildLoopSource.dopplerLevel = 0f;
+    }
+
+    private void Update()
+    {
+        if (buildLoopSource == null) return;
+
+        // Completed sites never loop.
+        if (IsComplete)
+        {
+            if (buildLoopSource.isPlaying) buildLoopSource.Stop();
+            return;
+        }
+
+        // "Actively building" = a dozer fed progress within the last frames.
+        bool building = (Time.time - lastProgressTime) < 0.25f;
+
+        if (building && AudioManager.Instance != null)
+        {
+            if (!loopClipResolved)
+            {
+                SoundEvent ev = AudioManager.Instance.GetEvent(GameSound.ConstructionLoop);
+                if (ev != null && ev.HasClip)
+                {
+                    buildLoopSource.clip = ev.PickClip();
+                    loopEventVolume      = ev.volume;
+                }
+                // Apply the RTS distance falloff so a distant build site's loop
+                // fades to silence at the construction max distance (instead of
+                // the default Logarithmic rolloff that never quite hits zero).
+                AudioManager.Instance.ConfigureSpatialLoop(buildLoopSource, GameSound.ConstructionLoop);
+                loopClipResolved = true;     // resolve once (clip may legitimately be null)
+            }
+
+            if (buildLoopSource.clip != null)
+            {
+                buildLoopSource.volume = loopEventVolume * AudioManager.Instance.SfxScalar;
+                if (!buildLoopSource.isPlaying) buildLoopSource.Play();
+            }
+        }
+        else if (buildLoopSource.isPlaying)
+        {
+            buildLoopSource.Pause();         // dozer left / cancelled — pause, don't restart
+        }
+    }
+
     // ------------------------------------------------------------------ //
     // Setup — called by BuildingPlacementManager right after Instantiate
     // ------------------------------------------------------------------ //
@@ -153,6 +220,10 @@ public class ConstructionSite : MonoBehaviour
 
         // Reset the progress bar visual to zero.
         RefreshProgressVisual();
+
+        // "Construction started" cue. Runs on every client (the site spawns on
+        // each via the Build command), so both players hear it placed.
+        AudioManager.SfxAt(GameSound.BuildingPlace, transform.position);
     }
 
     /// <summary>
@@ -206,6 +277,9 @@ public class ConstructionSite : MonoBehaviour
         if (IsComplete) return;
         if (deltaSeconds <= 0f) return;
 
+        // Mark "actively building" so the construction loop (in Update) plays.
+        lastProgressTime = Time.time;
+
         // The first dozer to reach the site is registered as the active builder
         // even if BPM didn't pre-assign one (e.g. resume-by-right-click).
         if (AssignedDozer == null) AssignedDozer = dozer;
@@ -239,6 +313,11 @@ public class ConstructionSite : MonoBehaviour
         if (IsComplete) return;
         IsComplete = true;
 
+        // Stop the build loop the instant we finish (Update also guards this,
+        // but the GameObject is destroyed below so do it now).
+        if (buildLoopSource != null && buildLoopSource.isPlaying)
+            buildLoopSource.Stop();
+
         if (FinalBuildingPrefab == null)
         {
             Debug.LogError($"[Construction] {BuildingLabel} site at {transform.position:F1} has no final prefab " +
@@ -248,6 +327,9 @@ public class ConstructionSite : MonoBehaviour
         }
 
         Vector3 pos = transform.position;
+
+        // "Construction complete" cue at the site — runs on every client.
+        AudioManager.SfxAt(GameSound.ConstructionComplete, pos);
 
         // Phase 2: push the network-allocated final id BEFORE Instantiate so
         // GameEntity.Awake on the spawned building adopts it. Empty preset →

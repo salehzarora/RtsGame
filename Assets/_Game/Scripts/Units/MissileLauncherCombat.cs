@@ -314,6 +314,8 @@ public class MissileLauncherCombat : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.up * 1.6f;
 
+        AudioManager.SfxAt(GameSound.ArtilleryLaunch, origin);
+
         // Snapshot the impact at the target's CURRENT ground position so the
         // missile feels committed — moving targets can dodge by relocating
         // during the flight time, which is a feature of artillery.

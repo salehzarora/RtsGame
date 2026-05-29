@@ -185,6 +185,8 @@ public class RocketProjectile : MonoBehaviour
 
     private void SpawnImpactFlash(Vector3 worldPos)
     {
+        AudioManager.SfxAt(GameSound.Impact, worldPos);
+
         if (impactFlashDuration <= 0f) return;
 
         GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Sphere);

@@ -201,6 +201,10 @@ public class ExplosiveMapObject : DestructibleMapObject
 
     private void SpawnBlastFlash(Vector3 center)
     {
+        // Positional explosion — driven by the replicated destroyed-state
+        // transition, so it runs (and sounds) on every client.
+        AudioManager.SfxAt(GameSound.Explosion, center);
+
         const int IgnoreRaycastLayer = 2;
 
         GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Sphere);

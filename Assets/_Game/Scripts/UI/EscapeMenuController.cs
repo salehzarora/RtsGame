@@ -131,6 +131,7 @@ public class EscapeMenuController : MonoBehaviour
     {
         if (menuCanvas == null) return;
         menuCanvas.SetActive(true);
+        AudioManager.Sfx(GameSound.UIOpenPanel);
         Debug.Log("[PauseMenu] ESC menu opened.");
     }
 
@@ -138,6 +139,7 @@ public class EscapeMenuController : MonoBehaviour
     {
         if (menuCanvas == null) return;
         menuCanvas.SetActive(false);
+        AudioManager.Sfx(GameSound.UIClosePanel);
         Debug.Log("[PauseMenu] ESC menu closed.");
     }
 

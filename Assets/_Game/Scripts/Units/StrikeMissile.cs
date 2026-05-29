@@ -163,6 +163,10 @@ public class StrikeMissile : MonoBehaviour
     /// </summary>
     private void SpawnImpactFlash()
     {
+        // Positional impact — runs on every client (the visual-only missile on
+        // non-owners also calls Impact), so both players hear the strike land.
+        AudioManager.SfxAt(GameSound.Impact, endPos);
+
         if (impactFlashDuration <= 0f) return;
 
         GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Sphere);
