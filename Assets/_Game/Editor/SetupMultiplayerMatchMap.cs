@@ -1,48 +1,79 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
 /// <summary>
-/// One-click editor tool that prepares the active scene for a 1-vs-1 Photon
-/// match. Creates two player bases on opposite corners of the map, each with
-/// a single Dozer + nearby ResourceNodes + per-owner
-/// <see cref="PlayerResourceManager"/>. The CommandCenter is no longer
-/// spawned at match start — players must build their own CC via the Dozer
-/// build menu (Phase 10). Also disables enemy AI roots so the AI bot doesn't
-/// run in multiplayer, and auto-binds the freshly-built CommandCenterPrefab
-/// onto the scene's <see cref="BuildingPlacementManager"/> so the Dozer's
-/// "Command Center" button works at runtime.
+/// One-click editor tool that prepares the active scene for a 1–4 player Photon
+/// match. Builds FOUR corner starting areas (A / B / C / D), each with a
+/// visible start marker, a starting Dozer/builder, a resource cluster, and a
+/// per-owner resource bank, all under one clearly-named root in the Hierarchy:
+///
+///   GameplayWorldRoot
+///     CornerBases
+///       CornerBase_A
+///         StartMarker_A   Dozer_A   ResourceCluster_A   Bank_A
+///       CornerBase_B  …  CornerBase_C  …  CornerBase_D
 ///
 /// Menu: Tools → RTS → Match → Setup Multiplayer Match Map
 ///
-/// Single-player tool (<c>Setup Clean Match Map</c>) is unchanged — both
-/// tools coexist; use whichever matches your scene's intended mode.
+/// DESIGN: the corner is a FIXED location with a FIXED cornerIndex. It is NOT
+/// permanently owned — at match start the coordinator assigns each active
+/// player to a corner and reveals only the assigned ones (unused corners stay
+/// hidden). See <see cref="CornerBase"/>. In the EDITOR all four corners are
+/// always visible so you can verify the layout without pressing Play.
 ///
-/// What this tool DOES NOT touch:
-///   • HUDCanvas, MainMenuCanvas, NetworkManager, MultiplayerDebugCanvas.
-///   • Existing terrain / ground / NavMesh — assumes they were already set
-///     up by the single-player Setup Clean Match Map tool first.
-///   • Photon connection — that's the runtime/UI flow.
+/// VISIBILITY + VALIDATION: everything is created in the OPEN scene (not on
+/// prefabs), placed on the ground via a downward raycast, registered with Undo,
+/// dirtied, and the scene is marked dirty. The tool prints a full report and
+/// runs validation automatically. Missing prefabs DON'T fail silently — the
+/// tool logs exactly what was missing and drops a coloured placeholder cube so
+/// the corner is still visible/verifiable.
 ///
-/// After running, re-run <c>Add GameEntity To Scene Objects</c> so the new
-/// Dozers and ResourceNodes get deterministic ids.
+/// Re-running is safe: it removes the previous GameplayWorldRoot/CornerBases
+/// (and any legacy Player0Base/Player1Base) and rebuilds from scratch.
+///
+/// After running, run <c>Tools → RTS → Multiplayer Prep → Add GameEntity To
+/// Scene Objects</c> so the new units/resources get deterministic ids.
 /// </summary>
 public static class SetupMultiplayerMatchMap
 {
     // ------------------------------------------------------------------ //
-    // Constants
+    // Layout constants
     // ------------------------------------------------------------------ //
 
-    public static readonly Vector3 Player0BasePos = new Vector3(-80f, 0f, -70f);
-    public static readonly Vector3 Player1BasePos = new Vector3( 80f, 0f,  70f);
+    // Fallback corner coordinates (X,Z). Y is resolved per-corner by raycasting
+    // down onto the ground/terrain. A=bottom-left, B=bottom-right, C=top-left,
+    // D=top-right.
+    public static readonly Vector3[] CornerPositions =
+    {
+        new Vector3(-80f, 0f, -70f), // A (index 0)
+        new Vector3( 80f, 0f, -70f), // B (index 1)
+        new Vector3(-80f, 0f,  70f), // C (index 2)
+        new Vector3( 80f, 0f,  70f), // D (index 3)
+    };
 
-    private static readonly Color Player0Color = new Color(0.20f, 0.55f, 1.00f); // blue
-    private static readonly Color Player1Color = new Color(0.92f, 0.20f, 0.20f); // red
+    private static readonly Color[] CornerColors =
+    {
+        new Color(0.20f, 0.55f, 1.00f), // A blue
+        new Color(0.92f, 0.20f, 0.20f), // B red
+        new Color(0.30f, 0.80f, 0.35f), // C green
+        new Color(0.95f, 0.80f, 0.20f), // D yellow
+    };
+
     private static readonly Color ResourceColor = new Color(0.85f, 0.78f, 0.20f); // gold
 
-    private const int StartingResources = 1000;
-    private const int ResourceNodesPerBase = 4;
-    private const float ResourceNodeRadius = 12f;
+    // Back-compat: a couple of older callers still read these two. Map them to
+    // the diagonal corners A and D so existing camera wiring keeps working.
+    public static Vector3 Player0BasePos => CornerPositions[0];
+    public static Vector3 Player1BasePos => CornerPositions[3];
+
+    private const int   StartingResources    = 1000;
+    private const int   ResourceNodesPerBase = 4;
+    private const float ResourceNodeRadius   = 12f;
+    private const string DozerPrefabPath     = "Assets/_Game/Prefabs/DozerPrefab.prefab";
+
+    private static char Letter(int i) => (char)('A' + i);
 
     // ------------------------------------------------------------------ //
     // Entry point
@@ -51,169 +82,221 @@ public static class SetupMultiplayerMatchMap
     [MenuItem("Tools/RTS/Match/Setup Multiplayer Match Map")]
     public static void Run()
     {
-        Debug.Log("[MultiplayerMatch] ── Building two-player match layout ──");
+        var report = new List<string>();
+
+        UnityEngine.SceneManagement.Scene scene = EditorSceneManager.GetActiveScene();
+        Debug.Log("[MultiplayerMatch] ════════════════════════════════════════════════");
+        Debug.Log($"[MultiplayerMatch] Building 4-corner match layout in scene: " +
+                  $"'{scene.name}' ({(string.IsNullOrEmpty(scene.path) ? "UNSAVED scene" : scene.path)}).");
+
+        // ---- Scene sanity check ---------------------------------------- //
+        bool hasGameManager = GameObject.Find("GameManager") != null;
+        bool hasGround      = SceneHasGround();
+        if (!hasGameManager)
+            Debug.LogWarning("[MultiplayerMatch] ⚠ No 'GameManager' object found in this scene. " +
+                             "This may be the WRONG scene (the gameplay scene normally has a " +
+                             "GameManager). The tool will still build the corners, but the " +
+                             "match-starter / BPM wiring may be incomplete. Open your gameplay " +
+                             "scene if this looks wrong.");
+        if (!hasGround)
+            Debug.LogWarning("[MultiplayerMatch] ⚠ No ground/terrain collider detected. Corner " +
+                             "objects will be placed at Y=0 (raycast-to-ground found nothing). " +
+                             "If your map has a ground plane, make sure it has a Collider.");
 
         int buildingLayer = LayerMask.NameToLayer("Building");
         int unitLayer     = LayerMask.NameToLayer("Unit");
         int resourceLayer = LayerMask.NameToLayer("Resource");
+        if (unitLayer < 0)     Debug.LogWarning("[MultiplayerMatch] ⚠ 'Unit' layer not defined.");
+        if (resourceLayer < 0) Debug.LogWarning("[MultiplayerMatch] ⚠ 'Resource' layer not defined.");
+        _ = buildingLayer;
 
-        // 1. Build the two bases.
-        BuildPlayerBase(0, Player0BasePos, Player0Color, buildingLayer, unitLayer, resourceLayer);
-        BuildPlayerBase(1, Player1BasePos, Player1Color, buildingLayer, unitLayer, resourceLayer);
+        // ---- Load the Dozer prefab (clearly report if missing) --------- //
+        GameObject dozerPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(DozerPrefabPath);
+        if (dozerPrefab == null)
+            Debug.LogWarning($"[MultiplayerMatch] ⚠ Dozer prefab NOT FOUND at '{DozerPrefabPath}'. " +
+                             "Each corner will get a coloured PLACEHOLDER cube instead. Run " +
+                             "Tools → RTS → Construction → Create Dozer Prefab to get real Dozers.");
+        else
+            Debug.Log($"[MultiplayerMatch] ✓ Dozer prefab found at '{DozerPrefabPath}'.");
 
-        // 2. Disable enemy AI roots / scripts so the bot doesn't run.
+        // ---- Remove any previous layout (idempotent) ------------------- //
+        RemoveIfExists("GameplayWorldRoot");
+        RemoveIfExists("Player0Base");   // legacy 2-base layout
+        RemoveIfExists("Player1Base");
+
+        // ---- Build the visible root hierarchy -------------------------- //
+        GameObject worldRoot = new GameObject("GameplayWorldRoot");
+        Undo.RegisterCreatedObjectUndo(worldRoot, "Create GameplayWorldRoot");
+        worldRoot.transform.position = Vector3.zero;
+        worldRoot.SetActive(true);     // ALWAYS visible in edit mode
+
+        GameObject cornerBasesRoot = new GameObject("CornerBases");
+        cornerBasesRoot.transform.SetParent(worldRoot.transform, false);
+
+        // ---- Build the four corners ------------------------------------ //
+        for (int i = 0; i < 4; i++)
+        {
+            try
+            {
+                BuildCornerBase(i, cornerBasesRoot.transform, dozerPrefab,
+                                unitLayer, resourceLayer, report);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[MultiplayerMatch] ✗ Corner {Letter(i)} build threw: " +
+                               $"{e.Message}\n{e.StackTrace}");
+                report.Add($"  • Corner {Letter(i)}: FAILED — {e.Message}");
+            }
+        }
+
+        // ---- Supporting wiring ----------------------------------------- //
         DisableEnemyBots();
-
-        // 3. Add the MultiplayerMatchStarter to the GameManager (camera snap
-        //    + team perspective remap on match start).
-        EnsureMatchStarter();
-
-        // 4. Auto-bind the CommandCenterPrefab onto the scene's BPM so the
-        //    Dozer "Command Center" build button has a prefab to spawn.
+        EnsureMatchStarterAndWorldRoot(worldRoot);
         BindCommandCenterPrefabOntoBPM();
 
-        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        // ---- Persist --------------------------------------------------- //
+        EditorUtility.SetDirty(worldRoot);
+        EditorSceneManager.MarkSceneDirty(scene);
 
-        // Post-run verification — surface any silent failures (missing prefabs,
-        // typos, stale scene state) BEFORE the user pressed Play and wonders
-        // why Player 1 has nothing on screen.
-        VerifyBaseExists("Player0Base", 0);
-        VerifyBaseExists("Player1Base", 1);
+        // ---- Report + validate ----------------------------------------- //
+        Debug.Log("[MultiplayerMatch] ─────────────── SETUP REPORT ───────────────");
+        foreach (string line in report) Debug.Log("[MultiplayerMatch] " + line);
+        Debug.Log("[MultiplayerMatch]   • Scene marked dirty (press Ctrl+S to save).");
+        Debug.Log("[MultiplayerMatch] ────────────────────────────────────────────");
 
-        Debug.Log("[MultiplayerMatch] ── Done. Next: run Tools → RTS → Multiplayer Prep → " +
-                  "Add GameEntity To Scene Objects so the new units/buildings get " +
-                  "deterministic ids that match across clients. ──");
-    }
+        bool ok = ValidateInternal(logHeader: true);
 
-    private static void VerifyBaseExists(string baseName, int playerId)
-    {
-        GameObject root = GameObject.Find(baseName);
-        if (root == null)
-        {
-            Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' is missing after setup. " +
-                           "This shouldn't happen — re-run the tool.");
-            return;
-        }
+        Debug.Log("[MultiplayerMatch] ════════════════════════════════════════════════");
+        Debug.Log(ok
+            ? "[MultiplayerMatch] ✓ Setup completed successfully. Look for 'GameplayWorldRoot' " +
+              "in the Hierarchy (CornerBases → CornerBase_A/B/C/D). Next: run " +
+              "Tools → RTS → Multiplayer Prep → Add GameEntity To Scene Objects."
+            : "[MultiplayerMatch] ✗ Setup completed WITH WARNINGS — see the validation lines above.");
+        Debug.Log("[MultiplayerMatch] ════════════════════════════════════════════════");
 
-        bool hasDozer = root.GetComponentInChildren<DozerBuilder>(true)         != null;
-        bool hasBank  = root.GetComponentInChildren<PlayerResourceManager>(true) != null;
-
-        if (!hasDozer)
-            Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' missing a Dozer child — Player " +
-                           $"{playerId} will start without any unit. Check that " +
-                           "Assets/_Game/Prefabs/DozerPrefab.prefab exists.");
-        if (!hasBank)
-            Debug.LogError($"[MultiplayerMatch] ✗ '{baseName}' missing a PlayerResourceManager " +
-                           $"with ownerPlayerId={playerId}.");
-
-        if (hasDozer && hasBank)
-            Debug.Log($"[MultiplayerMatch] ✓ '{baseName}' verified: Dozer + bank present " +
-                      "(CC is now buildable via the Dozer's build menu).");
+        Selection.activeGameObject = worldRoot;     // focus it in the Hierarchy
+        EditorGUIUtility.PingObject(worldRoot);
     }
 
     // ================================================================== //
-    // BPM auto-binding (Dozer needs a CommandCenterPrefab to spawn)
+    // Corner builder
     // ================================================================== //
 
-    private static void BindCommandCenterPrefabOntoBPM()
+    private static void BuildCornerBase(int cornerIndex, Transform parent,
+                                        GameObject dozerPrefab,
+                                        int unitLayer, int resourceLayer,
+                                        List<string> report)
     {
-        BuildingPlacementManager bpm = Object.FindFirstObjectByType<BuildingPlacementManager>(
-            FindObjectsInactive.Include);
-        if (bpm == null)
-        {
-            Debug.LogWarning("[MultiplayerMatch] No BuildingPlacementManager found in the " +
-                             "scene — Dozer 'Command Center' button will not work at runtime. " +
-                             "Run the single-player Setup Clean Match Map first to create " +
-                             "GameManager+BPM, then re-run this tool.");
-            return;
-        }
+        char letter = Letter(cornerIndex);
+        Color color = CornerColors[cornerIndex];
 
-        GameObject ccPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-            CreateCommandCenterPrefab.PrefabPath);
-        if (ccPrefab == null)
-        {
-            Debug.LogError($"[MultiplayerMatch] ✗ {CreateCommandCenterPrefab.PrefabPath} not found. " +
-                           "Run Tools → RTS → Construction → Create CommandCenter Prefab first, " +
-                           "or use the All-In-One tool which chains both steps.");
-            return;
-        }
+        // Resolve the ground height at this corner BEFORE placing anything.
+        Vector3 flat = CornerPositions[cornerIndex];
+        float groundY = ResolveGroundY(flat, out bool hitGround);
+        Vector3 cornerPos = new Vector3(flat.x, groundY, flat.z);
 
-        bpm.commandCenterPrefab = ccPrefab;
-        EditorUtility.SetDirty(bpm);
-        Debug.Log($"[MultiplayerMatch]   BuildingPlacementManager.commandCenterPrefab = " +
-                  $"'{ccPrefab.name}' (cost={bpm.commandCenterCost}).");
-    }
+        GameObject cornerGO = new GameObject($"CornerBase_{letter}");
+        cornerGO.transform.SetParent(parent, false);
+        cornerGO.transform.position = cornerPos;
+        Undo.RegisterCreatedObjectUndo(cornerGO, $"Create CornerBase_{letter}");
 
-    // ================================================================== //
-    // Player base builder
-    // ================================================================== //
+        CornerBase cb = cornerGO.AddComponent<CornerBase>();
+        cb.cornerIndex     = cornerIndex;
+        cb.assignedOwnerId = -1;
 
-    private static void BuildPlayerBase(int playerId, Vector3 basePos, Color color,
-                                        int buildingLayer, int unitLayer, int resourceLayer)
-    {
-        string rootName = $"Player{playerId}Base";
+        // --- Start marker (always-visible coloured flag) ----------------- //
+        Transform marker = BuildStartMarker(cornerGO.transform, cornerPos, letter, color);
+        cb.startMarker = marker;
 
-        // Reuse existing root if present (idempotent re-runs).
-        GameObject root = GameObject.Find(rootName);
-        if (root != null)
-        {
-            Undo.DestroyObjectImmediate(root);
-            Debug.Log($"[MultiplayerMatch]   Removed previous '{rootName}' — rebuilding.");
-        }
-        root = new GameObject(rootName);
-        root.transform.position = basePos;
-        Undo.RegisterCreatedObjectUndo(root, $"Create {rootName}");
-
-        // --- PlayerResourceManager for this player (per-owner bank) -------
-        PlayerResourceManager bank = root.AddComponent<PlayerResourceManager>();
-        bank.ownerPlayerId    = playerId;
+        // --- Bank (per-owner PlayerResourceManager) ---------------------- //
+        GameObject bankGO = new GameObject($"Bank_{letter}");
+        bankGO.transform.SetParent(cornerGO.transform, false);
+        bankGO.transform.position = cornerPos;
+        PlayerResourceManager bank = bankGO.AddComponent<PlayerResourceManager>();
+        bank.ownerPlayerId     = cornerIndex;   // placeholder; reassigned at match start
         bank.startingResources = StartingResources;
         EditorUtility.SetDirty(bank);
+        cb.bank = bank;
 
-        // --- Starting Dozer (Phase 10) ------------------------------------
-        // No CC, no Worker — each player starts with a single Dozer and has
-        // to build the CC from there. This shortens the lobby-to-action loop
-        // and proves out the construction-ownership flow.
-        BuildStartingDozer(root.transform, basePos, playerId, unitLayer);
+        // --- Dozer (real prefab or visible placeholder) ------------------ //
+        bool dozerIsReal;
+        GameObject dozer = BuildDozer(cornerGO.transform, cornerPos, cornerIndex,
+                                      dozerPrefab, unitLayer, color, out dozerIsReal);
+        cb.dozer = dozer;
 
-        Debug.Log($"[MultiplayerMatch] Player {playerId} base created at {basePos:F1} " +
-                  "with Dozer-only start (Phase 10).");
+        // --- Resource cluster -------------------------------------------- //
+        Transform cluster = BuildResourceCluster(cornerGO.transform, cornerPos,
+                                                 letter, resourceLayer);
+        cb.resourceCluster = cluster;
 
-        // --- Resource nodes ringed around the base -------------------------
-        BuildResourceRing(root.transform, basePos, resourceLayer);
+        EditorUtility.SetDirty(cb);
+        EditorUtility.SetDirty(cornerGO);
 
-        EditorUtility.SetDirty(root);
+        string yNote = hitGround ? $"Y={groundY:F1} (on ground)" : "Y=0 (NO ground hit)";
+        report.Add($"  • Created CornerBase_{letter} at ({cornerPos.x:F0}, {cornerPos.y:F0}, " +
+                   $"{cornerPos.z:F0}) [{yNote}] — " +
+                   $"Dozer={(dozerIsReal ? "real prefab" : "PLACEHOLDER cube")}, " +
+                   $"{ResourceNodesPerBase} resource node(s), Bank owner {cornerIndex}.");
 
-        // Suppress unused-parameter warnings — Phase 10 no longer needs the
-        // buildingLayer here (the CC is built at runtime via BPM) and the
-        // color was only used to tint the scene-baked CC.
-        _ = buildingLayer;
-        _ = color;
+        Debug.Log($"[MultiplayerMatch] ✓ CornerBase_{letter} built at {cornerPos:F1} " +
+                  $"(dozer {(dozerIsReal ? "real" : "placeholder")}).");
     }
 
-    private static void BuildStartingDozer(Transform parent, Vector3 basePos, int playerId, int unitLayer)
+    private static Transform BuildStartMarker(Transform parent, Vector3 pos, char letter, Color color)
     {
-        GameObject dozerPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-            "Assets/_Game/Prefabs/DozerPrefab.prefab");
-        if (dozerPrefab == null)
+        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        marker.name = $"StartMarker_{letter}";
+        marker.transform.SetParent(parent, true);
+        marker.transform.position   = pos + Vector3.up * 2.5f;
+        marker.transform.localScale = new Vector3(1.2f, 2.5f, 1.2f);
+
+        // Purely visual — strip the collider so it never blocks NavMesh / clicks.
+        Collider col = marker.GetComponent<Collider>();
+        if (col != null) Object.DestroyImmediate(col);
+
+        Renderer rend = marker.GetComponent<Renderer>();
+        if (rend != null)
         {
-            Debug.LogError("[MultiplayerMatch] DozerPrefab.prefab NOT FOUND at " +
-                           "Assets/_Game/Prefabs/DozerPrefab.prefab — Player " +
-                           $"{playerId} starts WITHOUT a Dozer. Run Tools → RTS → " +
-                           "Construction → Repair Construction System and re-run " +
-                           "Setup Multiplayer Match Map.");
-            return;
+            Material m = new Material(rend.sharedMaterial) { color = color };
+            rend.sharedMaterial = m;
+        }
+        return marker.transform;
+    }
+
+    private static GameObject BuildDozer(Transform parent, Vector3 cornerPos, int cornerIndex,
+                                         GameObject dozerPrefab, int unitLayer, Color color,
+                                         out bool isReal)
+    {
+        char letter = Letter(cornerIndex);
+        Vector3 dozerPos = cornerPos + new Vector3(0f, 0f, 4f);
+
+        GameObject d;
+        if (dozerPrefab != null)
+        {
+            d = (GameObject)PrefabUtility.InstantiatePrefab(dozerPrefab);
+            d.transform.SetParent(parent, true);
+            d.transform.position = dozerPos;
+            isReal = true;
+        }
+        else
+        {
+            // Visible placeholder so the corner is still verifiable.
+            d = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            d.transform.SetParent(parent, true);
+            d.transform.position   = dozerPos + Vector3.up * 1f;
+            d.transform.localScale = new Vector3(3f, 2f, 4f);
+            Renderer rend = d.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                Material m = new Material(rend.sharedMaterial) { color = color * 0.8f };
+                rend.sharedMaterial = m;
+            }
+            Debug.LogWarning($"[MultiplayerMatch]   Missing Dozer prefab — created PLACEHOLDER " +
+                             $"cube for corner {letter} instead.");
+            isReal = false;
         }
 
-        // Drop the dozer slightly offset from the base centre so its
-        // NavMeshAgent has room to rotate without overlapping the resource
-        // ring.
-        Vector3 dozerWorld = basePos + new Vector3(0f, 0f, 4f);
-        GameObject d = (GameObject)PrefabUtility.InstantiatePrefab(dozerPrefab);
-        d.name = $"Dozer_P{playerId}";
-        d.transform.SetParent(parent, true);
-        d.transform.position = dozerWorld;
-
+        d.name = $"Dozer_{letter}";
         if (unitLayer >= 0)
         {
             d.layer = unitLayer;
@@ -221,27 +304,27 @@ public static class SetupMultiplayerMatchMap
                 t.gameObject.layer = unitLayer;
         }
 
-        // Tag ownership — owner authoritative. Scene stamper now respects
-        // overrideTeamFromHealth=false so the explicit ownerPlayerId survives
-        // across re-stamps.
+        // Ownership stamp — placeholder owner = cornerIndex; reassigned at match
+        // start via CornerBase.AssignOwner. overrideTeamFromHealth=false keeps
+        // the explicit owner from being re-derived by the scene stamper.
         GameEntity ge = d.GetComponent<GameEntity>();
         if (ge == null) ge = d.AddComponent<GameEntity>();
-        ge.ownerPlayerId          = playerId;
-        ge.teamId                 = playerId;
+        ge.ownerPlayerId          = cornerIndex;
+        ge.teamId                 = cornerIndex;
         ge.entityType             = EntityType.Unit;
-        ge.prefabTypeId           = "Dozer";
+        ge.prefabTypeId           = isReal ? "Dozer" : "DozerPlaceholder";
         ge.overrideTeamFromHealth = false;
         EditorUtility.SetDirty(ge);
         EditorUtility.SetDirty(d);
-
-        Debug.Log($"[MultiplayerMatch] Player{playerId} Dozer stamped " +
-                  $"with ownerPlayerId={playerId}, name='{d.name}'.");
+        return d;
     }
 
-    private static void BuildResourceRing(Transform parent, Vector3 basePos, int resourceLayer)
+    private static Transform BuildResourceCluster(Transform parent, Vector3 cornerPos,
+                                                  char letter, int resourceLayer)
     {
-        GameObject ring = new GameObject("Resources");
-        ring.transform.SetParent(parent, false);
+        GameObject cluster = new GameObject($"ResourceCluster_{letter}");
+        cluster.transform.SetParent(parent, false);
+        cluster.transform.position = cornerPos;
 
         for (int i = 0; i < ResourceNodesPerBase; i++)
         {
@@ -249,26 +332,25 @@ public static class SetupMultiplayerMatchMap
             Vector3 offset = new Vector3(
                 Mathf.Cos(angle) * ResourceNodeRadius, 0f,
                 Mathf.Sin(angle) * ResourceNodeRadius);
-            Vector3 pos = basePos + offset;
+            Vector3 flat = cornerPos + offset;
+            float y = ResolveGroundY(flat, out _);
+            Vector3 pos = new Vector3(flat.x, y + 1f, flat.z);
 
             GameObject nodeGO = GameObject.CreatePrimitive(PrimitiveType.Cube);
             nodeGO.name = $"ResourceNode_{i}";
-            nodeGO.transform.SetParent(ring.transform, true);
-            nodeGO.transform.position = pos;
+            nodeGO.transform.SetParent(cluster.transform, true);
+            nodeGO.transform.position   = pos;
             nodeGO.transform.localScale = new Vector3(2f, 2f, 2f);
-
             if (resourceLayer >= 0) nodeGO.layer = resourceLayer;
 
             Renderer rend = nodeGO.GetComponent<Renderer>();
             if (rend != null)
             {
-                Material m = new Material(rend.sharedMaterial);
-                m.color = ResourceColor;
+                Material m = new Material(rend.sharedMaterial) { color = ResourceColor };
                 rend.sharedMaterial = m;
             }
 
-            ResourceNode node = nodeGO.AddComponent<ResourceNode>();
-            _ = node;     // ResourceNode self-initialises from Inspector defaults.
+            nodeGO.AddComponent<ResourceNode>();   // self-initialises from defaults
 
             GameEntity ge = nodeGO.AddComponent<GameEntity>();
             ge.ownerPlayerId          = GameEntity.NeutralOwnerId;
@@ -278,10 +360,132 @@ public static class SetupMultiplayerMatchMap
             ge.overrideTeamFromHealth = false;
             EditorUtility.SetDirty(ge);
         }
+        return cluster.transform;
     }
 
     // ================================================================== //
-    // Disable enemy AI in multiplayer
+    // Ground raycast
+    // ================================================================== //
+
+    /// <summary>
+    /// Raycast straight down onto whatever collider sits under
+    /// <paramref name="flatXZ"/>. Returns the hit Y (or 0 if nothing was hit).
+    /// Works in edit mode as long as the ground has a Collider.
+    /// </summary>
+    private static float ResolveGroundY(Vector3 flatXZ, out bool hit)
+    {
+        Physics.SyncTransforms();
+        Vector3 origin = new Vector3(flatXZ.x, 500f, flatXZ.z);
+        if (Physics.Raycast(origin, Vector3.down, out RaycastHit info, 2000f,
+                            ~0, QueryTriggerInteraction.Ignore))
+        {
+            hit = true;
+            return info.point.y;
+        }
+        hit = false;
+        return 0f;
+    }
+
+    private static bool SceneHasGround()
+    {
+        // A Terrain or any collider near the map origin counts as "has ground".
+        if (Object.FindFirstObjectByType<Terrain>(FindObjectsInactive.Include) != null)
+            return true;
+        Physics.SyncTransforms();
+        return Physics.Raycast(new Vector3(0f, 500f, 0f), Vector3.down, 2000f,
+                               ~0, QueryTriggerInteraction.Ignore);
+    }
+
+    // ================================================================== //
+    // Validation
+    // ================================================================== //
+
+    [MenuItem("Tools/RTS/Match/Validate 4 Player Map Setup")]
+    public static void ValidateMenu()
+    {
+        Debug.Log("[MultiplayerMatch] ───────── VALIDATE 4-PLAYER MAP SETUP ─────────");
+        bool ok = ValidateInternal(logHeader: false);
+        Debug.Log(ok
+            ? "[MultiplayerMatch] ✓ Validation PASSED — 4 corner bases present and wired."
+            : "[MultiplayerMatch] ✗ Validation FAILED — re-run Tools → RTS → Match → Setup " +
+              "Multiplayer Match Map (see the ✗ lines above).");
+        Debug.Log("[MultiplayerMatch] ──────────────────────────────────────────────");
+    }
+
+    private static bool ValidateInternal(bool logHeader)
+    {
+        if (logHeader)
+            Debug.Log("[MultiplayerMatch] ─────────────── VALIDATION ───────────────");
+
+        bool ok = true;
+
+        GameObject worldRoot = GameObject.Find("GameplayWorldRoot");
+        if (worldRoot == null)
+        {
+            Debug.LogError("[MultiplayerMatch] ✗ No 'GameplayWorldRoot' object in the scene.");
+            return false;
+        }
+        Debug.Log("[MultiplayerMatch] ✓ Found GameplayWorldRoot.");
+
+        Transform cornerBases = worldRoot.transform.Find("CornerBases");
+        if (cornerBases == null)
+        {
+            Debug.LogError("[MultiplayerMatch] ✗ No 'CornerBases' child under GameplayWorldRoot.");
+            return false;
+        }
+        Debug.Log("[MultiplayerMatch] ✓ Found CornerBases.");
+
+        CornerBase[] corners = worldRoot.GetComponentsInChildren<CornerBase>(true);
+        if (corners.Length != 4)
+        {
+            Debug.LogError($"[MultiplayerMatch] ✗ Expected 4 CornerBase objects, found {corners.Length}.");
+            ok = false;
+        }
+
+        var seenIndices = new HashSet<int>();
+        for (int i = 0; i < corners.Length; i++)
+        {
+            CornerBase cb = corners[i];
+            if (cb == null) continue;
+
+            string n = cb.gameObject.name;
+            if (!seenIndices.Add(cb.cornerIndex))
+            {
+                Debug.LogError($"[MultiplayerMatch] ✗ {n}: duplicate cornerIndex {cb.cornerIndex}.");
+                ok = false;
+            }
+            if (cb.cornerIndex < 0 || cb.cornerIndex > 3)
+            {
+                Debug.LogError($"[MultiplayerMatch] ✗ {n}: cornerIndex {cb.cornerIndex} out of range 0..3.");
+                ok = false;
+            }
+
+            bool active   = cb.gameObject.activeInHierarchy;
+            bool hasMarker = cb.startMarker != null;
+            bool hasDozer  = cb.dozer != null;
+            bool hasBank   = cb.bank != null;
+            int  resCount  = cb.resourceCluster != null
+                ? cb.resourceCluster.GetComponentsInChildren<ResourceNode>(true).Length : 0;
+
+            if (!hasMarker) { Debug.LogError($"[MultiplayerMatch] ✗ {n}: missing StartMarker."); ok = false; }
+            if (!hasDozer)  { Debug.LogError($"[MultiplayerMatch] ✗ {n}: missing Dozer.");        ok = false; }
+            if (!hasBank)   { Debug.LogError($"[MultiplayerMatch] ✗ {n}: missing Bank.");         ok = false; }
+            if (resCount == 0) { Debug.LogError($"[MultiplayerMatch] ✗ {n}: no ResourceNodes.");  ok = false; }
+            if (!active)    Debug.LogWarning($"[MultiplayerMatch] ⚠ {n}: not active in editor (should be visible).");
+
+            Vector3 p = cb.transform.position;
+            Debug.Log($"[MultiplayerMatch]   {n} (Corner {cb.Letter}, index {cb.cornerIndex}) @ " +
+                      $"({p.x:F0}, {p.y:F0}, {p.z:F0}) — marker={Yn(hasMarker)} dozer={Yn(hasDozer)} " +
+                      $"bank={Yn(hasBank)} resources={resCount} active={Yn(active)}");
+        }
+
+        return ok;
+    }
+
+    private static string Yn(bool b) => b ? "yes" : "NO";
+
+    // ================================================================== //
+    // Enemy AI off (multiplayer)
     // ================================================================== //
 
     private static void DisableEnemyBots()
@@ -293,15 +497,12 @@ public static class SetupMultiplayerMatchMap
         disabled += DisableInScene<EnemyAIController>();
         disabled += DisableInScene<EnemyWaveSpawner>();
 
-        // ALSO hide the EnemyStart root if any — keeps it out of the scene view
-        // but doesn't delete it (single-player playtest can re-enable manually).
         GameObject enemyStart = GameObject.Find("EnemyStart");
         if (enemyStart != null && enemyStart.activeSelf)
         {
             enemyStart.SetActive(false);
             Debug.Log("[MultiplayerMatch]   EnemyStart root deactivated (not deleted).");
         }
-
         Debug.Log($"[MultiplayerMatch]   Disabled {disabled} enemy AI script(s).");
     }
 
@@ -311,8 +512,7 @@ public static class SetupMultiplayerMatchMap
         int n = 0;
         foreach (T comp in all)
         {
-            if (comp == null) continue;
-            if (!comp.enabled) continue;
+            if (comp == null || !comp.enabled) continue;
             comp.enabled = false;
             EditorUtility.SetDirty(comp);
             n++;
@@ -321,10 +521,10 @@ public static class SetupMultiplayerMatchMap
     }
 
     // ================================================================== //
-    // MultiplayerMatchStarter wiring
+    // MatchStarter + GameplayWorldRoot (runtime hide/reveal) wiring
     // ================================================================== //
 
-    private static void EnsureMatchStarter()
+    private static void EnsureMatchStarterAndWorldRoot(GameObject worldRoot)
     {
         GameObject gm = GameObject.Find("GameManager");
         if (gm == null)
@@ -336,43 +536,69 @@ public static class SetupMultiplayerMatchMap
 
         MultiplayerMatchStarter starter = gm.GetComponent<MultiplayerMatchStarter>();
         if (starter == null) starter = gm.AddComponent<MultiplayerMatchStarter>();
-
-        starter.player0CameraPos = Player0BasePos;
-        starter.player1CameraPos = Player1BasePos;
+        starter.player0CameraPos = CornerPositions[0];
+        starter.player1CameraPos = CornerPositions[3];
         EditorUtility.SetDirty(starter);
-        Debug.Log("[MultiplayerMatch]   MultiplayerMatchStarter wired on GameManager.");
 
-        // Phase 6 / Phase 7: GameplayWorldRoot wraps every gameplay-world root
-        // (Player0Base, Player1Base, Environment, any leftover SP roots) so
-        // they start INACTIVE and only become visible after MatchStart.
-        // Without this, the player launches the game and immediately sees
-        // the bases behind the Main Menu.
-        //
-        // Auto-discovery in GameplayWorldRoot.Awake also handles this at
-        // runtime, but we pre-populate the Inspector list at editor time
-        // so the user can see exactly what's wired without pressing Play.
-        GameplayWorldRoot worldRoot = gm.GetComponent<GameplayWorldRoot>();
-        if (worldRoot == null) worldRoot = gm.AddComponent<GameplayWorldRoot>();
+        // GameplayWorldRoot COMPONENT hides the match world until MatchStart at
+        // RUNTIME (its Awake). It does NOT touch edit mode, so all four corners
+        // stay visible in the editor. Point it at the whole container so the
+        // entire match world (all corners) hides until the match begins.
+        GameplayWorldRoot hider = gm.GetComponent<GameplayWorldRoot>();
+        if (hider == null) hider = gm.AddComponent<GameplayWorldRoot>();
 
-        // Pull in every well-known gameplay-root name that exists in the
-        // scene right now. Filter out duplicates / missing.
-        string[] candidates = {
-            "Player0Base", "Player1Base",
-            "Environment", "ResourceNodes",
-            "PlayerStart", "EnemyStart",
-        };
-        var found = new System.Collections.Generic.List<GameObject>(candidates.Length);
-        foreach (string name in candidates)
+        var targets = new List<GameObject> { worldRoot };
+        GameObject env = GameObject.Find("Environment");
+        if (env != null) targets.Add(env);
+        hider.targets = targets.ToArray();
+        hider.autoDiscoverNames = new[] { "GameplayWorldRoot", "Environment", "ResourceNodes" };
+        EditorUtility.SetDirty(hider);
+
+        Debug.Log($"[MultiplayerMatch]   MatchStarter + GameplayWorldRoot wired on GameManager " +
+                  $"(hides {targets.Count} root(s) at runtime until MatchStart; visible in editor).");
+    }
+
+    // ================================================================== //
+    // BPM auto-binding (Dozer needs a CommandCenterPrefab to build)
+    // ================================================================== //
+
+    private static void BindCommandCenterPrefabOntoBPM()
+    {
+        BuildingPlacementManager bpm = Object.FindFirstObjectByType<BuildingPlacementManager>(
+            FindObjectsInactive.Include);
+        if (bpm == null)
         {
-            GameObject g = GameObject.Find(name);
-            if (g != null && !found.Contains(g)) found.Add(g);
+            Debug.LogWarning("[MultiplayerMatch] No BuildingPlacementManager in scene — Dozer " +
+                             "'Command Center' button won't work at runtime. Run the single-player " +
+                             "Setup Clean Match Map first to create GameManager + BPM.");
+            return;
         }
-        worldRoot.targets = found.ToArray();
-        EditorUtility.SetDirty(worldRoot);
 
-        string namesJoined = string.Join(", ",
-            System.Array.ConvertAll(worldRoot.targets, g => g != null ? g.name : "<null>"));
-        Debug.Log($"[MultiplayerMatch]   GameplayWorldRoot wired with {worldRoot.targets.Length} " +
-                  $"gameplay root(s): {namesJoined} — hidden at scene start, revealed on MatchStart.");
+        GameObject ccPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+            CreateCommandCenterPrefab.PrefabPath);
+        if (ccPrefab == null)
+        {
+            Debug.LogError($"[MultiplayerMatch] ✗ {CreateCommandCenterPrefab.PrefabPath} not found. " +
+                           "Run Tools → RTS → Construction → Create CommandCenter Prefab first.");
+            return;
+        }
+
+        bpm.commandCenterPrefab = ccPrefab;
+        EditorUtility.SetDirty(bpm);
+        Debug.Log($"[MultiplayerMatch]   BuildingPlacementManager.commandCenterPrefab = '{ccPrefab.name}'.");
+    }
+
+    // ================================================================== //
+    // Helpers
+    // ================================================================== //
+
+    private static void RemoveIfExists(string name)
+    {
+        GameObject go = GameObject.Find(name);
+        if (go != null)
+        {
+            Undo.DestroyObjectImmediate(go);
+            Debug.Log($"[MultiplayerMatch]   Removed previous '{name}' — rebuilding.");
+        }
     }
 }

@@ -80,11 +80,12 @@ public class MultiplayerMatchStarter : MonoBehaviour
             local = 0;
         }
 
-        // Camera snap.
+        // Camera snap to THIS player's assigned corner (decoupled from slot —
+        // the coordinator decides which corner each player got).
         RTSCamera rig = FindAnyObjectByType<RTSCamera>();
         if (rig != null)
         {
-            Vector3 target = local == 0 ? player0CameraPos : player1CameraPos;
+            Vector3 target = ResolveLocalCornerPosition(local);
             rig.TeleportTo(target);
             Debug.Log($"[MultiplayerMatch] Local player {local} camera positioned at {target}.");
         }
@@ -93,19 +94,38 @@ public class MultiplayerMatchStarter : MonoBehaviour
             Debug.LogWarning("[MultiplayerMatch] No RTSCamera in scene — skipping camera snap.");
         }
 
-        // Full per-match reinitialize (Bug 1 fix). Re-fires ownership on every
-        // entity so team perspective, owner color, AND the movement/selection
-        // gates re-evaluate for THIS match's slot mapping, restores scene-baked
-        // starting units (the bulldozer) to their spawn pose, and stamps the
-        // current MatchId. Supersedes the old team-only remap.
-        GameEntity.ReinitializeAllForNewMatch(MatchSessionManager.CurrentMatchId);
-        Debug.Log($"[MultiplayerMatch] Per-match reinitialize applied " +
-                  $"for {EntityRegistry.Count} registered entities (MatchId " +
-                  $"'{MatchSessionManager.CurrentMatchId}').");
-
-        // Resource nodes start fresh every match (full + visible) on all clients.
-        ResourceNode.ResetAllForNewMatch();
+        // NOTE: per-match entity reinitialize + resource-node reset are now done
+        // by NetworkMatchCoordinator AFTER the world reveal, so the freshly-
+        // revealed corner bases (which only become active during the reveal) are
+        // included. Doing it here risked running before the corners were active.
 
         applied = true;
+    }
+
+    /// <summary>
+    /// World position of the local player's assigned corner. Reads the corner
+    /// index from the coordinator and finds the matching <see cref="CornerBase"/>
+    /// (inactive-inclusive, so it resolves even before the reveal). Falls back to
+    /// the legacy two-corner positions if no CornerBase is found.
+    /// </summary>
+    private Vector3 ResolveLocalCornerPosition(int localSlot)
+    {
+        int corner = NetworkMatchCoordinator.Instance != null
+            ? NetworkMatchCoordinator.Instance.GetCornerForPlayer(localSlot)
+            : -1;
+
+        if (corner >= 0)
+        {
+            CornerBase[] cbs = FindObjectsByType<CornerBase>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < cbs.Length; i++)
+                if (cbs[i] != null && cbs[i].cornerIndex == corner)
+                    return cbs[i].transform.position;
+
+            Debug.LogWarning($"[MultiplayerMatch] No CornerBase with index {corner} found " +
+                             "for camera — using fallback position.");
+        }
+
+        return localSlot == 0 ? player0CameraPos : player1CameraPos;
     }
 }

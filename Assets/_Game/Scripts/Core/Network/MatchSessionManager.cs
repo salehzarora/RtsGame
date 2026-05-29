@@ -292,6 +292,7 @@ public static class MatchSessionManager
             { MatchIdPropKey, string.Empty },
             { "team",      0 },
             { "slot",     -1 },
+            { NetworkManagerRTS.StartSlotPropKey, NetworkManagerRTS.NoStartSlot },
             { "ready",     false },
             { "army",      string.Empty },
             { "money",     0 },

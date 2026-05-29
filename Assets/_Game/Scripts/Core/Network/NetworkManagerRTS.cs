@@ -50,9 +50,14 @@ public class NetworkManagerRTS : MonoBehaviour
     public bool multiplayerMode = false;
 
     [Header("Room settings")]
-    [Tooltip("Maximum players per room. Two-vs-two RTS support is a future " +
-             "phase; default 2 covers 1-vs-1 testing.")]
-    public byte maxPlayersPerRoom = 2;
+    [Tooltip("Maximum players per room. 1–4 player matches are supported; the " +
+             "map has four corner start positions (A/B/C/D). Forced to " +
+             "MaxPlayersSupported (4) at Awake + room creation so a stale " +
+             "serialized value from an older scene can't cap rooms at 2.")]
+    public byte maxPlayersPerRoom = 4;
+
+    /// <summary>Hard cap — the 4-corner map supports up to four players.</summary>
+    public const byte MaxPlayersSupported = 4;
 
     [Tooltip("App version sent to Photon. Clients only match if their app " +
              "versions are equal. Bump when the network payload schema changes.")]
@@ -111,22 +116,15 @@ public class NetworkManagerRTS : MonoBehaviour
                     PhotonNetwork.LocalPlayer.ActorNumber);
             }
 
-            // Pre-MatchStart fallback: peek at the sorted-actor list directly
-            // so the debug panel can preview the eventual slot before the
-            // master broadcasts. Selection code still gates on IsMatchStarted
-            // to avoid acting on a preview.
+            // Pre-MatchStart fallback: my slot is my rank in the sorted-actor
+            // list (number of players with a lower ActorNumber). Works for
+            // 1–4 players. Selection code still gates on IsMatchStarted so it
+            // never acts on this preview.
             int local = PhotonNetwork.LocalPlayer.ActorNumber;
-            int lowest = int.MaxValue;
-            int second = int.MaxValue;
+            int rank = 0;
             foreach (var kv in PhotonNetwork.CurrentRoom.Players)
-            {
-                int a = kv.Value.ActorNumber;
-                if (a < lowest)       { second = lowest; lowest = a; }
-                else if (a < second)  { second = a; }
-            }
-            if (local == lowest) return 0;
-            if (local == second) return 1;
-            return -1;
+                if (kv.Value.ActorNumber < local) rank++;
+            return rank;
 #else
             return -1;
 #endif
@@ -152,8 +150,9 @@ public class NetworkManagerRTS : MonoBehaviour
     }
 
     /// <summary>
-    /// True when both player slots are filled (room PlayerCount &gt;= 2).
-    /// Used by the menu to decide whether to broadcast MatchStart.
+    /// True when the room has at least ONE player (matches can now start with
+    /// 1–4 players). Used by the menu to decide whether the host can broadcast
+    /// MatchStart.
     /// </summary>
     public static bool IsRoomReady
     {
@@ -161,7 +160,7 @@ public class NetworkManagerRTS : MonoBehaviour
         {
 #if PHOTON_UNITY_NETWORKING
             return PhotonNetwork.IsConnected && PhotonNetwork.InRoom
-                && PhotonNetwork.CurrentRoom.PlayerCount >= 2;
+                && PhotonNetwork.CurrentRoom.PlayerCount >= 1;
 #else
             return false;
 #endif
@@ -284,6 +283,67 @@ public class NetworkManagerRTS : MonoBehaviour
 #endif
 
     // ------------------------------------------------------------------ //
+    // Start-position (corner) selection via Photon custom player properties.
+    //
+    // Each client writes its chosen corner (0..3) into the "startSlot" player
+    // property. The lobby UI reads every player's value to render the A/B/C/D
+    // picker, and the match coordinator finalises any unchosen players into
+    // free corners at match start. Colour and start position are independent —
+    // picking a colour never changes your corner and vice-versa.
+    // ------------------------------------------------------------------ //
+
+    /// <summary>Photon player-property key for the chosen start corner (int 0..3, -1 = none).</summary>
+    public const string StartSlotPropKey = "startSlot";
+
+    /// <summary>Sentinel value for "no corner chosen yet".</summary>
+    public const int NoStartSlot = -1;
+
+    /// <summary>
+    /// Write the LOCAL player's chosen start corner into Photon player
+    /// properties. No-op (with a log) when not in a room. Photon dedupes
+    /// identical writes, so it's safe to call on every click. Because this is
+    /// a single value, writing a new corner automatically frees the old one.
+    /// </summary>
+    public void SetLocalStartSlot(int corner)
+    {
+#if PHOTON_UNITY_NETWORKING
+        if (!PhotonNetwork.InRoom || PhotonNetwork.LocalPlayer == null)
+        {
+            Debug.LogWarning("[StartSlot] SetLocalStartSlot ignored — not in a room.");
+            return;
+        }
+        Hashtable props = new Hashtable { { StartSlotPropKey, corner } };
+        PhotonNetwork.LocalPlayer.SetCustomProperties(props);
+        Debug.Log($"[StartSlot] Local player chose corner {corner} " +
+                  $"({(corner >= 0 ? ((char)('A' + corner)).ToString() : "none")}).");
+#else
+        Debug.LogWarning("[StartSlot] SetLocalStartSlot requested but Photon PUN not installed.");
+#endif
+    }
+
+    /// <summary>
+    /// Read a room player's chosen start corner. Returns true + the corner on
+    /// hit; false + <see cref="NoStartSlot"/> when unset / not in a room.
+    /// </summary>
+    public static bool TryGetPlayerStartSlot(int actorNumber, out int corner)
+    {
+        corner = NoStartSlot;
+#if PHOTON_UNITY_NETWORKING
+        if (!PhotonNetwork.InRoom) return false;
+        Player p = PhotonNetwork.CurrentRoom.GetPlayer(actorNumber);
+        if (p == null || p.CustomProperties == null) return false;
+        if (p.CustomProperties.TryGetValue(StartSlotPropKey, out object o) && o is int c)
+        {
+            corner = c;
+            return c != NoStartSlot;
+        }
+        return false;
+#else
+        return false;
+#endif
+    }
+
+    // ------------------------------------------------------------------ //
     // Lifecycle
     // ------------------------------------------------------------------ //
 
@@ -296,6 +356,17 @@ public class NetworkManagerRTS : MonoBehaviour
             return;
         }
         Instance = this;
+
+        // Self-heal a stale serialized value. Older scenes baked
+        // maxPlayersPerRoom = 2, and changing the code default does NOT update
+        // an already-serialized component — so force it here so rooms are
+        // always created for the 4-corner map.
+        if (maxPlayersPerRoom != MaxPlayersSupported)
+        {
+            Debug.Log($"[NetworkRTS] maxPlayersPerRoom was {maxPlayersPerRoom}; " +
+                      $"forcing to {MaxPlayersSupported} (4-corner map).");
+            maxPlayersPerRoom = MaxPlayersSupported;
+        }
     }
 
     private void OnDestroy()
@@ -529,7 +600,9 @@ public class NetworkManagerRTS : MonoBehaviour
 
         RoomOptions opts = new RoomOptions
         {
-            MaxPlayers                       = maxPlayersPerRoom,
+            // Always create rooms for the full 4-corner map — never the stale
+            // serialized value. This is the single source of truth for the cap.
+            MaxPlayers                       = MaxPlayersSupported,
             IsVisible                        = true,
             IsOpen                           = true,
             PublishUserId                    = false,
@@ -547,7 +620,8 @@ public class NetworkManagerRTS : MonoBehaviour
         Debug.Log($"[NetworkRTS] CreateRoom(name='{(pendingRoomName ?? "<auto>")}', " +
                   $"mapId='{pendingMapId}', startingResources={pendingStartingResources}) " +
                   $"— returned {ok}.");
-        Debug.Log($"[RoomRules] Created room with startingResources={pendingStartingResources}");
+        Debug.Log($"[RoomRules] Created room with MaxPlayers={MaxPlayersSupported}, " +
+                  $"startingResources={pendingStartingResources}");
     }
 
     private void DoJoinRandomRoom()
@@ -715,6 +789,7 @@ public class NetworkManagerRTS : MonoBehaviour
     {
         Debug.Log($"[NetworkRTS] Player entered room — actor #{newPlayer.ActorNumber}. " +
                   $"Total now: {PhotonNetwork.CurrentRoom.PlayerCount}/{PhotonNetwork.CurrentRoom.MaxPlayers}.");
+        Debug.Log($"[RoomRules] Current players {PhotonNetwork.CurrentRoom.PlayerCount}/{MaxPlayersSupported}.");
         OnPlayerPropertiesUpdatedEvent?.Invoke(newPlayer);
     }
 

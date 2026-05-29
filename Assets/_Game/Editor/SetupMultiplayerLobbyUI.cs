@@ -132,10 +132,11 @@ public static class SetupMultiplayerLobbyUI
         ui.lobbyRoomNameLabel       = lobby.roomNameLabel;
         ui.lobbyMapLabel            = lobby.mapLabel;
         ui.lobbyStartingResourcesLabel = lobby.startingResourcesLabel;
-        ui.lobbyPlayer0Label        = lobby.p0Label;
-        ui.lobbyPlayer1Label        = lobby.p1Label;
-        ui.lobbyPlayer0ColorSwatch  = lobby.p0Swatch;
-        ui.lobbyPlayer1ColorSwatch  = lobby.p1Swatch;
+        ui.lobbyPlayerLabels        = lobby.playerLabels;
+        ui.lobbyPlayerSwatches      = lobby.playerSwatches;
+        ui.mapPreviewPanel          = lobby.mapPreviewPanel;
+        ui.cornerButtons            = lobby.cornerButtons;
+        ui.cornerLabels             = lobby.cornerLabels;
         ui.lobbyColorButtons        = lobby.colorBtns;
         ui.lobbyColorValues         = lobby.colorValues;
         ui.lobbyColorNames          = lobby.colorNames;
@@ -276,9 +277,12 @@ public static class SetupMultiplayerLobbyUI
     private class LobbyPanelRefs
     {
         public RectTransform root;
-        public TextMeshProUGUI roomNameLabel, mapLabel, startingResourcesLabel;
-        public TextMeshProUGUI p0Label, p1Label, statusLabel;
-        public Image p0Swatch, p1Swatch;
+        public TextMeshProUGUI roomNameLabel, mapLabel, startingResourcesLabel, statusLabel;
+        public TextMeshProUGUI[] playerLabels;     // 4 rows
+        public Image[]           playerSwatches;   // 4 rows
+        public GameObject        mapPreviewPanel;
+        public Button[]          cornerButtons;    // 4 (A,B,C,D)
+        public TextMeshProUGUI[] cornerLabels;     // 4
         public Button[]  colorBtns;
         public string[]  colorNames;
         public Color[]   colorValues;
@@ -288,75 +292,118 @@ public static class SetupMultiplayerLobbyUI
     private static LobbyPanelRefs BuildLobbyPanel(Transform parent)
     {
         LobbyPanelRefs r = new LobbyPanelRefs();
-        r.root = CreateBorderedPanel(parent, "LobbyPanel", w: 800f, h: 620f);
+        r.root = CreateBorderedPanel(parent, "LobbyPanel", w: 980f, h: 760f);
 
-        _ = CreateLabel(r.root, "Title", "LOBBY", topY: 25f, height: 36f,
+        _ = CreateLabel(r.root, "Title", "LOBBY", topY: 22f, height: 36f,
             fontSize: 28, color: TitleAmb, bold: true);
 
         r.roomNameLabel = CreateLabel(r.root, "RoomName", "Room: —",
-            topY: 75f, height: 22f, fontSize: 16, color: BodyText, bold: false);
+            topY: 60f, height: 22f, fontSize: 16, color: BodyText, bold: false);
         r.mapLabel      = CreateLabel(r.root, "MapName", "Map: —",
-            topY: 100f, height: 22f, fontSize: 16, color: BodyText, bold: false);
-        r.startingResourcesLabel = CreateLabel(r.root, "StartingResources",
-            "Starting Resources: —",
-            topY: 125f, height: 22f, fontSize: 16, color: BodyText, bold: false);
+            topY: 86f, height: 22f, fontSize: 16, color: BodyText, bold: false);
+        r.startingResourcesLabel = CreateLabel(r.root, "StartingResources", "Starting Resources: —",
+            topY: 112f, height: 22f, fontSize: 16, color: BodyText, bold: false);
 
-        // Player slot 0
-        r.p0Swatch = CreateSwatch(r.root, "Player0Swatch", topLeft: new Vector2(60f, 145f), size: 36f);
-        r.p0Label  = CreateLabel(r.root, "Player0Label",
-            "Player 0: <empty>", topY: 145f, height: 36f, fontSize: 18, color: BodyText, bold: false);
-        r.p0Label.rectTransform.anchorMin = new Vector2(0f, 1f);
-        r.p0Label.rectTransform.anchorMax = new Vector2(0f, 1f);
-        r.p0Label.rectTransform.pivot     = new Vector2(0f, 1f);
-        r.p0Label.rectTransform.anchoredPosition = new Vector2(110f, -145f);
-        r.p0Label.rectTransform.sizeDelta = new Vector2(640f, 36f);
-        r.p0Label.alignment = TextAlignmentOptions.MidlineLeft;
+        // ----- Four player rows (left column) ---------------------------- //
+        _ = CreateLeftLabel(r.root, "PlayersHeader", "PLAYERS (1–4)", x: 40f, topY: 150f,
+            width: 380f, fontSize: 16, color: TitleAmb);
 
-        // Player slot 1
-        r.p1Swatch = CreateSwatch(r.root, "Player1Swatch", topLeft: new Vector2(60f, 195f), size: 36f);
-        r.p1Label  = CreateLabel(r.root, "Player1Label",
-            "Player 1: <empty>", topY: 195f, height: 36f, fontSize: 18, color: BodyText, bold: false);
-        r.p1Label.rectTransform.anchorMin = new Vector2(0f, 1f);
-        r.p1Label.rectTransform.anchorMax = new Vector2(0f, 1f);
-        r.p1Label.rectTransform.pivot     = new Vector2(0f, 1f);
-        r.p1Label.rectTransform.anchoredPosition = new Vector2(110f, -195f);
-        r.p1Label.rectTransform.sizeDelta = new Vector2(640f, 36f);
-        r.p1Label.alignment = TextAlignmentOptions.MidlineLeft;
+        r.playerLabels   = new TextMeshProUGUI[4];
+        r.playerSwatches = new Image[4];
+        float rowTop = 182f, rowStep = 42f;
+        for (int i = 0; i < 4; i++)
+        {
+            float top = rowTop + i * rowStep;
+            r.playerSwatches[i] = CreateSwatch(r.root, $"Player{i}Swatch",
+                topLeft: new Vector2(40f, top + 2f), size: 30f);
+            r.playerLabels[i] = CreateLeftLabel(r.root, $"Player{i}Label",
+                $"Player {i + 1}: <empty>", x: 82f, topY: top, width: 380f,
+                fontSize: 17, color: BodyText);
+        }
 
-        // Color picker
-        _ = CreateLabel(r.root, "PickColorLabel", "Your color:",
-            topY: 270f, height: 22f, fontSize: 16, color: BodyText, bold: false);
+        // ----- Colour picker (left column, below rows) ------------------- //
+        _ = CreateLeftLabel(r.root, "PickColorLabel", "Your color:", x: 40f, topY: 372f,
+            width: 200f, fontSize: 16, color: BodyText);
 
         r.colorBtns   = new Button[LobbyColors.Length];
         r.colorNames  = new string[LobbyColors.Length];
         r.colorValues = new Color[LobbyColors.Length];
-        float swatchSize = 60f;
-        float gap = 12f;
-        float totalW = LobbyColors.Length * swatchSize + (LobbyColors.Length - 1) * gap;
-        float startX = -totalW * 0.5f + swatchSize * 0.5f;
+        float swatchSize = 50f, gap = 10f, colorStartX = 40f, colorTop = 402f;
         for (int i = 0; i < LobbyColors.Length; i++)
         {
             Button b = MakeColorSwatchButton(
                 r.root, $"ColorBtn_{LobbyColors[i].name}", LobbyColors[i].color,
-                anchoredPos: new Vector2(startX + i * (swatchSize + gap), -320f),
-                size: swatchSize);
+                anchoredPos: Vector2.zero, size: swatchSize);
+            // Re-anchor to the panel's top-left for the left column layout.
+            RectTransform rt = b.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot     = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(colorStartX + i * (swatchSize + gap), -colorTop);
             r.colorBtns[i]   = b;
             r.colorNames[i]  = LobbyColors[i].name;
             r.colorValues[i] = LobbyColors[i].color;
         }
 
-        // Status text
-        r.statusLabel = CreateLabel(r.root, "StatusLabel", "Waiting for player 2...",
-            topY: 410f, height: 30f, fontSize: 20, color: TitleAmb, bold: true);
+        // ----- Map preview + corner picker (right column) ---------------- //
+        BuildMapPreview(r);
+
+        // ----- Status + Start + Leave (bottom) --------------------------- //
+        r.statusLabel = CreateLabel(r.root, "StatusLabel", "Players: 0 / 4",
+            topY: 600f, height: 30f, fontSize: 20, color: TitleAmb, bold: true);
         r.statusLabel.alignment = TextAlignmentOptions.Center;
 
-        // Start + Leave buttons
         r.startMatchBtn = MakeBtn(r.root, "StartMatchButton", "START MATCH",
-            BtnSuccess, topY: 470f, w: 320f, h: 60f);
+            BtnSuccess, topY: 640f, w: 320f, h: 56f);
 
-        r.leaveBtn = MakeBtnBottom(r.root, "LeaveButton", "Leave Room", BtnDanger, 280f, 50f);
+        r.leaveBtn = MakeBtnBottom(r.root, "LeaveButton", "Leave Room", BtnDanger, 280f, 46f);
 
         return r;
+    }
+
+    /// <summary>
+    /// Builds the "Choose Start Position" preview box (right column) with four
+    /// clickable corner dots laid out A=top-left, B=top-right, C=bottom-left,
+    /// D=bottom-right. Buttons use Transition.None so MultiplayerLobbyUI can
+    /// drive their colour directly (available / mine / taken).
+    /// </summary>
+    private static void BuildMapPreview(LobbyPanelRefs r)
+    {
+        RectTransform preview = CreatePanel(r.root, "MapPreviewPanel", new Color(0.07f, 0.10f, 0.13f, 1f));
+        preview.anchorMin = new Vector2(1f, 1f);
+        preview.anchorMax = new Vector2(1f, 1f);
+        preview.pivot     = new Vector2(1f, 1f);
+        preview.anchoredPosition = new Vector2(-30f, -150f);
+        preview.sizeDelta = new Vector2(400f, 360f);
+        r.mapPreviewPanel = preview.gameObject;
+
+        _ = CreateLabel(preview, "PreviewTitle", "Choose Start Position",
+            topY: 10f, height: 26f, fontSize: 18, color: TitleAmb, bold: true);
+
+        r.cornerButtons = new Button[4];
+        r.cornerLabels  = new TextMeshProUGUI[4];
+
+        // anchor (within preview box), offset from that anchor.
+        Vector2[] anchors = {
+            new Vector2(0f, 1f),   // A top-left
+            new Vector2(1f, 1f),   // B top-right
+            new Vector2(0f, 0f),   // C bottom-left
+            new Vector2(1f, 0f),   // D bottom-right
+        };
+        Vector2[] offsets = {
+            new Vector2( 60f, -80f),
+            new Vector2(-60f, -80f),
+            new Vector2( 60f,  60f),
+            new Vector2(-60f,  60f),
+        };
+        for (int i = 0; i < 4; i++)
+        {
+            Button b = MakeCornerButton(preview, $"CornerBtn_{(char)('A' + i)}",
+                ((char)('A' + i)).ToString(), anchors[i], offsets[i], size: 80f,
+                out TextMeshProUGUI lbl);
+            r.cornerButtons[i] = b;
+            r.cornerLabels[i]  = lbl;
+        }
     }
 
     // ================================================================== //
@@ -606,5 +653,129 @@ public static class SetupMultiplayerLobbyUI
         input.lineType       = TMP_InputField.LineType.SingleLine;
 
         return input;
+    }
+
+    // ---- Left-aligned label (player rows / headers) ------------------- //
+    private static TextMeshProUGUI CreateLeftLabel(RectTransform parent, string name, string text,
+                                                   float x, float topY, float width,
+                                                   int fontSize, Color color)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
+
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0f, 1f);
+        rt.anchorMax = new Vector2(0f, 1f);
+        rt.pivot     = new Vector2(0f, 1f);
+        rt.anchoredPosition = new Vector2(x, -topY);
+        rt.sizeDelta = new Vector2(width, 34f);
+
+        TextMeshProUGUI tmp = go.AddComponent<TextMeshProUGUI>();
+        tmp.text          = text;
+        tmp.fontSize      = fontSize;
+        tmp.color         = color;
+        tmp.alignment     = TextAlignmentOptions.MidlineLeft;
+        tmp.raycastTarget = false;
+        return tmp;
+    }
+
+    // ---- Corner picker dot (Transition.None; runtime drives colour) --- //
+    private static Button MakeCornerButton(RectTransform parent, string name, string label,
+                                           Vector2 anchor, Vector2 anchoredPos, float size,
+                                           out TextMeshProUGUI labelTmp)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
+
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = anchor;
+        rt.anchorMax = anchor;
+        rt.pivot     = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta = new Vector2(size, size);
+
+        Image bg = go.AddComponent<Image>();
+        bg.color = new Color(0.25f, 0.55f, 0.30f, 1f);   // "available" green
+
+        Button btn = go.AddComponent<Button>();
+        btn.transition = Selectable.Transition.None;     // runtime sets image.color directly
+
+        GameObject t = new GameObject("Text");
+        t.transform.SetParent(go.transform, false);
+        RectTransform trt = t.AddComponent<RectTransform>();
+        trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
+        trt.offsetMin = Vector2.zero; trt.offsetMax = Vector2.zero;
+        labelTmp = t.AddComponent<TextMeshProUGUI>();
+        labelTmp.text          = label;
+        labelTmp.fontSize      = 22;
+        labelTmp.color         = Color.white;
+        labelTmp.alignment     = TextAlignmentOptions.Center;
+        labelTmp.fontStyle     = FontStyles.Bold;
+        labelTmp.raycastTarget = false;
+        return btn;
+    }
+
+    // ================================================================== //
+    // Validation
+    // ================================================================== //
+
+    [MenuItem("Tools/RTS/UI/Validate 4 Player Lobby UI")]
+    public static void Validate()
+    {
+        Debug.Log("[SetupLobby] ───────── VALIDATE 4 PLAYER LOBBY UI ─────────");
+        bool ok = true;
+
+        GameObject gm = GameObject.Find("GameManager");
+        MultiplayerLobbyUI ui = gm != null ? gm.GetComponent<MultiplayerLobbyUI>() : null;
+        if (ui == null)
+            ui = Object.FindFirstObjectByType<MultiplayerLobbyUI>(FindObjectsInactive.Include);
+
+        if (ui == null)
+        {
+            Debug.LogError("[SetupLobby] ✗ No MultiplayerLobbyUI found — run Setup Multiplayer Lobby UI.");
+            Debug.Log("[SetupLobby] ──────────────────────────────────────────────");
+            return;
+        }
+        Debug.Log($"[SetupLobby] ✓ Found MultiplayerLobbyUI on '{ui.gameObject.name}'.");
+
+        ok &= Check("lobbyPanel assigned", ui.lobbyPanel != null);
+        ok &= Check("canvasRoot assigned", ui.canvasRoot != null);
+
+        int labels   = ui.lobbyPlayerLabels   != null ? CountNonNull(ui.lobbyPlayerLabels)   : 0;
+        int swatches = ui.lobbyPlayerSwatches != null ? CountNonNull(ui.lobbyPlayerSwatches) : 0;
+        ok &= Check($"4 player row labels ({labels}/4)",     labels   == 4);
+        ok &= Check($"4 player row swatches ({swatches}/4)", swatches == 4);
+
+        ok &= Check("map preview panel assigned", ui.mapPreviewPanel != null);
+
+        int corners = ui.cornerButtons != null ? CountNonNull(ui.cornerButtons) : 0;
+        ok &= Check($"4 corner buttons A/B/C/D ({corners}/4)", corners == 4);
+        Debug.Log("[SetupLobby]   (corner buttons are wired to startSlot selection at runtime in " +
+                  "MultiplayerLobbyUI.WireButtons.)");
+
+        ok &= Check("color buttons assigned",      ui.lobbyColorButtons != null && ui.lobbyColorButtons.Length > 0);
+        ok &= Check("start match button assigned", ui.lobbyStartMatchButton != null);
+        ok &= Check("leave room button assigned",  ui.lobbyLeaveRoomButton  != null);
+        ok &= Check("status label assigned",       ui.lobbyStatusLabel      != null);
+
+        Debug.Log(ok
+            ? "[SetupLobby] ✓ Validation PASSED — lobby has 4 rows + map preview + A/B/C/D picker, all wired."
+            : "[SetupLobby] ✗ Validation FAILED — re-run Tools → RTS → Multiplayer → Setup Multiplayer Lobby UI.");
+        Debug.Log("[SetupLobby] ──────────────────────────────────────────────");
+    }
+
+    private static bool Check(string label, bool pass)
+    {
+        Debug.Log($"[SetupLobby]   {(pass ? "✓" : "✗")} {label}");
+        return pass;
+    }
+
+    private static int CountNonNull<T>(T[] arr) where T : Object
+    {
+        int n = 0;
+        for (int i = 0; i < arr.Length; i++) if (arr[i] != null) n++;
+        return n;
     }
 }

@@ -134,6 +134,12 @@ public static class SetupEscapeMenu
         // Make sure the EscapeMenu canvas renders last (above HUD + MainMenu).
         canvasGO.transform.SetAsLastSibling();
 
+        // If the Options menu has already been set up, re-add its button to this
+        // freshly-rebuilt pause panel so rebuilding ESC never drops it. Quietly
+        // skipped when Options isn't set up yet (run Setup Options Menu after).
+        if (UnityEngine.Object.FindFirstObjectByType<OptionsMenuController>(FindObjectsInactive.Include) != null)
+            SetupOptionsMenu.EnsurePauseMenuOptionsButton();
+
         EditorUtility.SetDirty(canvasGO);
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 

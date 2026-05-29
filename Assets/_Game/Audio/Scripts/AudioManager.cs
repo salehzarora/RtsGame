@@ -134,9 +134,12 @@ public class AudioManager : MonoBehaviour
     // PlayerPrefs keys
     // ------------------------------------------------------------------ //
 
-    private const string PrefMaster = "audio.master";
-    private const string PrefSfx    = "audio.sfx";
-    private const string PrefMusic  = "audio.music";
+    // Volume buses persist here. AudioManager is the SINGLE owner of volume
+    // persistence — the Options menu reads/writes these via Get*/Set* below, so
+    // there's no duplicate logic. Keys follow the project's Settings_ scheme.
+    private const string PrefMaster = "Settings_MasterVolume";
+    private const string PrefSfx    = "Settings_SfxVolume";
+    private const string PrefMusic  = "Settings_MusicVolume";
 
     // ------------------------------------------------------------------ //
     // Runtime
@@ -516,9 +519,26 @@ public class AudioManager : MonoBehaviour
     // Volume control (call from a settings UI; persisted)
     // ------------------------------------------------------------------ //
 
-    public void SetMasterVolume(float v) { masterVolume = Mathf.Clamp01(v); ApplyBusVolumes(); SaveVolumes(); }
-    public void SetSfxVolume(float v)    { sfxVolume    = Mathf.Clamp01(v); ApplyBusVolumes(); SaveVolumes(); }
-    public void SetMusicVolume(float v)  { musicVolume  = Mathf.Clamp01(v); ApplyBusVolumes(); SaveVolumes(); }
+    public void SetMasterVolume(float v) => SetMasterVolume(v, true);
+    public void SetSfxVolume(float v)    => SetSfxVolume(v, true);
+    public void SetMusicVolume(float v)  => SetMusicVolume(v, true);
+
+    // Overloads with an explicit save flag. Pass save:false to apply a value
+    // LIVE for preview (e.g. while dragging an Options slider) WITHOUT writing
+    // PlayerPrefs — the Options menu commits with save:true only on Apply, and
+    // restores the previous value (save:false) on Cancel.
+    public void SetMasterVolume(float v, bool save) { masterVolume = Mathf.Clamp01(v); ApplyBusVolumes(); if (save) SaveVolumes(); }
+    public void SetSfxVolume(float v, bool save)    { sfxVolume    = Mathf.Clamp01(v); ApplyBusVolumes(); if (save) SaveVolumes(); }
+    public void SetMusicVolume(float v, bool save)  { musicVolume  = Mathf.Clamp01(v); ApplyBusVolumes(); if (save) SaveVolumes(); }
+
+    /// <summary>Current Master volume (0..1). Used by the Options menu to init its slider.</summary>
+    public float GetMasterVolume() => masterVolume;
+
+    /// <summary>Current SFX volume (0..1).</summary>
+    public float GetSfxVolume() => sfxVolume;
+
+    /// <summary>Current Music volume (0..1).</summary>
+    public float GetMusicVolume() => musicVolume;
 
     private void LoadVolumes()
     {

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 #if PHOTON_UNITY_NETWORKING
@@ -7,30 +8,32 @@ using Photon.Realtime;
 #endif
 
 /// <summary>
-/// Phase 4 — the SHARED match-start coordinator. Solves three problems at once:
-///   1. <b>Synchronised match start</b> — the Master client broadcasts a
-///      <see cref="MatchStartEventCode"/> event to all clients; every client
-///      runs its local setup only after receiving it. Stops Client A from
-///      entering gameplay while Client B is still in the menu.
-///   2. <b>Deterministic player slot mapping</b> — slots are assigned by
-///      sorted <c>ActorNumber</c> (lowest = player 0, next = player 1) and
-///      sent in the event payload so every client agrees on which actor
-///      owns which slot, regardless of rejoin order.
-///   3. <b>Per-slot colours</b> — the colour for each slot is broadcast in
-///      the same event, so the LOCAL player's menu colour choice doesn't
-///      recolour the opponent's army on this client.
+/// The SHARED match-start coordinator for 1–4 player matches.
 ///
-/// Single-player path: <see cref="RequestMatchStart"/> in SP mode bypasses
-/// Photon entirely and fires <see cref="OnMatchStarted"/> synchronously with
-/// a slot mapping of [local = player 0]. Existing menu/HUD/StartGame flow
-/// continues unchanged.
+///   1. <b>Synchronised start</b> — the Master broadcasts a
+///      <see cref="MatchStartEventCode"/> event; every client runs its local
+///      setup only after receiving it.
+///   2. <b>Deterministic slot mapping</b> — slots 0..N-1 are assigned by sorted
+///      <c>ActorNumber</c> and sent in the payload so every client agrees.
+///   3. <b>Per-slot colours</b> — each slot's colour is broadcast so the local
+///      menu pick doesn't recolour opponents.
+///   4. <b>Corner assignment</b> — the Master reads each player's chosen
+///      <c>startSlot</c> (lobby A/B/C/D picker), de-duplicates, randomly fills
+///      unchosen players into free corners, guarantees uniqueness, and
+///      broadcasts the final corner per slot. Only the corners assigned to an
+///      active player are revealed + owned; unused corners stay hidden, so
+///      nothing spawns for empty slots.
+///
+/// Single-player path: <see cref="RequestMatchStart"/> fires
+/// <see cref="OnMatchStarted"/> synchronously with one slot (slot 0, corner 0)
+/// and does NOT touch corners/reveal (SP scenes have no CornerBase), preserving
+/// the existing single-player flow.
 ///
 /// Network event payload (object[]):
-///   0: byte    version  (= 1)
-///   1: int     player0Actor
-///   2: int     player1Actor
-///   3: Vector3 player0Color (r,g,b boxed as Vector3 — Photon's built-in)
-///   4: Vector3 player1Color
+///   [0] byte    version (= 3)
+///   [1] int     playerCount N
+///   [2] int     startingResources
+///   then for each slot i: [3 + i*3 + 0] int actor, [+1] Vector3 colour, [+2] int corner
 /// </summary>
 [DisallowMultipleComponent]
 public class NetworkMatchCoordinator : MonoBehaviour
@@ -45,8 +48,21 @@ public class NetworkMatchCoordinator : MonoBehaviour
     /// <summary>Photon event code reserved for MatchStart broadcasts.</summary>
     public const byte MatchStartEventCode = 2;     // 1 is PlayerCommand
 
-    // Payload v2 added startingResources at index 5.
-    private const byte PayloadVersion = 2;
+    // v3 generalised the payload from 2 fixed players to N players + corners.
+    private const byte PayloadVersion = 3;
+
+    // Fallback per-slot colours (A blue, B red, C green, D yellow) when a player
+    // never pushed a colour property.
+    private static readonly Color[] DefaultSlotColors =
+    {
+        new Color(0.20f, 0.55f, 1.00f),
+        new Color(0.92f, 0.20f, 0.20f),
+        new Color(0.30f, 0.80f, 0.35f),
+        new Color(0.95f, 0.80f, 0.20f),
+    };
+
+    private static Color DefaultColor(int slot) =>
+        DefaultSlotColors[Mathf.Clamp(slot, 0, DefaultSlotColors.Length - 1)];
 
     // ------------------------------------------------------------------ //
     // Public read-only API
@@ -57,19 +73,22 @@ public class NetworkMatchCoordinator : MonoBehaviour
     /// <summary>True once a MatchStart event has been received (or SP started).</summary>
     public bool IsMatchStarted { get; private set; }
 
-    /// <summary>ActorNumber for the player who owns slot 0. Defaults to 1 in SP.</summary>
-    public int Player0ActorNumber { get; private set; } = 1;
-
-    /// <summary>ActorNumber for the player who owns slot 1. Defaults to 2 in SP.</summary>
-    public int Player1ActorNumber { get; private set; } = 2;
+    /// <summary>Number of active players in the current match (1..4).</summary>
+    public int PlayerCount { get; private set; }
 
     /// <summary>
     /// Fired once on the local client when the match starts. Subscribers:
-    ///   • <see cref="MultiplayerMatchStarter"/> — positions camera + remaps perspective.
+    ///   • <see cref="GameplayWorldRoot"/> — reveals the gameplay world.
+    ///   • <see cref="MultiplayerMatchStarter"/> — snaps the camera to the
+    ///     local player's assigned corner.
     ///   • <see cref="MainMenuController"/> — hides the menu, shows the HUD.
-    ///   • Future scoreboard / minimap blip controllers.
     /// </summary>
     public static event System.Action OnMatchStarted;
+
+    // Slot mapping for the current match.
+    private readonly Dictionary<int, int> actorToSlot = new Dictionary<int, int>(4);
+    private int[] slotToActor  = System.Array.Empty<int>();
+    private int[] slotToCorner = System.Array.Empty<int>();
 
     // ------------------------------------------------------------------ //
     // Lifecycle
@@ -97,46 +116,23 @@ public class NetworkMatchCoordinator : MonoBehaviour
 #endif
 
     // ------------------------------------------------------------------ //
-    // Public — called by MainMenuController.OnClickPlay
+    // Public — called by the lobby / main menu Start button
     // ------------------------------------------------------------------ //
 
     /// <summary>
     /// Decide whether/how to start the match.
-    ///
-    /// Single-player path (multiplayerMode off):
-    ///   • Fire <see cref="OnMatchStarted"/> synchronously. Caller proceeds
-    ///     with the usual single-player flow.
-    ///
-    /// Multiplayer path:
-    ///   • Not in a room → log + return false (caller stays on menu).
-    ///   • In a room with &lt; 2 players → log "waiting" + return false.
-    ///   • Room full + I'm Master → broadcast MatchStart (fires the event on
-    ///     this client AND all others).
-    ///   • Room full + I'm NOT Master → log "waiting for master" and return
-    ///     false. The Master's broadcast eventually arrives and fires
-    ///     <see cref="OnMatchStarted"/> here.
+    ///   • Single-player → fire <see cref="OnMatchStarted"/> immediately (slot 0).
+    ///   • Not in a room → return false.
+    ///   • In a room with &lt; 1 player → return false (never happens).
+    ///   • I'm Master → broadcast MatchStart for ALL players (1–4).
+    ///   • I'm not Master → wait for the Master's broadcast.
     /// </summary>
-    /// <param name="localColor">
-    /// Colour the LOCAL player chose in the menu. The master uses this when
-    /// composing the broadcast. Non-master callers can pass anything — only
-    /// the master's choice ends up in the broadcast payload for now.
-    /// </param>
-    /// <returns>True if MatchStart will fire (now or imminently).</returns>
     public bool RequestMatchStart(Color localColor)
     {
-        // Single-player or no NetworkManager: fire immediately. SP doesn't
-        // override starting resources — use the SP scene's whatever-it-was
-        // baked value by passing the project default (PlayerResourceManager
-        // already initialised in Awake; SetCurrent only runs when the host
-        // explicitly picked a value in the lobby).
         if (NetworkManagerRTS.Instance == null || !NetworkManagerRTS.Instance.multiplayerMode)
         {
             Debug.Log("[MultiplayerMatch] Single-player Play — firing OnMatchStarted immediately.");
-            ApplyMatchStartLocally(
-                player0Actor: 1, player1Actor: 2,
-                player0Color: localColor,
-                player1Color: MultiplayerColors.DefaultPlayer1Color,
-                startingResources: -1);     // -1 = "don't override; keep current bank value"
+            ApplyMatchStartLocally(new[] { 1 }, new[] { localColor }, new[] { 0 }, -1);
             return true;
         }
 
@@ -147,19 +143,20 @@ public class NetworkMatchCoordinator : MonoBehaviour
             return false;
         }
 
-        if (PhotonNetwork.CurrentRoom.PlayerCount < 2)
+        int count = PhotonNetwork.CurrentRoom.PlayerCount;
+        if (count < 1)
         {
-            Debug.Log("[MultiplayerMatch] Waiting for player 2...");
+            Debug.Log("[MultiplayerMatch] Waiting for at least one player...");
             return false;
         }
 
         if (!PhotonNetwork.IsMasterClient)
         {
-            Debug.Log("[MultiplayerMatch] Waiting for room. Master will broadcast MatchStart.");
+            Debug.Log("[MultiplayerMatch] Waiting for host. Master will broadcast MatchStart.");
             return false;
         }
 
-        // We're the master + room is ready. Compose + broadcast.
+        Debug.Log($"[MultiplayerMatch] Start allowed because currentPlayers ({count}) >= 1.");
         BroadcastMatchStart(localColor);
         return true;
 #else
@@ -175,59 +172,42 @@ public class NetworkMatchCoordinator : MonoBehaviour
 #if PHOTON_UNITY_NETWORKING
     private void BroadcastMatchStart(Color localColor)
     {
-        // Slot mapping by sorted ActorNumber — same on every client.
-        int[] sortedActors = GetSortedActorNumbers();
-        if (sortedActors.Length < 2)
+        int[] actors = GetSortedActorNumbers();
+        if (actors.Length < 1)
         {
-            Debug.LogWarning("[MultiplayerMatch] BroadcastMatchStart aborted — fewer than 2 actors.");
+            Debug.LogWarning("[MultiplayerMatch] BroadcastMatchStart aborted — no actors.");
             return;
         }
-        int player0Actor = sortedActors[0];
-        int player1Actor = sortedActors[1];
+        int n = actors.Length;
 
-        // Phase 5: read EACH player's chosen colour from Photon custom
-        // properties. Falls back to slot defaults if a player never pushed a
-        // colour (the colour buttons in the menu push immediately; the
-        // pending-on-join flush covers the pre-room pick case). The master
-        // is one of the two players, so its own choice is already in its
-        // properties via the same code path.
-        bool gotP0 = NetworkManagerRTS.TryGetPlayerColor(
-            player0Actor, MultiplayerColors.DefaultPlayer0Color,
-            out Color p0Color, out string p0Name);
-        bool gotP1 = NetworkManagerRTS.TryGetPlayerColor(
-            player1Actor, MultiplayerColors.DefaultPlayer1Color,
-            out Color p1Color, out string p1Name);
-
-        if (!gotP0) p0Name = "Blue (default)";
-        if (!gotP1) p1Name = "Red (default)";
-
-        Debug.Log($"[MultiplayerMatch] Player0 color = {p0Name}");
-        Debug.Log($"[MultiplayerMatch] Player1 color = {p1Name}");
-
-        // Phase 8 — read startingResources from room properties. Falls back
-        // to the NetworkManager default if the host's lobby UI didn't set it.
-        int startingResources = NetworkManagerRTS.DefaultStartingResources;
-        if (PhotonNetwork.CurrentRoom.CustomProperties != null &&
-            PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(
-                NetworkManagerRTS.RoomStartingResourcesPropKey, out object srObj) &&
-            srObj is int srInt)
+        // Per-slot colour: each player's pushed colour, else the slot default.
+        Color[] colors = new Color[n];
+        for (int i = 0; i < n; i++)
         {
-            startingResources = srInt;
+            bool got = NetworkManagerRTS.TryGetPlayerColor(
+                actors[i], DefaultColor(i), out Color col, out _);
+            colors[i] = got ? col : DefaultColor(i);
         }
-        Debug.Log($"[MultiplayerMatch] Starting resources = {startingResources}");
 
-        object[] payload = new object[]
+        int[] corners = ComputeCornerAssignment(actors);
+        int startingResources = ReadRoomStartingResources();
+
+        Debug.Log($"[MultiplayerMatch] Starting match with {n} player(s). " +
+                  $"startingResources={startingResources}.");
+        for (int i = 0; i < n; i++)
+            Debug.Log($"[MultiplayerMatch] Final corner assignment: slot {i} actor " +
+                      $"#{actors[i]} → corner {(char)('A' + corners[i])} (index {corners[i]}).");
+
+        object[] payload = new object[3 + n * 3];
+        payload[0] = PayloadVersion;
+        payload[1] = n;
+        payload[2] = startingResources;
+        for (int i = 0; i < n; i++)
         {
-            PayloadVersion,
-            player0Actor,
-            player1Actor,
-            ColorToVec3(p0Color),
-            ColorToVec3(p1Color),
-            startingResources,
-        };
-
-        Debug.Log($"[MultiplayerMatch] Master starting match. " +
-                  $"Player0 actor = {player0Actor}, Player1 actor = {player1Actor}.");
+            payload[3 + i * 3 + 0] = actors[i];
+            payload[3 + i * 3 + 1] = ColorToVec3(colors[i]);
+            payload[3 + i * 3 + 2] = corners[i];
+        }
 
         PhotonNetwork.RaiseEvent(
             MatchStartEventCode, payload,
@@ -235,12 +215,62 @@ public class NetworkMatchCoordinator : MonoBehaviour
             SendOptions.SendReliable);
     }
 
+    /// <summary>
+    /// Master-side corner assignment: honour each player's chosen corner
+    /// (lobby A/B/C/D picker), drop duplicates, then randomly fill the
+    /// remaining players into free corners. Guarantees a unique corner per
+    /// active player.
+    /// </summary>
+    private int[] ComputeCornerAssignment(int[] sortedActors)
+    {
+        int n = sortedActors.Length;
+        int[] corners = new int[n];
+        bool[] taken  = new bool[4];
+        for (int i = 0; i < n; i++) corners[i] = -1;
+
+        // Pass 1 — honour valid, unique chosen corners.
+        for (int i = 0; i < n; i++)
+        {
+            if (NetworkManagerRTS.TryGetPlayerStartSlot(sortedActors[i], out int sc) &&
+                sc >= 0 && sc < 4 && !taken[sc])
+            {
+                corners[i] = sc;
+                taken[sc]  = true;
+            }
+        }
+
+        // Pass 2 — random-fill unchosen players from the free corners.
+        var free = new List<int>(4);
+        for (int c = 0; c < 4; c++) if (!taken[c]) free.Add(c);
+        for (int i = 0; i < n; i++)
+        {
+            if (corners[i] >= 0) continue;
+            if (free.Count == 0) { corners[i] = i % 4; continue; }  // safety; n<=4
+            int pick = Random.Range(0, free.Count);
+            corners[i] = free[pick];
+            free.RemoveAt(pick);
+        }
+        return corners;
+    }
+
+    private int ReadRoomStartingResources()
+    {
+        int startingResources = NetworkManagerRTS.DefaultStartingResources;
+        if (PhotonNetwork.CurrentRoom != null && PhotonNetwork.CurrentRoom.CustomProperties != null &&
+            PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(
+                NetworkManagerRTS.RoomStartingResourcesPropKey, out object srObj) &&
+            srObj is int srInt)
+        {
+            startingResources = srInt;
+        }
+        return startingResources;
+    }
+
     public void OnEvent(EventData ev)
     {
         if (ev.Code != MatchStartEventCode) return;
 
-        object[] payload = ev.CustomData as object[];
-        if (payload == null || payload.Length < 5)
+        if (!(ev.CustomData is object[] payload) || payload.Length < 3)
         {
             Debug.LogError("[MultiplayerMatch] MatchStart payload invalid.");
             return;
@@ -250,22 +280,29 @@ public class NetworkMatchCoordinator : MonoBehaviour
         {
             byte ver = (byte)payload[0];
             if (ver != PayloadVersion)
-                Debug.LogWarning($"[MultiplayerMatch] MatchStart payload version " +
-                                 $"{ver} differs from local {PayloadVersion} — proceeding anyway.");
+                Debug.LogWarning($"[MultiplayerMatch] MatchStart payload version {ver} " +
+                                 $"differs from local {PayloadVersion} — proceeding anyway.");
 
-            int p0Actor = (int)payload[1];
-            int p1Actor = (int)payload[2];
-            Color p0Col = Vec3ToColor((Vector3)payload[3]);
-            Color p1Col = Vec3ToColor((Vector3)payload[4]);
+            int n = (int)payload[1];
+            int startingResources = (int)payload[2];
+            if (n < 1 || payload.Length < 3 + n * 3)
+            {
+                Debug.LogError($"[MultiplayerMatch] MatchStart payload truncated (n={n}, len={payload.Length}).");
+                return;
+            }
 
-            // Phase 8 — startingResources at index 5. Older payloads (v1)
-            // didn't carry it; fall back to the project default so a mixed
-            // build doesn't crash.
-            int startingResources = NetworkManagerRTS.DefaultStartingResources;
-            if (payload.Length > 5 && payload[5] is int sr) startingResources = sr;
+            int[]   actors  = new int[n];
+            Color[] colors  = new Color[n];
+            int[]   corners = new int[n];
+            for (int i = 0; i < n; i++)
+            {
+                actors[i]  = (int)payload[3 + i * 3 + 0];
+                colors[i]  = Vec3ToColor((Vector3)payload[3 + i * 3 + 1]);
+                corners[i] = (int)payload[3 + i * 3 + 2];
+            }
 
-            Debug.Log($"[MultiplayerMatch] Received MatchStart.");
-            ApplyMatchStartLocally(p0Actor, p1Actor, p0Col, p1Col, startingResources);
+            Debug.Log($"[MultiplayerMatch] Received MatchStart for {n} player(s).");
+            ApplyMatchStartLocally(actors, colors, corners, startingResources);
         }
         catch (System.Exception e)
         {
@@ -289,16 +326,16 @@ public class NetworkMatchCoordinator : MonoBehaviour
 #endif
 
     /// <summary>
-    /// Public reset entry used by <see cref="MatchSessionResetter"/> when
-    /// the player returns to the main menu. Mirrors the OnLeftRoom path
-    /// but works in SP too (no Photon callback fires there). Clears the
-    /// slot mapping back to the SP default of "this client is player 0".
+    /// Public reset entry used by <see cref="MatchSessionResetter"/> when the
+    /// player returns to the main menu. Clears the slot/corner mapping.
     /// </summary>
     public void ResetForNewMatch()
     {
-        IsMatchStarted     = false;
-        Player0ActorNumber = 1;
-        Player1ActorNumber = 2;
+        IsMatchStarted = false;
+        PlayerCount    = 0;
+        actorToSlot.Clear();
+        slotToActor  = System.Array.Empty<int>();
+        slotToCorner = System.Array.Empty<int>();
         Debug.Log("[MultiplayerMatch] Coordinator reset for new match.");
     }
 
@@ -313,107 +350,136 @@ public class NetworkMatchCoordinator : MonoBehaviour
         System.Array.Sort(arr);
         return arr;
     }
+#endif
 
     private static Vector3 ColorToVec3(Color c) => new Vector3(c.r, c.g, c.b);
     private static Color   Vec3ToColor(Vector3 v) => new Color(v.x, v.y, v.z, 1f);
-#endif
 
     // ------------------------------------------------------------------ //
     // Local-apply — pushes match-start state, fires OnMatchStarted
     // ------------------------------------------------------------------ //
 
-    private void ApplyMatchStartLocally(
-        int player0Actor, int player1Actor,
-        Color player0Color, Color player1Color,
-        int startingResources)
+    private void ApplyMatchStartLocally(int[] actors, Color[] colors, int[] corners, int startingResources)
     {
-        Player0ActorNumber = player0Actor;
-        Player1ActorNumber = player1Actor;
-        IsMatchStarted     = true;
-
-        // Push slot colours into the registry BEFORE invoking subscribers
-        // so TeamColorMarkers repaint themselves on the same frame as the
-        // camera snap.
-        MultiplayerColors.SetForOwner(0, player0Color);
-        MultiplayerColors.SetForOwner(1, player1Color);
-
-        Debug.Log($"[TeamColor] Applied color RGB({player0Color.r:F2}," +
-                  $"{player0Color.g:F2},{player0Color.b:F2}) to owner 0.");
-        Debug.Log($"[TeamColor] Applied color RGB({player1Color.r:F2}," +
-                  $"{player1Color.g:F2},{player1Color.b:F2}) to owner 1.");
-
-        Debug.Log($"[MultiplayerMatch] MatchStart startingResources={startingResources}");
-        Debug.Log($"[MultiplayerMatch] LocalPlayerId = {NetworkManagerRTS.LocalPlayerId}.");
-        Debug.Log($"[MultiplayerMatch] Player0 actor = {player0Actor}, " +
-                  $"Player1 actor = {player1Actor}.");
-
-        // Reveal hidden gameplay roots (Player0Base / Player1Base /
-        // Environment) BEFORE writing into the per-owner banks. Activation
-        // synchronously runs Awake on every PlayerResourceManager inside the
-        // bases, registering them under their ownerPlayerId. Without this
-        // ordering, the SetCurrent calls below would land on the wrong bank
-        // (or no bank) because Player1Base's manager hadn't woken yet.
-        OnMatchStarted?.Invoke();
-
-        // Phase 10.2 — apply the host-selected starting resources to BOTH
-        // per-owner banks. -1 is the SP sentinel meaning "don't override;
-        // keep existing values". ResourceBank.SetCurrent is owner-strict so
-        // each write lands on the bank whose ownerPlayerId matches.
-        if (startingResources >= 0)
+        PlayerCount  = actors.Length;
+        actorToSlot.Clear();
+        slotToActor  = new int[PlayerCount];
+        slotToCorner = new int[PlayerCount];
+        for (int i = 0; i < PlayerCount; i++)
         {
-            ResourceBank.SetCurrent(0, startingResources);
-            ResourceBank.SetCurrent(1, startingResources);
+            actorToSlot[actors[i]] = i;
+            slotToActor[i]  = actors[i];
+            slotToCorner[i] = (i < corners.Length) ? corners[i] : -1;
+        }
+        IsMatchStarted = true;
 
-            int after0 = ResourceBank.Current(0);
-            int after1 = ResourceBank.Current(1);
-            Debug.Log($"[Resources] Player 0 starting resources set to {after0}");
-            Debug.Log($"[Resources] Player 1 starting resources set to {after1}");
+        // Push slot colours BEFORE revealing so TeamColorMarkers repaint on the
+        // same frame as the reveal.
+        for (int i = 0; i < PlayerCount; i++)
+        {
+            MultiplayerColors.SetForOwner(i, colors[i]);
+            Debug.Log($"[TeamColor] Applied color RGB({colors[i].r:F2},{colors[i].g:F2}," +
+                      $"{colors[i].b:F2}) to slot {i}.");
         }
 
-        // Diagnostic: sanity-check that the scene-baked Workers / CCs carry
-        // the right ownerPlayerId. If either prints owner=0 for Player 1's
-        // unit, the scene stamper bug (Phase 4 fix) hasn't been re-applied —
-        // re-run SetupMultiplayerMatchMap then AddGameEntityToSceneObjects.
-        LogBaseOwnership(0);
-        LogBaseOwnership(1);
+        Debug.Log($"[MultiplayerMatch] MatchStart startingResources={startingResources}, " +
+                  $"players={PlayerCount}, LocalPlayerId={NetworkManagerRTS.LocalPlayerId}.");
+
+        bool mp = NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.multiplayerMode;
+
+        // Reveal-only-assigned: set each corner's activeSelf BEFORE the world
+        // reveal so only assigned corners come alive. (MP only — SP scenes
+        // have no CornerBase and keep their own layout.)
+        if (mp) ApplyCornerAssignments();
+
+        // Reveal the world + snap the camera (GameplayWorldRoot, MatchStarter…).
+        OnMatchStarted?.Invoke();
+
+        if (mp)
+        {
+            // Assigned corners are active now → re-stamp every entity for this
+            // match (ownership / team perspective / colour / movement gates /
+            // spawn pose / MatchId), and reset resource nodes fresh.
+            GameEntity.ReinitializeAllForNewMatch(MatchSessionManager.CurrentMatchId);
+            ResourceNode.ResetAllForNewMatch();
+
+            if (startingResources >= 0)
+            {
+                for (int i = 0; i < PlayerCount; i++)
+                {
+                    ResourceBank.SetCurrent(i, startingResources);
+                    Debug.Log($"[Resources] Player {i} starting resources set to {ResourceBank.Current(i)}.");
+                }
+            }
+        }
 
         Debug.Log("[MultiplayerMatch] Applied ownership and local perspective.");
     }
 
-    private static void LogBaseOwnership(int expectedOwner)
+    /// <summary>
+    /// Reveal-only-assigned corners. For every <see cref="CornerBase"/> in the
+    /// scene (including currently-inactive ones): if its corner is assigned to
+    /// an active player slot, stamp ownership and mark it active; otherwise
+    /// mark it inactive so nothing spawns there. Runs BEFORE the world reveal,
+    /// so when <see cref="GameplayWorldRoot"/> activates the container only the
+    /// assigned corners come alive.
+    /// </summary>
+    private void ApplyCornerAssignments()
     {
-        GameObject baseRoot = GameObject.Find($"Player{expectedOwner}Base");
-        if (baseRoot == null)
+        CornerBase[] cbs = Object.FindObjectsByType<CornerBase>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        if (cbs == null || cbs.Length == 0)
         {
-            Debug.LogWarning($"[MultiplayerMatch] No 'Player{expectedOwner}Base' " +
-                             "in scene — run Tools → RTS → Match → Setup Multiplayer Match Map.");
+            Debug.Log("[MultiplayerMatch] No CornerBase objects found — skipping per-corner " +
+                      "reveal (legacy/SP scene). Run Tools → RTS → Match → Setup Multiplayer Match Map.");
             return;
         }
-        WorkerGatherer w = baseRoot.GetComponentInChildren<WorkerGatherer>(true);
-        if (w == null)
+
+        for (int i = 0; i < cbs.Length; i++)
         {
-            Debug.LogWarning($"[MultiplayerMatch] Player{expectedOwner}Base has no Worker.");
-            return;
+            CornerBase cb = cbs[i];
+            if (cb == null) continue;
+
+            int slot = SlotForCorner(cb.cornerIndex);
+            if (slot >= 0)
+            {
+                cb.AssignOwner(slot);
+                cb.gameObject.SetActive(true);
+                Debug.Log($"[MultiplayerMatch] Spawning player slot {slot} at corner " +
+                          $"{cb.Letter} (index {cb.cornerIndex}).");
+            }
+            else
+            {
+                cb.ClearOwner();
+                cb.gameObject.SetActive(false);
+                Debug.Log($"[MultiplayerMatch] Skipped empty corner {cb.Letter} (index {cb.cornerIndex}).");
+            }
         }
-        GameEntity ge = w.GetComponent<GameEntity>();
-        int actualOwner = ge != null ? ge.ownerPlayerId : -1;
-        Debug.Log($"[MultiplayerMatch] Player{expectedOwner} Worker owner = {actualOwner} " +
-                  $"({(actualOwner == expectedOwner ? "OK" : "MISMATCH — re-run setup tools")}).");
+    }
+
+    private int SlotForCorner(int cornerIndex)
+    {
+        if (slotToCorner == null) return -1;
+        for (int i = 0; i < slotToCorner.Length; i++)
+            if (slotToCorner[i] == cornerIndex) return i;
+        return -1;
     }
 
     // ------------------------------------------------------------------ //
-    // Slot lookup (called by NetworkManagerRTS.LocalPlayerId)
+    // Slot / corner lookups
     // ------------------------------------------------------------------ //
 
-    /// <summary>
-    /// Returns 0 if <paramref name="actorNumber"/> matches
-    /// <see cref="Player0ActorNumber"/>, 1 if it matches
-    /// <see cref="Player1ActorNumber"/>, -1 otherwise.
-    /// </summary>
+    /// <summary>Slot id (0..N-1) for an ActorNumber, or -1 if not in the match.</summary>
     public int GetPlayerIdForActor(int actorNumber)
     {
-        if (actorNumber == Player0ActorNumber) return 0;
-        if (actorNumber == Player1ActorNumber) return 1;
+        return actorToSlot.TryGetValue(actorNumber, out int slot) ? slot : -1;
+    }
+
+    /// <summary>Corner index (0..3) assigned to a player slot, or -1.</summary>
+    public int GetCornerForPlayer(int slot)
+    {
+        if (slotToCorner != null && slot >= 0 && slot < slotToCorner.Length)
+            return slotToCorner[slot];
         return -1;
     }
 }

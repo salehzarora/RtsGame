@@ -93,10 +93,21 @@ public class MultiplayerLobbyUI : MonoBehaviour
     [Tooltip("Phase 8 — read-only label showing the host's chosen starting " +
              "resources value (read from the Photon room's custom properties).")]
     public TextMeshProUGUI lobbyStartingResourcesLabel;
-    public TextMeshProUGUI lobbyPlayer0Label;
-    public TextMeshProUGUI lobbyPlayer1Label;
-    public Image           lobbyPlayer0ColorSwatch;
-    public Image           lobbyPlayer1ColorSwatch;
+    [Tooltip("One label per player slot (up to 4). Slot index = sorted-actor " +
+             "order. Shows actor #, colour, (you), and chosen corner.")]
+    public TextMeshProUGUI[] lobbyPlayerLabels;
+    [Tooltip("One colour swatch per player slot (up to 4), index-aligned with " +
+             "lobbyPlayerLabels.")]
+    public Image[]           lobbyPlayerSwatches;
+
+    [Header("Start-position picker (A/B/C/D corners)")]
+    [Tooltip("The 'Choose Start Position' preview panel (toggled for visibility only).")]
+    public GameObject mapPreviewPanel;
+    [Tooltip("Four corner buttons, index-aligned to corner 0=A,1=B,2=C,3=D.")]
+    public Button[] cornerButtons;
+    [Tooltip("Four corner button labels (A/B/C/D + owner), index-aligned to cornerButtons.")]
+    public TextMeshProUGUI[] cornerLabels;
+
     public Button[] lobbyColorButtons;                  // 6 colour buttons
     public string[] lobbyColorNames = { "Blue", "Red", "Green", "Yellow", "Orange", "Purple" };
     public Color[]  lobbyColorValues;                   // same length, set by editor tool
@@ -237,6 +248,17 @@ public class MultiplayerLobbyUI : MonoBehaviour
                 int idx = i;     // capture
                 if (lobbyColorButtons[i] != null)
                     lobbyColorButtons[i].onClick.AddListener(() => OnClickLobbyColor(idx));
+            }
+        }
+
+        // Start-position corner buttons — wire each to its corner index.
+        if (cornerButtons != null)
+        {
+            for (int i = 0; i < cornerButtons.Length; i++)
+            {
+                int corner = i;     // capture
+                if (cornerButtons[i] != null)
+                    cornerButtons[i].onClick.AddListener(() => OnClickCorner(corner));
             }
         }
     }
@@ -473,66 +495,143 @@ public class MultiplayerLobbyUI : MonoBehaviour
             lobbyStartingResourcesLabel.text = "Starting Resources: " + startingResources;
         }
 
-        // Sort players by ActorNumber to derive slot mapping.
+        // Sort players by ActorNumber → slot 0..N-1.
         var sorted = new List<Player>(room.Players.Values);
         sorted.Sort((a, b) => a.ActorNumber.CompareTo(b.ActorNumber));
 
-        Player p0 = sorted.Count > 0 ? sorted[0] : null;
-        Player p1 = sorted.Count > 1 ? sorted[1] : null;
+        // Render up to 4 player rows; absent slots show "<empty>".
+        int slotCount = lobbyPlayerLabels != null ? lobbyPlayerLabels.Length : 0;
+        for (int i = 0; i < slotCount; i++)
+        {
+            Player p = i < sorted.Count ? sorted[i] : null;
+            SetSlotUi(i, p);
+        }
 
-        SetSlotUi(lobbyPlayer0Label, lobbyPlayer0ColorSwatch, p0, slotIndex: 0);
-        SetSlotUi(lobbyPlayer1Label, lobbyPlayer1ColorSwatch, p1, slotIndex: 1);
+        RefreshCornerButtons(sorted);
 
-        // Start button — host only, room full.
-        bool roomFull   = room.PlayerCount >= 2;
+        int count = room.PlayerCount;
+        int max   = room.MaxPlayers > 0 ? room.MaxPlayers : 4;
         bool localIsHost = PhotonNetwork.IsMasterClient;
+
+        // Start button — host can start with 1–4 players; non-host doesn't see it.
         if (lobbyStartMatchButton != null)
         {
             lobbyStartMatchButton.gameObject.SetActive(localIsHost);
-            lobbyStartMatchButton.interactable = roomFull;
+            lobbyStartMatchButton.interactable = localIsHost && count >= 1;
         }
 
-        // Status label
+        // Status label — no longer blocks on player count.
         if (lobbyStatusLabel != null)
         {
-            if (!roomFull)               lobbyStatusLabel.text = "Waiting for player 2...";
-            else if (!localIsHost)       lobbyStatusLabel.text = "Waiting for host...";
-            else                         lobbyStatusLabel.text = "Ready. Click Start Match.";
+            lobbyStatusLabel.text = localIsHost
+                ? $"Players: {count} / {max} — Ready to start"
+                : $"Players: {count} / {max} — Waiting for host";
         }
 #endif
     }
 
 #if PHOTON_UNITY_NETWORKING
-    private void SetSlotUi(TextMeshProUGUI label, Image swatch, Player player, int slotIndex)
+    // Slot colour for a player: their chosen colour property, else slot default.
+    private static Color SlotColor(Player player, int slotIndex)
     {
+        Color color = MultiplayerColors.ForOwnerOrDefault(slotIndex);
+        if (player != null && player.CustomProperties != null &&
+            player.CustomProperties.TryGetValue(NetworkManagerRTS.ColorPropKey, out object rgb) &&
+            rgb is Vector3 v)
+        {
+            color = new Color(v.x, v.y, v.z, 1f);
+        }
+        return color;
+    }
+
+    private void SetSlotUi(int slotIndex, Player player)
+    {
+        if (lobbyPlayerLabels == null || slotIndex >= lobbyPlayerLabels.Length) return;
+        TextMeshProUGUI label = lobbyPlayerLabels[slotIndex];
+        Image swatch = (lobbyPlayerSwatches != null && slotIndex < lobbyPlayerSwatches.Length)
+            ? lobbyPlayerSwatches[slotIndex] : null;
         if (label == null) return;
 
+        // Player N is 1-indexed for display ("Player 1".."Player 4").
         if (player == null)
         {
-            label.text = $"Player {slotIndex}: <empty>";
-            if (swatch != null) swatch.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+            label.text = $"Player {slotIndex + 1}: <empty>";
+            if (swatch != null) swatch.color = new Color(0.18f, 0.18f, 0.20f, 1f);
             return;
         }
 
         string colorName = "(default)";
-        Color  color     = MultiplayerColors.ForOwnerOrDefault(slotIndex);
-        if (player.CustomProperties != null)
+        Color  color     = SlotColor(player, slotIndex);
+        if (player.CustomProperties != null &&
+            player.CustomProperties.TryGetValue(NetworkManagerRTS.ColorNamePropKey, out object n) &&
+            n is string s && !string.IsNullOrEmpty(s))
         {
-            if (player.CustomProperties.TryGetValue(NetworkManagerRTS.ColorPropKey, out object rgb) &&
-                rgb is Vector3 v)
-            {
-                color = new Color(v.x, v.y, v.z, 1f);
-            }
-            if (player.CustomProperties.TryGetValue(NetworkManagerRTS.ColorNamePropKey, out object n) &&
-                n is string s && !string.IsNullOrEmpty(s))
-            {
-                colorName = s;
-            }
+            colorName = s;
         }
 
-        string suffix = (PhotonNetwork.LocalPlayer.ActorNumber == player.ActorNumber) ? "  (you)" : "";
-        label.text = $"Player {slotIndex}: actor #{player.ActorNumber} — {colorName}{suffix}";
+        bool isYou = PhotonNetwork.LocalPlayer.ActorNumber == player.ActorNumber;
+        string youSuffix = isYou ? " — you" : "";
+        string cornerSuffix = NetworkManagerRTS.TryGetPlayerStartSlot(player.ActorNumber, out int corner)
+            ? $" — Corner {(char)('A' + corner)}"
+            : " — (no corner)";
+
+        label.text = $"Player {slotIndex + 1}: actor #{player.ActorNumber} — {colorName}{youSuffix}{cornerSuffix}";
         if (swatch != null) swatch.color = color;
+    }
+
+    // Available (unclaimed) corner colour.
+    private static readonly Color CornerAvailableColor = new Color(0.25f, 0.55f, 0.30f, 1f);
+
+    // Paint each A/B/C/D dot: green=available, your colour=yours, dimmed
+    // other-colour + non-interactable=taken by someone else.
+    private void RefreshCornerButtons(List<Player> sorted)
+    {
+        if (cornerButtons == null) return;
+
+        int localActor = PhotonNetwork.LocalPlayer != null
+            ? PhotonNetwork.LocalPlayer.ActorNumber : -1;
+
+        for (int c = 0; c < cornerButtons.Length; c++)
+        {
+            Button btn = cornerButtons[c];
+            if (btn == null) continue;
+            char letter = (char)('A' + c);
+
+            Player ownerP = null;
+            int ownerSlot = -1;
+            for (int j = 0; j < sorted.Count; j++)
+            {
+                if (NetworkManagerRTS.TryGetPlayerStartSlot(sorted[j].ActorNumber, out int sc) && sc == c)
+                {
+                    ownerP = sorted[j];
+                    ownerSlot = j;
+                    break;
+                }
+            }
+
+            Image img = btn.image;
+            TextMeshProUGUI lbl = (cornerLabels != null && c < cornerLabels.Length) ? cornerLabels[c] : null;
+
+            if (ownerP == null)
+            {
+                if (img != null) img.color = CornerAvailableColor;
+                btn.interactable = true;
+                if (lbl != null) lbl.text = letter.ToString();
+            }
+            else if (ownerP.ActorNumber == localActor)
+            {
+                if (img != null) img.color = SlotColor(ownerP, ownerSlot);
+                btn.interactable = true;            // click again to release
+                if (lbl != null) lbl.text = $"{letter}\n(You)";
+            }
+            else
+            {
+                Color taken = SlotColor(ownerP, ownerSlot) * 0.6f; taken.a = 1f;
+                if (img != null) img.color = taken;
+                btn.interactable = false;           // blocked — taken by another player
+                if (lbl != null) lbl.text = $"{letter}\nP{ownerSlot + 1}";
+            }
+        }
     }
 #endif
 
@@ -554,6 +653,38 @@ public class MultiplayerLobbyUI : MonoBehaviour
             NetworkManagerRTS.Instance.SetLocalPlayerColor(c, name);
 
         RefreshLobby();
+    }
+
+    /// <summary>
+    /// Corner dot click. Toggles off if you click your current corner; blocks
+    /// if another player already holds it; otherwise selects it (which frees
+    /// your previous corner automatically, since startSlot is a single value).
+    /// </summary>
+    private void OnClickCorner(int corner)
+    {
+#if PHOTON_UNITY_NETWORKING
+        if (!PhotonNetwork.InRoom || PhotonNetwork.LocalPlayer == null) return;
+        int localActor = PhotonNetwork.LocalPlayer.ActorNumber;
+
+        // Blocked if another player already chose this corner.
+        foreach (var kv in PhotonNetwork.CurrentRoom.Players)
+        {
+            Player p = kv.Value;
+            if (p.ActorNumber == localActor) continue;
+            if (NetworkManagerRTS.TryGetPlayerStartSlot(p.ActorNumber, out int sc) && sc == corner)
+            {
+                Debug.Log($"[StartSlot] Corner {(char)('A' + corner)} taken by actor " +
+                          $"#{p.ActorNumber} — selection blocked.");
+                return;
+            }
+        }
+
+        NetworkManagerRTS.TryGetPlayerStartSlot(localActor, out int myCurrent);
+        int next = (myCurrent == corner) ? NetworkManagerRTS.NoStartSlot : corner;
+        NetworkManagerRTS.Instance?.SetLocalStartSlot(next);
+
+        RefreshLobby();
+#endif
     }
 
     private void OnClickStartMatch()
