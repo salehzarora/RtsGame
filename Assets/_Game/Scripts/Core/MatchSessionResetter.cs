@@ -95,6 +95,14 @@ public static class MatchSessionResetter
             // Resources stay (they're scene props).
             if (ge.entityType == EntityType.Resource) continue;
 
+            // Map objects (destructible bridges, fuel tanks, garrison buildings,
+            // watch towers, tunnels) are NEUTRAL, scene-baked battlefield
+            // landmarks — like resources, they must SURVIVE a match reset
+            // (their per-match state is reset separately by
+            // MatchSessionManager.ResetMapInteractables). Destroying them here
+            // would wipe the battlefield permanently for the play session.
+            if (ge.entityType == EntityType.MapObject) continue;
+
             if (IsUnderSceneRoot(ge.transform, sceneRoots))
             {
                 // Scene-baked unit/building. Keep — the scene root will be

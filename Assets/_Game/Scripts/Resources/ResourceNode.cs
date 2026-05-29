@@ -27,11 +27,20 @@ public class ResourceNode : MonoBehaviour
 
     public bool IsDepleted => CurrentResources <= 0;
 
+    // Cached visuals/colliders so a depleted node can be HIDDEN (not destroyed)
+    // and later restored on a new match. Destroying scene-baked nodes was the
+    // cause of "resources missing for one client" — a destroyed scene object
+    // can't come back for the non-restarting client.
+    private Renderer[] renderers;
+    private Collider[] colliders;
+
     // ------------------------------------------------------------------ //
 
     private void Awake()
     {
         CurrentResources = maxResources;
+        renderers = GetComponentsInChildren<Renderer>(true);
+        colliders = GetComponentsInChildren<Collider>(true);
     }
 
     // ------------------------------------------------------------------ //
@@ -50,10 +59,49 @@ public class ResourceNode : MonoBehaviour
 
         if (IsDepleted)
         {
-            Debug.Log($"[ResourceNode] {name} fully depleted.");
-            Destroy(gameObject);
+            Debug.Log($"[ResourceNode] {name} fully depleted — hidden (not destroyed) so it " +
+                      "can be reset for the next match.");
+            SetVisible(false);
         }
 
         return amount;
+    }
+
+    // ------------------------------------------------------------------ //
+    // Match-scoped reset (Bug 1 fix)
+    // ------------------------------------------------------------------ //
+
+    private void SetVisible(bool visible)
+    {
+        if (renderers != null)
+            for (int i = 0; i < renderers.Length; i++)
+                if (renderers[i] != null) renderers[i].enabled = visible;
+        if (colliders != null)
+            for (int i = 0; i < colliders.Length; i++)
+                if (colliders[i] != null) colliders[i].enabled = visible;
+    }
+
+    /// <summary>
+    /// Restore this node to a full, visible, gatherable state for a new match.
+    /// Idempotent.
+    /// </summary>
+    public void ResetForNewMatch()
+    {
+        CurrentResources = maxResources;
+        SetVisible(true);
+    }
+
+    /// <summary>
+    /// Reset EVERY resource node in the scene to fresh (full + visible) for a
+    /// new match — including inactive ones (bases hidden by GameplayWorldRoot).
+    /// Called from match cleanup so resource state never leaks between rooms.
+    /// </summary>
+    public static void ResetAllForNewMatch()
+    {
+        ResourceNode[] all = FindObjectsByType<ResourceNode>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < all.Length; i++)
+            if (all[i] != null) all[i].ResetForNewMatch();
+        Debug.Log($"[ResourceNode] Reset {all.Length} node(s) to fresh for new match.");
     }
 }

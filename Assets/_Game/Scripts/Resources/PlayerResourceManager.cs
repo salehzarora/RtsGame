@@ -117,6 +117,18 @@ public class PlayerResourceManager : MonoBehaviour
             ownerPlayerId, next, 0, "SetResources");
     }
 
+    /// <summary>
+    /// Set resources WITHOUT broadcasting. Used by match-session cleanup so a
+    /// leaving client doesn't push a resource reset onto the player who stays
+    /// in the room. Pure local state change.
+    /// </summary>
+    public void SetResourcesLocal(int amount)
+    {
+        int next = Mathf.Max(0, amount);
+        startingResources = next;
+        CurrentResources  = next;
+    }
+
     // ------------------------------------------------------------------ //
     // Phase 10.3 — inbound apply (called by NetworkMatchEvents)
     // ------------------------------------------------------------------ //

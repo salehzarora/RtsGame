@@ -82,10 +82,9 @@ public class MapInteractableNetworkEvents : MonoBehaviour
 #if PHOTON_UNITY_NETWORKING
         if (!ShouldBroadcast()) return;
         object[] payload = { garrisonId ?? string.Empty, unitId ?? string.Empty, occupyingOwnerId };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             GarrisonEnterEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[MapNet] Broadcast garrison-enter garrison={garrisonId} unit={unitId} owner={occupyingOwnerId}");
 #endif
@@ -97,10 +96,9 @@ public class MapInteractableNetworkEvents : MonoBehaviour
 #if PHOTON_UNITY_NETWORKING
         if (!ShouldBroadcast()) return;
         object[] payload = { garrisonId ?? string.Empty, unitId ?? string.Empty, exitPos, forward };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             GarrisonExitEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[MapNet] Broadcast garrison-exit garrison={garrisonId} unit={unitId} at {exitPos:F1}");
 #endif
@@ -119,10 +117,9 @@ public class MapInteractableNetworkEvents : MonoBehaviour
             exitPos,
             forward,
         };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             TunnelTravelEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[MapNet] Broadcast tunnel-travel from={fromTunnelId} to={toTunnelId} unit={unitId}");
 #endif
@@ -142,6 +139,9 @@ public class MapInteractableNetworkEvents : MonoBehaviour
 
     public void OnEvent(EventData ev)
     {
+        // Session isolation — drop garrison/tunnel events from another match.
+        if (!MatchSessionManager.AcceptEvent(ev, "MapInteractable")) return;
+
         switch (ev.Code)
         {
             case GarrisonEnterEventCode: HandleGarrisonEnter(ev); break;

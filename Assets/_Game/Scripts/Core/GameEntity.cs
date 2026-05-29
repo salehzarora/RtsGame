@@ -122,6 +122,24 @@ public class GameEntity : MonoBehaviour
     /// <summary>Stable id. Generated at Awake if the serialized value is empty.</summary>
     public string EntityId => entityId;
 
+    /// <summary>
+    /// MatchId this entity is currently scoped to (the room/match it belongs
+    /// to). Stamped by <see cref="ApplyOwnership"/> / <see cref="ReinitializeForMatch"/>.
+    /// Empty in single-player / pre-match. Selection + command code reject
+    /// entities whose MatchId differs from the current session, so a stale
+    /// object from a previous room can never be driven.
+    /// </summary>
+    public string MatchId { get; private set; } = string.Empty;
+
+    // Canonical match-start pose (local space), captured at Awake. Scene-baked
+    // starting units (the bulldozer, etc.) are restored to this on every new
+    // match so they behave like freshly-spawned match objects rather than stale
+    // scene leftovers from the previous room.
+    private bool       sceneBaked;
+    private Vector3    spawnLocalPos;
+    private Quaternion spawnLocalRot;
+    private bool       spawnPoseCaptured;
+
     // ------------------------------------------------------------------ //
     // Lifecycle
     // ------------------------------------------------------------------ //
@@ -133,7 +151,13 @@ public class GameEntity : MonoBehaviour
         // empty id and gets one from the spawn-id slot below. We capture this
         // BEFORE id resolution so the match-start self-heal at the end of Awake
         // can target scene-baked entities only.
-        bool sceneBaked = !string.IsNullOrEmpty(entityId);
+        sceneBaked = !string.IsNullOrEmpty(entityId);
+
+        // Capture the canonical match-start pose so scene-baked starting units
+        // (bulldozer, etc.) can be restored to it on every new match.
+        spawnLocalPos     = transform.localPosition;
+        spawnLocalRot     = transform.localRotation;
+        spawnPoseCaptured = true;
 
         // 1. Resolve the entity id. Priority order:
         //    a) entityId baked into the serialized field (scene-stamped object).
@@ -263,6 +287,9 @@ public class GameEntity : MonoBehaviour
     {
         ownerPlayerId = newOwnerId;
         teamId        = newOwnerId;
+        // Stamp the current match so selection/command code can reject entities
+        // left over from a previous room.
+        MatchId       = MatchSessionManager.CurrentMatchId;
         ApplyLocalTeamPerspective();
 
         // Phase 10.7 — push the owner color through the canonical applier.
@@ -307,6 +334,65 @@ public class GameEntity : MonoBehaviour
     {
         foreach (GameEntity e in EntityRegistry.All())
             if (e != null) e.ApplyLocalTeamPerspective();
+    }
+
+    // ------------------------------------------------------------------ //
+    // Match-scoped reinitialization (Bug 1 fix)
+    //
+    // Scene-baked starting units (the bulldozer, bases) survive a match reset,
+    // so they must be RE-INITIALIZED for each new match — otherwise they keep
+    // the previous room's ownership/team/color/movement-gate/position. Treating
+    // them like freshly-spawned match objects: restore spawn pose, re-stamp the
+    // MatchId, and re-fire full ownership so every per-owner gate re-evaluates
+    // for the NEW room's slot mapping (which may have swapped).
+    // ------------------------------------------------------------------ //
+
+    /// <summary>Stamp the match this entity belongs to.</summary>
+    public void StampMatchId(string matchId) => MatchId = matchId ?? string.Empty;
+
+    /// <summary>
+    /// Restore the entity to the local pose it had at scene load. Disables a
+    /// NavMeshAgent first (transform can't be set reliably on an enabled agent);
+    /// the ownership gate (via the ApplyOwnership that follows in
+    /// <see cref="ReinitializeForMatch"/>) re-enables it for the owner, which
+    /// re-places the agent on the NavMesh at the restored pose.
+    /// </summary>
+    public void RestoreSpawnPose()
+    {
+        if (!spawnPoseCaptured) return;
+        UnityEngine.AI.NavMeshAgent agent = GetComponent<UnityEngine.AI.NavMeshAgent>();
+        if (agent != null && agent.enabled) agent.enabled = false;
+        transform.localPosition = spawnLocalPos;
+        transform.localRotation = spawnLocalRot;
+    }
+
+    /// <summary>
+    /// Reinitialize this entity for a new match: stamp <paramref name="matchId"/>,
+    /// restore the canonical spawn pose (scene-baked units only), and re-fire
+    /// full ownership so team perspective, owner color, AND the movement /
+    /// selection gates all re-evaluate for this match's slot mapping. Neutral
+    /// entities (resources, map objects, owner &lt; 0) skip the ownership
+    /// re-fire — they have no owner perspective; their per-match state is reset
+    /// by their own systems (ResourceNode / DestructibleMapObject).
+    /// </summary>
+    public void ReinitializeForMatch(string matchId)
+    {
+        StampMatchId(matchId);
+        if (sceneBaked) RestoreSpawnPose();
+        if (ownerPlayerId >= 0) ApplyOwnership(ownerPlayerId);
+    }
+
+    /// <summary>
+    /// Reinitialize EVERY registered entity for <paramref name="matchId"/>.
+    /// Called at MatchStart so scene-baked starting units adopt the new match's
+    /// ownership/team/color/gate/position and MatchId on every client.
+    /// </summary>
+    public static void ReinitializeAllForNewMatch(string matchId)
+    {
+        var all = new System.Collections.Generic.List<GameEntity>(EntityRegistry.All());
+        foreach (GameEntity e in all)
+            if (e != null) e.ReinitializeForMatch(matchId);
+        Debug.Log($"[GameEntity] Reinitialized {all.Count} entities for match '{matchId}'.");
     }
 
     // ------------------------------------------------------------------ //

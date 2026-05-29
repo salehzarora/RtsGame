@@ -564,6 +564,16 @@ public static class CommandDispatcher
                 GameEntity e = EntityRegistry.Find(id);
                 if (e == null) continue;     // freshly-killed entity slipped through — let the executor no-op
 
+                // Reject commands targeting an entity left over from a previous
+                // room/match (its MatchId won't match the current session).
+                string cur = MatchSessionManager.CurrentMatchId;
+                if (!string.IsNullOrEmpty(cur) && e.MatchId != cur)
+                {
+                    Debug.LogWarning($"[CommandDispatcher] Rejecting local command — selected " +
+                                     $"entity '{id}' MatchId '{e.MatchId}' != current '{cur}' (stale).");
+                    return false;
+                }
+
                 if (e.ownerPlayerId != local)
                 {
                     Debug.LogWarning($"[CommandDispatcher] Rejecting local command — " +

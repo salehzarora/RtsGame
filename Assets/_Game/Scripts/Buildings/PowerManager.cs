@@ -109,4 +109,22 @@ public class PowerManager : MonoBehaviour
         Debug.Log($"[Power] owner={owner} delta={delta} total={total} " +
                   $"source={(string.IsNullOrEmpty(source) ? "?" : source)}");
     }
+
+    // ------------------------------------------------------------------ //
+    // Match-session reset
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Clear every owner's supply/demand totals so a new match starts with an
+    /// empty power grid. Called by <see cref="MatchSessionManager"/> on match
+    /// cleanup. Power is derived from building presence, so the totals re-build
+    /// themselves as the next match's buildings register on their Awake/OnEnable.
+    /// Idempotent.
+    /// </summary>
+    public void ResetForNewMatch()
+    {
+        supplyByOwner.Clear();
+        demandByOwner.Clear();
+        Debug.Log("[Power] Reset for new match — supply/demand grids cleared.");
+    }
 }

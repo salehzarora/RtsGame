@@ -285,10 +285,11 @@ public class MultiplayerLobbyUI : MonoBehaviour
         if (canvasRoot != null)     canvasRoot.SetActive(false);
         if (mainMenuCanvas != null) mainMenuCanvas.SetActive(true);
 
-        // Phase 10.11 — same teardown the ESC menu does. Covers the case
-        // where the player explored the lobby (or hosted a room without
-        // starting a match) and backs out; a future match starts clean.
-        MatchSessionResetter.ResetForNewMatch();
+        // Full session cleanup (entities + resources + power + selection + UI +
+        // color slots + coordinator + Photon player props). Covers backing out
+        // of the lobby (or a hosted room without starting a match) so a future
+        // match starts completely clean. Idempotent.
+        MatchSessionManager.CleanupPreviousMatch();
     }
 
     private void RefreshOnlineStatusLabel()

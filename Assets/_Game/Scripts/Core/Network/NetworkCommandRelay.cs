@@ -90,13 +90,13 @@ public class NetworkCommandRelay : MonoBehaviour
         if (!NetworkManagerRTS.IsMultiplayerEnabled) return;
 
 #if PHOTON_UNITY_NETWORKING
+        // Tagged with the current MatchId via MatchSessionManager.Raise so a
+        // stale command from a previous room can't replay in this match.
         object[] payload = cmd.ToNetworkPayload();
-        RaiseEventOptions opts = new RaiseEventOptions
-        {
-            Receivers = ReceiverGroup.Others,   // never echo to self — we already executed
-        };
-        bool ok = PhotonNetwork.RaiseEvent(
-            PlayerCommandEventCode, payload, opts, SendOptions.SendReliable);
+        bool ok = MatchSessionManager.Raise(
+            PlayerCommandEventCode, payload,
+            ReceiverGroup.Others,   // never echo to self — we already executed
+            SendOptions.SendReliable);
 
         if (ok)
             Debug.Log($"[NetworkCommandRelay] Sent command {cmd.commandType} (#{cmd.commandId}).");
@@ -114,6 +114,9 @@ public class NetworkCommandRelay : MonoBehaviour
     public void OnEvent(EventData photonEvent)
     {
         if (photonEvent.Code != PlayerCommandEventCode) return;
+
+        // Session isolation — ignore commands tagged for a different match.
+        if (!MatchSessionManager.AcceptEvent(photonEvent, "PlayerCommand")) return;
 
         object[] payload = photonEvent.CustomData as object[];
         if (payload == null)

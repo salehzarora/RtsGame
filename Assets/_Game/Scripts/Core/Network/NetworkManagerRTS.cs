@@ -359,6 +359,8 @@ public class NetworkManagerRTS : MonoBehaviour
     /// </summary>
     public void CreateRoom(string roomName, string mapId, int startingResources)
     {
+        // Session isolation — guarantee a clean slate before entering a new room.
+        MatchSessionManager.CleanupPreviousMatch();
 #if PHOTON_UNITY_NETWORKING
         pendingMapId             = string.IsNullOrEmpty(mapId) ? MapRegistry.DefaultMapId : mapId;
         pendingRoomName          = roomName;
@@ -386,6 +388,8 @@ public class NetworkManagerRTS : MonoBehaviour
     /// </summary>
     public void JoinRoomByName(string roomName)
     {
+        // Session isolation — clean slate before entering a new room.
+        MatchSessionManager.CleanupPreviousMatch();
 #if PHOTON_UNITY_NETWORKING
         if (string.IsNullOrEmpty(roomName))
         {
@@ -409,6 +413,8 @@ public class NetworkManagerRTS : MonoBehaviour
     [ContextMenu("Join Random Room")]
     public void JoinRandomRoom()
     {
+        // Session isolation — clean slate before entering a new room.
+        MatchSessionManager.CleanupPreviousMatch();
 #if PHOTON_UNITY_NETWORKING
         if (!PhotonNetwork.IsConnected)
         {
@@ -508,10 +514,17 @@ public class NetworkManagerRTS : MonoBehaviour
         //     clients so each ResourceBank initialises to the same value.
         // CustomRoomPropertiesForLobby exposes both to the room-list view
         // so the browser can show the map name + resources without joining.
+        // Unique per-room MatchId so every room/match is isolated. Stored in
+        // the room's custom properties so EVERY client (host + joiners) reads
+        // the SAME id and tags/filters its gameplay events against it.
+        string matchId = System.Guid.NewGuid().ToString();
+        Debug.Log($"[MatchSession] New MatchId created for room: '{matchId}'.");
+
         Hashtable roomProps = new Hashtable
         {
-            { RoomMapPropKey,               pendingMapId ?? MapRegistry.DefaultMapId },
-            { RoomStartingResourcesPropKey, pendingStartingResources },
+            { RoomMapPropKey,                       pendingMapId ?? MapRegistry.DefaultMapId },
+            { RoomStartingResourcesPropKey,         pendingStartingResources },
+            { MatchSessionManager.MatchIdPropKey,   matchId },
         };
 
         RoomOptions opts = new RoomOptions
@@ -579,6 +592,12 @@ public class NetworkManagerRTS : MonoBehaviour
     public void OnDisconnected(DisconnectCause cause)
     {
         Debug.LogWarning($"[NetworkRTS] Disconnected from Photon — cause: {cause}.");
+
+        // Session isolation — a disconnect (intentional or dropped) ends the
+        // current match. Tear down all match state so a reconnect / new room
+        // can never inherit it. Idempotent.
+        MatchSessionManager.CleanupPreviousMatch();
+        Debug.Log("[MatchSession] OnDisconnected cleanup completed.");
     }
 
     public void OnRegionListReceived(RegionHandler regionHandler)             { }
@@ -607,6 +626,26 @@ public class NetworkManagerRTS : MonoBehaviour
         Debug.Log($"[NetworkRTS] Joined room '{PhotonNetwork.CurrentRoom.Name}' as " +
                   $"actor #{PhotonNetwork.LocalPlayer.ActorNumber} (playerId={LocalPlayerId}). " +
                   $"Players in room: {PhotonNetwork.CurrentRoom.PlayerCount}/{PhotonNetwork.CurrentRoom.MaxPlayers}");
+
+        // Session isolation — start a fresh match session under THIS room's
+        // MatchId. StartNewMatchSession cleans up any lingering previous-match
+        // state first, then stamps the new id so gameplay events are scoped to
+        // this room. Falls back to a room-name-derived id for rooms created by
+        // an older build that didn't stamp a MatchId (still identical on both
+        // clients because the room name is shared).
+        string joinedMatchId = null;
+        if (PhotonNetwork.CurrentRoom.CustomProperties != null &&
+            PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(
+                MatchSessionManager.MatchIdPropKey, out object midObj) &&
+            midObj is string mid && !string.IsNullOrEmpty(mid))
+        {
+            joinedMatchId = mid;
+        }
+        if (string.IsNullOrEmpty(joinedMatchId))
+            joinedMatchId = "room-" + PhotonNetwork.CurrentRoom.Name;
+
+        MatchSessionManager.StartNewMatchSession(joinedMatchId);
+        Debug.Log($"[MatchSession] Joined room MatchId '{joinedMatchId}'.");
 
         // Phase 5: if the player picked a colour BEFORE we joined the room
         // (the common case — colour is picked on the main menu, room join

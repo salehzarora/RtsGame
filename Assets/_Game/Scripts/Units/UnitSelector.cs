@@ -753,6 +753,18 @@ public class UnitSelector : MonoBehaviour
         if (e == null) e = go.GetComponentInParent<GameEntity>();
         if (e == null) return true;     // unstamped — let it pass
 
+        // Reject stale entities that belong to a previous room/match. After
+        // MatchStart every current entity carries the current MatchId; a leftover
+        // (e.g. an old bulldozer that wasn't reinitialized) won't, so it can't
+        // be selected or commanded.
+        string curMatch = MatchSessionManager.CurrentMatchId;
+        if (!string.IsNullOrEmpty(curMatch) && e.MatchId != curMatch)
+        {
+            Debug.Log($"[UnitSelector] Cannot select '{go.name}' — entity MatchId '{e.MatchId}' " +
+                      $"!= current '{curMatch}' (stale from a previous match).");
+            return false;
+        }
+
         int local = NetworkManagerRTS.LocalPlayerId;
         if (e.ownerPlayerId == local) return true;
 

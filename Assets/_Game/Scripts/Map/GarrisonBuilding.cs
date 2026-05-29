@@ -328,6 +328,28 @@ public class GarrisonBuilding : MapInteractable
         return null;
     }
 
+    /// <summary>
+    /// Drop ALL occupancy state for a new match — clears the occupant lists and
+    /// releases the garrison back to neutral. LOCAL-only: it does NOT eject or
+    /// broadcast (the occupant units are runtime spawns already destroyed by the
+    /// match-session reset, so their references are gone). Called by
+    /// <see cref="MatchSessionManager"/> so a garrison/watch tower that was held
+    /// at match end doesn't read as occupied/captured in the next match.
+    /// Idempotent.
+    /// </summary>
+    public void ResetOccupancyForNewMatch()
+    {
+        bool had = occupants.Count > 0 || OccupyingOwnerId != GameEntity.NeutralOwnerId;
+        occupants.Clear();
+        occupantIds.Clear();
+        OccupyingOwnerId = GameEntity.NeutralOwnerId;
+        if (had)
+        {
+            Debug.Log($"[Garrison] '{name}' occupancy reset for new match (released to neutral).");
+            OnOccupancyChanged();   // refreshes WatchTower capture indicator to neutral
+        }
+    }
+
     private Vector3 GetExitPosition(int index)
     {
         if (exitPoints != null && exitPoints.Length > 0)

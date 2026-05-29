@@ -38,6 +38,19 @@ public class MultiplayerMatchStarter : MonoBehaviour
         NetworkMatchCoordinator.OnMatchStarted -= HandleMatchStarted;
     }
 
+    /// <summary>
+    /// Re-arm the single-fire guard so the NEXT match re-runs the camera snap +
+    /// per-match entity reinitialize. Called by <see cref="MatchSessionManager"/>
+    /// on cleanup. Without this, the latch stayed true after match 1 and the
+    /// non-restarting client never re-applied ownership/gates for match 2 — the
+    /// root cause of the stuck bulldozer and the remote movement jitter.
+    /// </summary>
+    public void ResetForNewMatch()
+    {
+        applied = false;
+        Debug.Log("[MultiplayerMatch] Starter re-armed for a new match.");
+    }
+
     private void HandleMatchStarted()
     {
         // Single-fire guard. The coordinator is intended to invoke
@@ -80,10 +93,18 @@ public class MultiplayerMatchStarter : MonoBehaviour
             Debug.LogWarning("[MultiplayerMatch] No RTSCamera in scene — skipping camera snap.");
         }
 
-        // Team perspective: each client maps own owner → Player, opponent → Enemy.
-        GameEntity.RemapAllForLocalPerspective();
-        Debug.Log($"[MultiplayerMatch] Local-perspective team remap applied " +
-                  $"for {EntityRegistry.Count} registered entities.");
+        // Full per-match reinitialize (Bug 1 fix). Re-fires ownership on every
+        // entity so team perspective, owner color, AND the movement/selection
+        // gates re-evaluate for THIS match's slot mapping, restores scene-baked
+        // starting units (the bulldozer) to their spawn pose, and stamps the
+        // current MatchId. Supersedes the old team-only remap.
+        GameEntity.ReinitializeAllForNewMatch(MatchSessionManager.CurrentMatchId);
+        Debug.Log($"[MultiplayerMatch] Per-match reinitialize applied " +
+                  $"for {EntityRegistry.Count} registered entities (MatchId " +
+                  $"'{MatchSessionManager.CurrentMatchId}').");
+
+        // Resource nodes start fresh every match (full + visible) on all clients.
+        ResourceNode.ResetAllForNewMatch();
 
         applied = true;
     }

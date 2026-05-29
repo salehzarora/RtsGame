@@ -141,10 +141,9 @@ public class NetworkMatchEvents : MonoBehaviour
             damageAmount,
             newHealth,
         };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             ApplyDamageEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
 
         if (ok)
             Debug.Log($"[NetDamage] Broadcast target={targetEntityId} damage={damageAmount} newHealth={newHealth}");
@@ -174,10 +173,9 @@ public class NetworkMatchEvents : MonoBehaviour
             entityId       ?? string.Empty,
             killerEntityId ?? string.Empty,
         };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             EntityDestroyedEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
 
         if (ok)
             Debug.Log($"[NetDeath] Broadcast destroy entity={entityId} killer={killerEntityId}");
@@ -198,10 +196,9 @@ public class NetworkMatchEvents : MonoBehaviour
         if (!ShouldBroadcastAnyClient()) return;
 
         object[] payload = { apcId ?? string.Empty, passengerId ?? string.Empty };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             PassengerLoadedEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[NetAPC] Broadcast load apc={apcId} passenger={passengerId}");
 #endif
@@ -227,10 +224,9 @@ public class NetworkMatchEvents : MonoBehaviour
             exitPos,
             forwardDir,
         };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             PassengerUnloadedEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[NetAPC] Broadcast unload apc={apcId} passenger={passengerId} at {exitPos:F1}");
 #endif
@@ -260,10 +256,9 @@ public class NetworkMatchEvents : MonoBehaviour
         if (!ShouldBroadcastAnyClient()) return;
 
         object[] payload = { passengerId ?? string.Empty, apcId ?? string.Empty };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             BoardingStartedEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[NetAPC] Broadcast boarding started passenger={passengerId} apc={apcId}");
 #endif
@@ -295,10 +290,9 @@ public class NetworkMatchEvents : MonoBehaviour
         object[] payload = { entityId ?? string.Empty, pos, rot, senderTime };
         // Unreliable — at the transform rate a dropped packet is corrected by
         // the next, and the interpolation delay absorbs a single drop.
-        PhotonNetwork.RaiseEvent(
+        MatchSessionManager.Raise(
             UnitTransformEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendUnreliable);
+            ReceiverGroup.Others, SendOptions.SendUnreliable);
 #endif
     }
 
@@ -323,10 +317,9 @@ public class NetworkMatchEvents : MonoBehaviour
         };
         // SendUnreliable — snapshots are sent at 0.5s cadence so losing one is fine,
         // the next will resync. Saves Photon throughput.
-        PhotonNetwork.RaiseEvent(
+        MatchSessionManager.Raise(
             EntityStateSnapshotEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendUnreliable);
+            ReceiverGroup.Others, SendOptions.SendUnreliable);
 #endif
     }
 
@@ -348,10 +341,9 @@ public class NetworkMatchEvents : MonoBehaviour
         if (!ShouldBroadcastAnyClient()) return;
 
         object[] payload = { aircraftId ?? string.Empty, firePos, targetPos };
-        PhotonNetwork.RaiseEvent(
+        MatchSessionManager.Raise(
             AircraftFiredEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendUnreliable);
+            ReceiverGroup.Others, SendOptions.SendUnreliable);
 #endif
     }
 
@@ -368,10 +360,9 @@ public class NetworkMatchEvents : MonoBehaviour
             finalEntityId  ?? string.Empty,
             buildingLabel  ?? string.Empty,
         };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             ConstructionCompleteEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[ConstructionNet] Broadcast complete site={siteEntityId} " +
                       $"final={finalEntityId} owner={ownerPlayerId} type={buildingLabel}");
@@ -390,10 +381,9 @@ public class NetworkMatchEvents : MonoBehaviour
         if (!ShouldBroadcastAnyClient()) return;
 
         object[] payload = { workerId ?? string.Empty, resourceNodeId ?? string.Empty };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             WorkerGatherEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
         if (ok)
             Debug.Log($"[NetWorker] Broadcast gather worker={workerId} node={resourceNodeId}");
 #endif
@@ -418,10 +408,9 @@ public class NetworkMatchEvents : MonoBehaviour
             delta,
             reason ?? string.Empty,
         };
-        bool ok = PhotonNetwork.RaiseEvent(
+        bool ok = MatchSessionManager.Raise(
             ResourceChangedEventCode, payload,
-            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
-            SendOptions.SendReliable);
+            ReceiverGroup.Others, SendOptions.SendReliable);
 
         if (ok)
             Debug.Log($"[NetResources] Broadcast owner={ownerPlayerId} newAmount={newAmount} delta={delta} reason={reason}");
@@ -470,6 +459,11 @@ public class NetworkMatchEvents : MonoBehaviour
 #if PHOTON_UNITY_NETWORKING
     public void OnEvent(EventData ev)
     {
+        // Session isolation — drop gameplay events tagged with a different
+        // MatchId (a stray/late event from a previous room must never mutate
+        // this match). Untagged events (e.g. MatchStart) are accepted.
+        if (!MatchSessionManager.AcceptEvent(ev, "NetMatchEvents")) return;
+
         switch (ev.Code)
         {
             case ApplyDamageEventCode:       HandleApplyDamage(ev);       break;
@@ -583,6 +577,18 @@ public class NetworkMatchEvents : MonoBehaviour
 
         GameEntity ge = EntityRegistry.Find(entityId);
         if (ge == null) return;
+
+        // Per-unit match scope (defence-in-depth atop the event-level MatchId
+        // filter): never apply a transform to an entity that belongs to a
+        // different match. Only drops when the entity is explicitly stamped with
+        // a DIFFERENT match, so unstamped/current units are unaffected.
+        string curMatch = MatchSessionManager.CurrentMatchId;
+        if (!string.IsNullOrEmpty(curMatch) && !string.IsNullOrEmpty(ge.MatchId) && ge.MatchId != curMatch)
+        {
+            Debug.Log($"[NetTransform] Ignored transform for '{ge.name}' — entity MatchId " +
+                      $"'{ge.MatchId}' != current '{curMatch}'.");
+            return;
+        }
 
         // Ground units carry UnitMovement; aircraft carry AirUnitController and
         // have no UnitMovement. Route to whichever remote-transform receiver

@@ -51,6 +51,10 @@ public class EscapeMenuController : MonoBehaviour
 
     public static EscapeMenuController Instance { get; private set; }
 
+    // Set true between LeaveRoom() and OnLeftRoom so the main menu is shown
+    // only AFTER the Photon room has actually been left.
+    private bool pendingReturnToMenu;
+
     // ------------------------------------------------------------------ //
     // Lifecycle
     // ------------------------------------------------------------------ //
@@ -67,11 +71,27 @@ public class EscapeMenuController : MonoBehaviour
 
         // Always start hidden — the menu is only relevant DURING gameplay.
         if (menuCanvas != null) menuCanvas.SetActive(false);
+
+#if PHOTON_UNITY_NETWORKING
+        // Show the main menu only once the room-leave actually completes.
+        NetworkManagerRTS.OnRoomLeftEvent += HandleRoomLeftShowMenu;
+#endif
     }
 
     private void OnDestroy()
     {
         if (Instance == this) Instance = null;
+#if PHOTON_UNITY_NETWORKING
+        NetworkManagerRTS.OnRoomLeftEvent -= HandleRoomLeftShowMenu;
+#endif
+    }
+
+    private void HandleRoomLeftShowMenu()
+    {
+        if (!pendingReturnToMenu) return;
+        pendingReturnToMenu = false;
+        Debug.Log("[PauseMenu] OnLeftRoom received — showing main menu.");
+        ShowMainMenuCanvas();
     }
 
     private void Update()
@@ -144,56 +164,67 @@ public class EscapeMenuController : MonoBehaviour
         // 1. Close the pause panel itself.
         HidePauseMenu();
 
-        // 2. Multiplayer cleanup — leave the room first so any in-flight
-        //    Photon callbacks fire BEFORE we tear down UI / state. The
-        //    coordinator's OnLeftRoom resets IsMatchStarted; that lets the
-        //    next match boot fresh.
-        if (NetworkManagerRTS.IsMultiplayerEnabled)
-        {
-            Debug.Log("[PauseMenu] Leaving Photon room.");
-            NetworkManagerRTS.Instance.LeaveRoom();
-        }
-        // Flip multiplayerMode off so a subsequent Single Player click
-        // doesn't accidentally route through the MP coordinator path.
-        if (NetworkManagerRTS.Instance != null)
-            NetworkManagerRTS.Instance.multiplayerMode = false;
+        // 2. Immediate local UI teardown so the player isn't left staring at
+        //    the running match while the room-leave completes.
+        UnitSelector.Instance?.ClearSelection();
 
-        // 3. Clear gameplay UI surfaces.
-        UnitSelector selector = UnitSelector.Instance;
-        if (selector != null) selector.ClearSelection();
-
-        // 4. Hide gameplay world. GameplayWorldRoot's ReHide deactivates
-        //    Player0Base / Player1Base / Environment / etc. so the menu
-        //    sits over a clean black canvas.
         GameplayWorldRoot worldRoot = Object.FindFirstObjectByType<GameplayWorldRoot>();
         if (worldRoot != null) worldRoot.ReHide();
 
-        // 5. Hide gameplay HUD.
-        if (hudCanvas != null) hudCanvas.SetActive(false);
-
-        // 6. Hide lobby canvas (defensive — usually already hidden).
+        if (hudCanvas != null)   hudCanvas.SetActive(false);
         if (lobbyCanvas != null) lobbyCanvas.SetActive(false);
 
-        // 7. Reset game state. Future StartGame call will fire OnGameStarted
-        //    again so subscribers like HUD bars re-bind.
         if (GameStateManager.Instance != null)
             GameStateManager.Instance.ResetToMenu();
 
-        // 8. Tear down the match's runtime objects + color slots + id
-        //    allocator counter so the NEXT match starts with a clean slate.
-        //    Without this, produced units / constructed buildings from this
-        //    match would survive into the next and keep their previous-match
-        //    colors via stale MultiplayerColors entries.
-        MatchSessionResetter.ResetForNewMatch();
+        // 3. Leave the room (if any) and defer showing the main menu until
+        //    OnLeftRoom — that's when MatchSessionManager (subscribed to
+        //    OnRoomLeftEvent) runs the full, broadcast-safe cleanup. A timeout
+        //    fallback shows the menu anyway if the callback is delayed.
+        bool leavingRoom = NetworkManagerRTS.IsMultiplayerEnabled &&
+                           NetworkManagerRTS.Instance != null;
+        if (leavingRoom)
+        {
+            Debug.Log("[PauseMenu] Leaving Photon room — main menu will show after OnLeftRoom.");
+            pendingReturnToMenu = true;
+            NetworkManagerRTS.Instance.LeaveRoom();
+            StartCoroutine(ShowMenuTimeoutFallback());
+        }
+        else
+        {
+            // Single-player / not in a room — clean + show now (no OnLeftRoom).
+            MatchSessionManager.CleanupPreviousMatch();
+            ShowMainMenuCanvas();
+        }
 
-        // 9. Show the main menu canvas.
+        // Flip multiplayerMode off so a subsequent Single Player click doesn't
+        // route through the MP coordinator path. Done AFTER capturing
+        // leavingRoom so the branch above is correct.
+        if (NetworkManagerRTS.Instance != null)
+            NetworkManagerRTS.Instance.multiplayerMode = false;
+    }
+
+    private System.Collections.IEnumerator ShowMenuTimeoutFallback()
+    {
+        yield return new WaitForSecondsRealtime(2.5f);
+        if (pendingReturnToMenu)
+        {
+            pendingReturnToMenu = false;
+            Debug.LogWarning("[PauseMenu] OnLeftRoom not received within timeout — " +
+                             "showing main menu anyway.");
+            MatchSessionManager.CleanupPreviousMatch();   // ensure cleanup ran
+            ShowMainMenuCanvas();
+        }
+    }
+
+    private void ShowMainMenuCanvas()
+    {
         if (mainMenuCanvas == null)
             mainMenuCanvas = GameObject.Find("MainMenuCanvas");
         if (mainMenuCanvas != null)
         {
             mainMenuCanvas.SetActive(true);
-            // Make sure cursor is visible / unlocked. Some camera-pan modes
-            // hide it; restore so the player can click menu buttons.
+            // Restore cursor so menu buttons are clickable.
             Cursor.visible   = true;
             Cursor.lockState = CursorLockMode.None;
         }
