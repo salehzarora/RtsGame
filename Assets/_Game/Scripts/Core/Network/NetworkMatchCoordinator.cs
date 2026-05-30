@@ -414,6 +414,73 @@ public class NetworkMatchCoordinator : MonoBehaviour
         }
 
         Debug.Log("[MultiplayerMatch] Applied ownership and local perspective.");
+
+        LogMatchStartSummary();
+    }
+
+    /// <summary>
+    /// Per-slot post-spawn audit. Lists, for every active player slot, the
+    /// final actor / corner / activation state of every spawn-critical piece
+    /// (CornerBase, dozer, bank, resource cluster, current resource balance).
+    /// Any missing piece is logged as an ERROR so the 4-player spawn bug
+    /// (and any future spawn regression) is immediately diagnosable from
+    /// the Console — no breakpoints required.
+    /// </summary>
+    private void LogMatchStartSummary()
+    {
+        Debug.Log($"[MultiplayerMatch] ─── Match-start summary ({PlayerCount} player(s)) ───");
+
+        CornerBase[] allCorners = Object.FindObjectsByType<CornerBase>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+        for (int i = 0; i < PlayerCount; i++)
+        {
+            int actor  = slotToActor[i];
+            int corner = slotToCorner[i];
+            char letter = (corner >= 0 && corner < 26) ? (char)('A' + corner) : '?';
+
+            CornerBase cb = null;
+            for (int k = 0; k < allCorners.Length; k++)
+                if (allCorners[k] != null && allCorners[k].cornerIndex == corner) { cb = allCorners[k]; break; }
+
+            bool cbActive   = cb != null && cb.gameObject.activeInHierarchy;
+            bool dozerOK    = cb != null && cb.dozer != null && cb.dozer.activeInHierarchy;
+            bool bankOK     = cb != null && cb.bank  != null && cb.bank.gameObject.activeInHierarchy;
+            int  resNodes   = (cb != null && cb.resourceCluster != null) ? cb.resourceCluster.childCount : 0;
+            int  balance    = ResourceBank.Current(i);
+
+            Debug.Log($"[MultiplayerMatch]   slot {i} actor #{actor} → corner {letter} " +
+                      $"(index {corner}): cb={cbActive} dozer={dozerOK} bank={bankOK} " +
+                      $"resNodes={resNodes} resources={balance}");
+
+            if (cb == null)
+                Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: CornerBase " +
+                               $"with cornerIndex={corner} NOT FOUND in scene. " +
+                               "Re-run Tools → RTS → Match → Setup Multiplayer Match Map.");
+            else
+            {
+                if (!cbActive) Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: CornerBase not active in hierarchy.");
+                if (cb.dozer == null) Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: dozer reference is NULL.");
+                else if (!dozerOK)    Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: dozer not active in hierarchy.");
+                if (cb.bank == null)  Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: bank reference is NULL.");
+                else if (!bankOK)     Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: bank not active in hierarchy.");
+                if (resNodes == 0)    Debug.LogError($"[MultiplayerMatch] ✗ slot {i} corner {letter}: resource cluster has 0 nodes.");
+            }
+        }
+
+        // Also list unused (correctly-hidden) corners so it's obvious nothing was
+        // left over for an empty slot.
+        for (int k = 0; k < allCorners.Length; k++)
+        {
+            CornerBase cb = allCorners[k];
+            if (cb == null) continue;
+            if (SlotForCorner(cb.cornerIndex) >= 0) continue;     // assigned, already logged
+            Debug.Log($"[MultiplayerMatch]   corner {cb.Letter} (index {cb.cornerIndex}) → " +
+                      $"unassigned, active={cb.gameObject.activeInHierarchy} " +
+                      $"(expected: inactive — nothing spawns for empty slots).");
+        }
+
+        Debug.Log("[MultiplayerMatch] ─── End summary ───");
     }
 
     /// <summary>

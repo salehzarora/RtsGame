@@ -699,6 +699,9 @@ public class MultiplayerLobbyUI : MonoBehaviour
             : MultiplayerColors.DefaultPlayer0Color;
         bool willFire = NetworkMatchCoordinator.Instance.RequestMatchStart(local);
         Debug.Log($"[Lobby] Start Match requested — coordinator returned {willFire}.");
+
+        if (willFire)
+            ShowLoadingPanel("Loading match — please wait...");
     }
 
     private void OnClickLeaveRoom()
@@ -710,6 +713,58 @@ public class MultiplayerLobbyUI : MonoBehaviour
     private void HandleMatchStarted()
     {
         Debug.Log("[Lobby] MatchStart received — hiding lobby canvas.");
+        HideLoadingPanel();
         if (canvasRoot != null) canvasRoot.SetActive(false);
+    }
+
+    // ------------------------------------------------------------------ //
+    // Loading overlay (built lazily inside the lobby canvas)
+    // ------------------------------------------------------------------ //
+
+    private GameObject loadingPanelGO;
+    private TextMeshProUGUI loadingPanelText;
+
+    private void EnsureLoadingPanel()
+    {
+        if (loadingPanelGO != null) return;
+        if (canvasRoot == null) return;
+
+        loadingPanelGO = new GameObject("LoadingPanel");
+        loadingPanelGO.transform.SetParent(canvasRoot.transform, false);
+
+        Image bg = loadingPanelGO.AddComponent<Image>();
+        bg.color = new Color(0.04f, 0.05f, 0.06f, 0.88f);
+        bg.raycastTarget = true;     // swallow clicks so the user can't double-press Start
+        RectTransform rt = bg.rectTransform;
+        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+
+        GameObject textGO = new GameObject("Text");
+        textGO.transform.SetParent(loadingPanelGO.transform, false);
+        loadingPanelText = textGO.AddComponent<TextMeshProUGUI>();
+        loadingPanelText.text      = "Loading match — please wait...";
+        loadingPanelText.fontSize  = 36;
+        loadingPanelText.color     = new Color(0.92f, 0.92f, 0.84f, 1f);
+        loadingPanelText.alignment = TextAlignmentOptions.Center;
+        loadingPanelText.fontStyle = FontStyles.Bold;
+        RectTransform trt = loadingPanelText.rectTransform;
+        trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
+        trt.offsetMin = Vector2.zero; trt.offsetMax = Vector2.zero;
+
+        loadingPanelGO.transform.SetAsLastSibling();     // render on top of the lobby
+        loadingPanelGO.SetActive(false);
+    }
+
+    private void ShowLoadingPanel(string msg)
+    {
+        EnsureLoadingPanel();
+        if (loadingPanelGO == null) return;
+        if (loadingPanelText != null && !string.IsNullOrEmpty(msg)) loadingPanelText.text = msg;
+        loadingPanelGO.SetActive(true);
+    }
+
+    private void HideLoadingPanel()
+    {
+        if (loadingPanelGO != null) loadingPanelGO.SetActive(false);
     }
 }

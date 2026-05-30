@@ -62,12 +62,24 @@ public static class SetupEscapeMenu
         }
 
         // Rebuild canvas from scratch.
-        GameObject existing = GameObject.Find("EscapeMenuCanvas");
-        if (existing != null)
+        // Same FindObjectsByType(Include) sweep as SetupMultiplayerLobbyUI:
+        // the escape canvas is saved INACTIVE, so GameObject.Find can't see it
+        // on a re-run and would leave it behind, compounding duplicates each
+        // run. Root-only filter avoids matching a child named EscapeMenuCanvas
+        // somewhere unrelated.
+        Transform[] _existingEscape = UnityEngine.Object.FindObjectsByType<Transform>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        int _removedEscape = 0;
+        for (int _i = 0; _i < _existingEscape.Length; _i++)
         {
-            Undo.DestroyObjectImmediate(existing);
-            Debug.Log("[SetupEscapeMenu]   Removed old EscapeMenuCanvas — rebuilding.");
+            if (_existingEscape[_i] == null) continue;
+            if (_existingEscape[_i].parent != null) continue;
+            if (_existingEscape[_i].name != "EscapeMenuCanvas") continue;
+            Undo.DestroyObjectImmediate(_existingEscape[_i].gameObject);
+            _removedEscape++;
         }
+        if (_removedEscape > 0)
+            Debug.Log($"[SetupEscapeMenu]   Removed {_removedEscape} old EscapeMenuCanvas object(s) — rebuilding clean.");
 
         GameObject canvasGO = new GameObject("EscapeMenuCanvas");
         Undo.RegisterCreatedObjectUndo(canvasGO, "Create EscapeMenuCanvas");

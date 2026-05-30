@@ -412,12 +412,27 @@ public static class SetupMultiplayerLobbyUI
 
     private static Canvas RebuildCanvas()
     {
-        GameObject existing = GameObject.Find(CanvasName);
-        if (existing != null)
+        // BUG FIX: this builder saves the canvas INACTIVE at the end of Run, so
+        // GameObject.Find (which only finds ACTIVE objects) can't see the
+        // previous canvas on a re-run. We'd then leave the inactive one in
+        // place and append a new one — and that compounds every re-run until
+        // the Hierarchy is full of duplicate LobbyCanvas objects. Use a
+        // FindObjectsByType pass that INCLUDES inactive objects so the
+        // re-run is actually idempotent. Root-only filter (parent == null)
+        // avoids accidentally matching a same-named child of a prefab.
+        Transform[] all = Object.FindObjectsByType<Transform>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        int removed = 0;
+        for (int i = 0; i < all.Length; i++)
         {
-            Undo.DestroyObjectImmediate(existing);
-            Debug.Log("[SetupLobby] Removed previous LobbyCanvas — rebuilding.");
+            if (all[i] == null) continue;
+            if (all[i].parent != null) continue;
+            if (all[i].name != CanvasName) continue;
+            Undo.DestroyObjectImmediate(all[i].gameObject);
+            removed++;
         }
+        if (removed > 0)
+            Debug.Log($"[SetupLobby] Removed {removed} existing LobbyCanvas object(s) — rebuilding clean.");
 
         GameObject go = new GameObject(CanvasName);
         Undo.RegisterCreatedObjectUndo(go, "Create LobbyCanvas");
