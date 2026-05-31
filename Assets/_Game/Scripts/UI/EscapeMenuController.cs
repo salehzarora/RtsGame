@@ -1,5 +1,7 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 /// <summary>
 /// Local in-game pause menu. Pressing ESC during gameplay toggles a small
@@ -94,20 +96,161 @@ public class EscapeMenuController : MonoBehaviour
         ShowMainMenuCanvas();
     }
 
+    /// <summary>
+    /// Runtime self-heal — mirrors the editor's "Repair Escape Menu" tool so
+    /// the player never has to touch the menu bar to make ESC work. Runs in
+    /// Start so every other Awake/OnEnable in the freshly-loaded gameplay
+    /// scene has finished, then re-resolves any null/wrong inspector
+    /// reference by NAME against the active scene (inactive-inclusive).
+    /// Idempotent — safe to call repeatedly.
+    /// </summary>
+    private void Start()
+    {
+        Debug.Log("[EscapeMenu] Runtime self-heal started.");
+
+        // menuCanvas → EscapeMenuCanvas (REQUIRED — without this, ESC silently no-ops).
+        if (menuCanvas == null)
+        {
+            menuCanvas = FindRoot("EscapeMenuCanvas");
+            if (menuCanvas != null) Debug.Log("[EscapeMenu] menuCanvas resolved: EscapeMenuCanvas");
+            else Debug.LogError("[EscapeMenu] menuCanvas resolution FAILED — no 'EscapeMenuCanvas' " +
+                                "root in the active scene. Run Setup Escape Menu first.");
+        }
+
+        // Awake's hide ran before serialized refs were resolved here; ensure
+        // it's hidden again now that we know which GO it is.
+        if (menuCanvas != null && menuCanvas.activeSelf)
+            menuCanvas.SetActive(false);
+
+        // hudCanvas → HUDCanvas (used to hide the HUD on Main Menu).
+        if (hudCanvas == null)
+        {
+            hudCanvas = FindRoot("HUDCanvas");
+            if (hudCanvas != null) Debug.Log("[EscapeMenu] hudCanvas resolved: HUDCanvas");
+        }
+
+        // mainMenuCanvas → MainMenuCanvas (often absent in the gameplay scene;
+        // OnClickMainMenu falls back to SceneManager.LoadScene then).
+        if (mainMenuCanvas == null)
+        {
+            mainMenuCanvas = FindRoot("MainMenuCanvas");
+            if (mainMenuCanvas != null) Debug.Log("[EscapeMenu] mainMenuCanvas resolved: MainMenuCanvas");
+        }
+
+        // lobbyCanvas → LobbyCanvas (optional cleanup target).
+        if (lobbyCanvas == null)
+        {
+            lobbyCanvas = FindRoot("LobbyCanvas");
+            if (lobbyCanvas != null) Debug.Log("[EscapeMenu] lobbyCanvas resolved: LobbyCanvas");
+        }
+
+        // Ensure the EscapeMenuCanvas can actually receive clicks.
+        if (menuCanvas != null && menuCanvas.GetComponent<GraphicRaycaster>() == null)
+        {
+            menuCanvas.AddComponent<GraphicRaycaster>();
+            Debug.Log("[EscapeMenu] GraphicRaycaster added to EscapeMenuCanvas.");
+        }
+
+        // Button presence + listener count (listeners are persistent — set by
+        // SetupEscapeMenu via UnityEventTools.AddPersistentListener — so they
+        // survive scene save/load. We don't re-add at runtime; we just report.)
+        if (menuCanvas != null)
+        {
+            ReportButton(menuCanvas, "BtnResume",   "Resume");
+            ReportButton(menuCanvas, "BtnOptions",  "Options");
+            ReportButton(menuCanvas, "BtnMainMenu", "Main Menu");
+            ReportButton(menuCanvas, "BtnQuit",     "Quit");
+        }
+
+        Debug.Log("[EscapeMenu] Runtime self-heal complete.");
+    }
+
+    /// <summary>Inactive-inclusive root GameObject search by name in the active scene.</summary>
+    private static GameObject FindRoot(string name)
+    {
+        Transform[] all = Object.FindObjectsByType<Transform>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (all[i] == null || all[i].parent != null) continue;
+            if (all[i].name == name) return all[i].gameObject;
+        }
+        return null;
+    }
+
+    private static void ReportButton(GameObject root, string childName, string humanLabel)
+    {
+        Transform t = FindDescendant(root.transform, childName);
+        if (t == null)
+        {
+            Debug.LogError($"[EscapeMenu] {humanLabel} button ('{childName}') MISSING under EscapeMenuCanvas. " +
+                           "Run Tools → RTS → Setup → Setup Escape Menu.");
+            return;
+        }
+        Button btn = t.GetComponent<Button>();
+        if (btn == null)
+        {
+            Debug.LogError($"[EscapeMenu] {humanLabel} '{childName}' has no Button component.");
+            return;
+        }
+        int listeners = btn.onClick.GetPersistentEventCount();
+        if (listeners == 0)
+            Debug.LogError($"[EscapeMenu] {humanLabel} button has 0 persistent OnClick listeners. " +
+                           "Run Setup Escape Menu to re-wire.");
+        else
+            Debug.Log($"[EscapeMenu] {humanLabel} button wired ({listeners} listener(s)).");
+    }
+
+    private static Transform FindDescendant(Transform root, string name)
+    {
+        Transform[] all = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < all.Length; i++)
+            if (all[i] != null && all[i].name == name)
+                return all[i];
+        return null;
+    }
+
     private void Update()
     {
         if (!Input.GetKeyDown(KeyCode.Escape)) return;
+        Debug.Log("[EscapeMenu] ESC key detected.");
 
         // If we're typing into a UI input field, swallow the press — ESC there
         // usually means "stop editing", not "open pause".
-        if (IsTypingInInputField()) return;
+        if (IsTypingInInputField())
+        {
+            Debug.Log("[EscapeMenu] ESC swallowed — typing in an input field.");
+            return;
+        }
 
-        // Gameplay-active gate. ESC during the main menu / lobby / pre-match
-        // is ignored so the pause panel doesn't overlap menu UI.
-        if (!GameStateManager.IsPlaying) return;
+        // Relaxed scene gate: ESC is ignored only in MainMenuScene (where the
+        // player should use the menu UI, not pause). In every other scene —
+        // gameplay, dev direct-play, future scenes — ESC always works.
+        // (Previous behaviour gated on GameStateManager.IsPlaying, which
+        // returned silently when GameStateManager was missing or the match
+        // payload hadn't flipped the state — making ESC look broken.)
+        string sceneName = SceneManager.GetActiveScene().name;
+        if (sceneName == "MainMenuScene")
+        {
+            Debug.Log("[EscapeMenu] ESC ignored — in MainMenuScene (use the menu UI).");
+            return;
+        }
 
-        // If the pause menu is already open, ESC closes it (same as Resume).
-        if (menuCanvas != null && menuCanvas.activeSelf)
+        if (menuCanvas == null)
+        {
+            Debug.LogError("[EscapeMenu] ESC blocked — menuCanvas is null even after Start " +
+                           "self-heal. EscapeMenuCanvas missing from scene? Run " +
+                           "Tools → RTS → Setup → Setup Escape Menu.");
+            return;
+        }
+
+        // GameStateManager.IsPlaying is informational only now — log it for
+        // diagnostics but don't gate on it.
+        if (GameStateManager.Instance != null && !GameStateManager.IsPlaying)
+            Debug.Log("[EscapeMenu] (Note: GameStateManager.IsPlaying=false — allowing ESC anyway " +
+                      "because we're in a gameplay scene.)");
+
+        if (menuCanvas.activeSelf)
             HidePauseMenu();
         else
             ShowPauseMenu();

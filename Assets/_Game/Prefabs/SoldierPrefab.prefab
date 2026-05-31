@@ -1028,6 +1028,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 39d4aa2b1021bd342a117b001f907a24, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitMovement
+  useSnapshotInterpolation: 1
+  interpolationDelay: 0.18
+  maxSnapshotBufferSize: 5
+  maxExtrapolationSeconds: 0.1
+  snapDistance: 8
 --- !u!114 &3205472671008666460
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1056,6 +1061,7 @@ MonoBehaviour:
   team: 0
   maxHealth: 100
   destroyDelay: 0
+  destroyObjectOnDeath: 1
 --- !u!114 &8049170332246212668
 MonoBehaviour:
   m_ObjectHideFlags: 0

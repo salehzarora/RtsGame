@@ -124,12 +124,70 @@ public static class UIDuplicateTools
         for (int i = 0; i < KnownUIRootNames.Length; i++)
             totalRemoved += RemoveExtras(KnownUIRootNames[i]);
 
+        // Re-attach controller references that may have been pointing at one of
+        // the destroyed duplicates. Without this, MultiplayerLobbyUI.canvasRoot
+        // can be left null and the Online button silently no-ops — the
+        // "Online button hang" symptom.
+        ReattachControllerReferences();
+
         if (totalRemoved > 0)
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 
         Debug.Log($"[CleanupUI] Removed {totalRemoved} duplicate UI object(s). " +
                   "Run Validate UI Duplicates to confirm and Ctrl+S to save.");
         Debug.Log("[CleanupUI] ──────────────────────────────────────");
+    }
+
+    /// <summary>
+    /// Walk the known controllers and re-point any canvas reference that's
+    /// null (because the previously-referenced GameObject was destroyed in
+    /// this cleanup pass) at the surviving root by name. Logs each fix-up.
+    /// </summary>
+    private static void ReattachControllerReferences()
+    {
+        var ui = Object.FindFirstObjectByType<MultiplayerLobbyUI>(FindObjectsInactive.Include);
+        if (ui != null)
+        {
+            if (ui.canvasRoot == null)
+            {
+                ui.canvasRoot = FindRootGOByName("LobbyCanvas");
+                if (ui.canvasRoot != null)
+                {
+                    EditorUtility.SetDirty(ui);
+                    Debug.Log("[CleanupUI]   Re-attached MultiplayerLobbyUI.canvasRoot → 'LobbyCanvas'.");
+                }
+            }
+            if (ui.mainMenuCanvas == null)
+            {
+                ui.mainMenuCanvas = FindRootGOByName("MainMenuCanvas");
+                if (ui.mainMenuCanvas != null)
+                {
+                    EditorUtility.SetDirty(ui);
+                    Debug.Log("[CleanupUI]   Re-attached MultiplayerLobbyUI.mainMenuCanvas → 'MainMenuCanvas'.");
+                }
+            }
+        }
+
+        var esc = Object.FindFirstObjectByType<EscapeMenuController>(FindObjectsInactive.Include);
+        if (esc != null)
+        {
+            bool dirty = false;
+            if (esc.menuCanvas == null)     { esc.menuCanvas     = FindRootGOByName("EscapeMenuCanvas"); dirty |= esc.menuCanvas != null; }
+            if (esc.mainMenuCanvas == null) { esc.mainMenuCanvas = FindRootGOByName("MainMenuCanvas");   dirty |= esc.mainMenuCanvas != null; }
+            if (esc.hudCanvas == null)      { esc.hudCanvas      = FindRootGOByName("HUDCanvas");        dirty |= esc.hudCanvas != null; }
+            if (esc.lobbyCanvas == null)    { esc.lobbyCanvas    = FindRootGOByName("LobbyCanvas");      dirty |= esc.lobbyCanvas != null; }
+            if (dirty)
+            {
+                EditorUtility.SetDirty(esc);
+                Debug.Log("[CleanupUI]   Re-attached EscapeMenuController canvas references.");
+            }
+        }
+    }
+
+    private static GameObject FindRootGOByName(string name)
+    {
+        List<GameObject> matches = FindRootGameObjects(name);
+        return matches.Count > 0 ? matches[0] : null;
     }
 
     private static int RemoveExtras(string name)
@@ -180,6 +238,60 @@ public static class UIDuplicateTools
                 return matches[i];
 
         return matches[0];
+    }
+
+    // ================================================================== //
+    // Multiplayer Debug Canvas — hide or remove
+    // ================================================================== //
+
+    [MenuItem("Tools/RTS/UI/Toggle Multiplayer Debug Canvas")]
+    public static void ToggleDebugCanvasMenu()
+    {
+        List<GameObject> matches = FindRootGameObjects("MultiplayerDebugCanvas");
+        if (matches.Count == 0)
+        {
+            Debug.Log("[UI] No MultiplayerDebugCanvas in the open scene.");
+            return;
+        }
+        for (int i = 0; i < matches.Count; i++)
+        {
+            GameObject go = matches[i];
+            if (go == null) continue;
+            bool next = !go.activeSelf;
+            go.SetActive(next);
+            Debug.Log($"[UI]   '{go.name}' → activeSelf = {next}.");
+            EditorUtility.SetDirty(go);
+        }
+        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        Debug.Log("[UI] Multiplayer Debug Canvas toggled. Ctrl+S to save.");
+    }
+
+    [MenuItem("Tools/RTS/UI/Remove Multiplayer Debug Canvas")]
+    public static void RemoveDebugCanvasMenu()
+    {
+        List<GameObject> matches = FindRootGameObjects("MultiplayerDebugCanvas");
+        if (matches.Count == 0)
+        {
+            Debug.Log("[UI] No MultiplayerDebugCanvas in the open scene.");
+            return;
+        }
+        if (!EditorUtility.DisplayDialog("Remove MultiplayerDebugCanvas?",
+            $"This will destroy {matches.Count} MultiplayerDebugCanvas root(s) in '{EditorSceneManager.GetActiveScene().name}'. " +
+            "You can re-add it later via Tools → RTS → Multiplayer → Setup Multiplayer Debug UI.",
+            "Remove", "Cancel"))
+        {
+            return;
+        }
+        int removed = 0;
+        for (int i = 0; i < matches.Count; i++)
+        {
+            if (matches[i] == null) continue;
+            Undo.DestroyObjectImmediate(matches[i]);
+            removed++;
+        }
+        if (removed > 0)
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        Debug.Log($"[UI] Removed {removed} MultiplayerDebugCanvas root(s). Ctrl+S to save.");
     }
 
     // ================================================================== //

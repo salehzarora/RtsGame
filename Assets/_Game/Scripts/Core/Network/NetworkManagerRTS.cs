@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 #if PHOTON_UNITY_NETWORKING
 using ExitGames.Client.Photon;
@@ -58,6 +59,25 @@ public class NetworkManagerRTS : MonoBehaviour
 
     /// <summary>Hard cap — the 4-corner map supports up to four players.</summary>
     public const byte MaxPlayersSupported = 4;
+
+    [Header("Scene split (MainMenuScene + gameplay scene)")]
+    [Tooltip("When true, MatchStart triggers PhotonNetwork.LoadLevel(gameMapSceneName) " +
+             "and the new scene's NetworkMatchCoordinator reads the match payload from " +
+             "the room's custom properties. When false (default), MatchStart just reveals " +
+             "GameplayWorldRoot in the current scene. The 'Create Scene Split' editor tool " +
+             "sets this to true on the new scenes' NetworkManager.")]
+    public bool useSceneSplit = false;
+
+    [Tooltip("Name (not path) of the menu scene. Used by Leave Room to return the player " +
+             "to the menu when the scene split is active.")]
+    public string mainMenuSceneName = "MainMenuScene";
+
+    [Tooltip("Name (not path) of the gameplay scene. PhotonNetwork.LoadLevel loads this " +
+             "when the host clicks Start Match and useSceneSplit is true. Defaults to " +
+             "'SampleScene' — the working gameplay scene with the 4-corner setup. " +
+             "(Field name kept for serialization stability; the scene loaded is whatever " +
+             "this string says.)")]
+    public string gameMapSceneName  = "SampleScene";
 
     [Tooltip("App version sent to Photon. Clients only match if their app " +
              "versions are equal. Bump when the network payload schema changes.")]
@@ -213,8 +233,9 @@ public class NetworkManagerRTS : MonoBehaviour
         pendingColorPushValue = color;
         pendingColorPushName  = colorName ?? "";
 
-        Debug.Log($"[MultiplayerColor] Local selected color: " +
-                  $"{(string.IsNullOrEmpty(colorName) ? "(unnamed)" : colorName)}");
+        Debug.Log($"[Lobby] SetLocalPlayerColor: " +
+                  $"{(string.IsNullOrEmpty(colorName) ? "(unnamed)" : colorName)} " +
+                  $"(RGB {color.r:F2},{color.g:F2},{color.b:F2}). Will push to Photon when in room.");
 
 #if PHOTON_UNITY_NETWORKING
         TryFlushPendingColor();
@@ -236,8 +257,9 @@ public class NetworkManagerRTS : MonoBehaviour
             { ColorNamePropKey, pendingColorPushName ?? "" },
         };
         PhotonNetwork.LocalPlayer.SetCustomProperties(props);
-        Debug.Log($"[MultiplayerColor] Set Photon property armyColorName=" +
-                  $"{(string.IsNullOrEmpty(pendingColorPushName) ? "(unnamed)" : pendingColorPushName)}");
+        Debug.Log($"[Lobby] Set Photon property armyColorName=" +
+                  $"{(string.IsNullOrEmpty(pendingColorPushName) ? "(unnamed)" : pendingColorPushName)} " +
+                  $"(also armyColor=Vec3({pendingColorPushValue.r:F2},{pendingColorPushValue.g:F2},{pendingColorPushValue.b:F2})).");
         pendingColorPushHas = false;
     }
 
@@ -309,15 +331,15 @@ public class NetworkManagerRTS : MonoBehaviour
 #if PHOTON_UNITY_NETWORKING
         if (!PhotonNetwork.InRoom || PhotonNetwork.LocalPlayer == null)
         {
-            Debug.LogWarning("[StartSlot] SetLocalStartSlot ignored — not in a room.");
+            Debug.LogWarning("[Lobby] SetLocalStartSlot ignored — not in a room.");
             return;
         }
         Hashtable props = new Hashtable { { StartSlotPropKey, corner } };
         PhotonNetwork.LocalPlayer.SetCustomProperties(props);
-        Debug.Log($"[StartSlot] Local player chose corner {corner} " +
+        Debug.Log($"[Lobby] Set Photon property startSlot={corner} " +
                   $"({(corner >= 0 ? ((char)('A' + corner)).ToString() : "none")}).");
 #else
-        Debug.LogWarning("[StartSlot] SetLocalStartSlot requested but Photon PUN not installed.");
+        Debug.LogWarning("[Lobby] SetLocalStartSlot requested but Photon PUN not installed.");
 #endif
     }
 
@@ -366,6 +388,21 @@ public class NetworkManagerRTS : MonoBehaviour
             Debug.Log($"[NetworkRTS] maxPlayersPerRoom was {maxPlayersPerRoom}; " +
                       $"forcing to {MaxPlayersSupported} (4-corner map).");
             maxPlayersPerRoom = MaxPlayersSupported;
+        }
+
+        // Same trap for gameMapSceneName: scenes saved before the SampleScene
+        // simplification still carry "GameMapScene". If that scene isn't in
+        // Build Settings (e.g. removed by the "Use SampleScene As Gameplay
+        // Target" tool) AND SampleScene is — force the switch so Start Match
+        // doesn't fail with "scene not in build settings".
+        if (gameMapSceneName == "GameMapScene" &&
+            !Application.CanStreamedLevelBeLoaded("GameMapScene") &&
+            Application.CanStreamedLevelBeLoaded("SampleScene"))
+        {
+            Debug.Log("[NetworkRTS] gameMapSceneName was 'GameMapScene' but it isn't in " +
+                      "Build Settings; forcing to 'SampleScene' (which is). " +
+                      "Run Tools → RTS → Scenes → Use SampleScene As Gameplay Target to make this permanent.");
+            gameMapSceneName = "SampleScene";
         }
     }
 
@@ -746,6 +783,21 @@ public class NetworkManagerRTS : MonoBehaviour
     {
         Debug.Log("[NetworkRTS] Left room.");
         OnRoomLeftEvent?.Invoke();
+
+        // Scene-split: return the player to the main menu scene whenever they
+        // leave a room from gameplay. Skip if we're already in the menu, if
+        // the flag is off (single-scene project), or if the target scene
+        // isn't actually in Build Settings (defensive — avoids a black screen).
+        if (useSceneSplit && !string.IsNullOrEmpty(mainMenuSceneName))
+        {
+            Scene cur = SceneManager.GetActiveScene();
+            if (cur.name != mainMenuSceneName)
+            {
+                Debug.Log($"[NetworkRTS] Scene-split: loading '{mainMenuSceneName}' " +
+                          "after leaving room.");
+                SceneManager.LoadScene(mainMenuSceneName);
+            }
+        }
     }
 
     // ---- ILobbyCallbacks --------------------------------------------- //

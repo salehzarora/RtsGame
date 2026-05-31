@@ -63,6 +63,34 @@ public class CornerBase : MonoBehaviour
     public Color CornerColor =>
         CornerColors[Mathf.Clamp(cornerIndex, 0, CornerColors.Length - 1)];
 
+    /// <summary>
+    /// Visual-quadrant label for this corner index as the PLAYER SEES IT
+    /// in the gameplay camera (NOT raw-world quadrants). The canonical
+    /// mapping (must match the lobby preview + the editor baker's
+    /// <c>SetupMultiplayerMatchMap.CornerPositions</c>):
+    ///   0 = visual TopLeft, 1 = visual TopRight,
+    ///   2 = visual BottomLeft, 3 = visual BottomRight.
+    ///
+    /// IMPORTANT — convention: in this game's tilted top-down RTS camera,
+    /// world +Z appears at the BOTTOM of the gameplay screen and world -Z
+    /// at the TOP. So a corner at world (-X, -Z) is the visual TopLeft.
+    /// The lobby preview matches what the player SEES, not raw-world axes.
+    /// </summary>
+    public string QuadrantLabel
+    {
+        get
+        {
+            switch (cornerIndex)
+            {
+                case 0: return "TopLeft";
+                case 1: return "TopRight";
+                case 2: return "BottomLeft";
+                case 3: return "BottomRight";
+                default: return "Unknown";
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ //
     // Ownership assignment (called at match start by the coordinator)
     // ------------------------------------------------------------------ //

@@ -115,6 +115,163 @@ public class NetworkMatchCoordinator : MonoBehaviour
     private void OnDisable() { PhotonNetwork.RemoveCallbackTarget(this); }
 #endif
 
+    /// <summary>
+    /// Gameplay scene startup. After PhotonNetwork.LoadLevel completes, the
+    /// FRESH coordinator instance reads the match payload from the room's
+    /// custom properties (the master wrote it before calling LoadLevel) and
+    /// runs the local apply pass. Same logic applies whichever scene name
+    /// is the gameplay target — we no longer gate on
+    /// <c>useSceneSplit</c>, because that flag could be false on the
+    /// gameplay scene's NetworkManager just because the migration tool only
+    /// updated the menu scene's serialized value. The presence of a payload
+    /// in room properties is the authoritative signal that we're in
+    /// scene-split flow.
+    ///
+    /// Runs in Start so every GameplayWorldRoot/MatchStarter has had its
+    /// OnEnable, guaranteeing the subscriber list is ready before
+    /// <see cref="OnMatchStarted"/> fires inside ApplyMatchStartLocally.
+    ///
+    /// Dev-mode fallback: if Photon isn't connected (direct-play of the
+    /// gameplay scene from the Editor) AND CornerBases exist, we synthesise
+    /// a 1-player local match so the scene is testable without going
+    /// through the lobby. Editor-only.
+    /// </summary>
+    private void Start()
+    {
+        if (IsMatchStarted) return;
+        StartCoroutine(StartCoroutineImpl());
+    }
+
+    /// <summary>
+    /// Wait up to N frames for the room-properties payload to arrive after
+    /// PhotonNetwork.LoadLevel. The master's write is locally cached
+    /// immediately (it goes through the local Room object's optimistic
+    /// update), but cross-client property sync via the server can land in
+    /// the same frame as scene-loaded, OR just after — that race produced
+    /// the "Orange in lobby, Blue at A in gameplay" symptom because the
+    /// first-frame read returned no payload and the fallback fired with
+    /// MultiplayerColors.DefaultPlayer0Color + corner 0.
+    /// </summary>
+    private System.Collections.IEnumerator StartCoroutineImpl()
+    {
+        string scenePrefix = "[" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + "]";
+
+#if PHOTON_UNITY_NETWORKING
+        if (PhotonNetwork.InRoom)
+        {
+            const int MaxAttempts = 30;     // ~½ second at 60 fps — plenty
+            for (int attempt = 0; attempt < MaxAttempts; attempt++)
+            {
+                if (TryReadMatchStateFromRoomProperties(out int[] actors, out Color[] colors,
+                                                        out int[] corners, out int startingResources))
+                {
+                    string roomName = PhotonNetwork.CurrentRoom != null
+                        ? PhotonNetwork.CurrentRoom.Name : "<unknown>";
+                    string matchId = string.IsNullOrEmpty(MatchSessionManager.CurrentMatchId)
+                        ? "<none>" : MatchSessionManager.CurrentMatchId;
+
+                    Debug.Log($"{scenePrefix} Loaded as gameplay scene. Payload arrived on attempt {attempt + 1}.");
+                    Debug.Log($"{scenePrefix} Room='{roomName}', matchId='{matchId}'");
+                    Debug.Log($"{scenePrefix} Applying payload: {actors.Length} players");
+                    for (int i = 0; i < actors.Length; i++)
+                    {
+                        char letter = corners[i] >= 0 ? (char)('A' + corners[i]) : '?';
+                        Debug.Log($"{scenePrefix} Actor #{actors[i]} -> playerSlot {i} -> corner {letter}");
+                    }
+
+                    ApplyMatchStartLocally(actors, colors, corners, startingResources);
+                    yield break;
+                }
+                yield return null;     // wait one frame, try again
+            }
+
+            Debug.LogWarning($"{scenePrefix} No match payload found in room properties after " +
+                             $"{MaxAttempts} frames. Falling back to dev mode (which now honours " +
+                             "your LocalPlayer Photon properties so your lobby pick still wins).");
+        }
+#endif
+
+        // Dev-mode fallback for direct-play of the gameplay scene from the
+        // Editor (no Photon room, no payload). Synthesise a 1-player local
+        // setup so the scene is testable without the lobby flow.
+        TryApplyDevModeFallback(scenePrefix);
+    }
+
+    /// <summary>
+    /// Editor-only: when the gameplay scene is opened directly and Play is
+    /// pressed without going through the lobby, create a synthetic 1-player
+    /// match (corner A, default colour, default starting resources) so the
+    /// scene is exercisable end-to-end during dev iteration.
+    /// </summary>
+    private void TryApplyDevModeFallback(string scenePrefix)
+    {
+        if (!Application.isEditor) return;
+
+        CornerBase[] cbs = Object.FindObjectsByType<CornerBase>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        if (cbs == null || cbs.Length == 0)
+        {
+            Debug.LogWarning($"{scenePrefix} DevMode skipped — no CornerBase components in scene. " +
+                             "Run Tools → RTS → Match → Setup Multiplayer Match Map first.");
+            return;
+        }
+
+        // Force multiplayerMode so ApplyMatchStartLocally's corner-reveal +
+        // resource-set + reinit branch runs. Cosmetic — no Photon traffic
+        // happens because we're not connected.
+        if (NetworkManagerRTS.Instance != null)
+            NetworkManagerRTS.Instance.multiplayerMode = true;
+
+        int   devActor          = 1;
+        Color devColor          = MultiplayerColors.DefaultPlayer0Color;
+        string devColorLabel    = "default Blue";
+        int   devCorner         = 0;
+        string devCornerLabel   = "A (default)";
+        int   devStartResources = NetworkManagerRTS.DefaultStartingResources;
+
+#if PHOTON_UNITY_NETWORKING
+        // CRITICAL: even when the room-properties payload didn't reach this
+        // client, the LocalPlayer object survives the scene transition and
+        // ITS CustomProperties were written immediately when the user clicked
+        // colour / corner in the lobby. Read those directly so the dev
+        // fallback uses the actual lobby selection instead of slot-0 defaults.
+        if (PhotonNetwork.LocalPlayer != null)
+        {
+            devActor = PhotonNetwork.LocalPlayer.ActorNumber;
+
+            if (PhotonNetwork.LocalPlayer.CustomProperties != null)
+            {
+                if (PhotonNetwork.LocalPlayer.CustomProperties.TryGetValue(
+                        NetworkManagerRTS.ColorPropKey, out object rgbObj) && rgbObj is Vector3 v)
+                {
+                    devColor = new Color(v.x, v.y, v.z, 1f);
+                    devColorLabel = $"LocalPlayer.armyColor RGB({v.x:F2},{v.y:F2},{v.z:F2})";
+                }
+                if (PhotonNetwork.LocalPlayer.CustomProperties.TryGetValue(
+                        NetworkManagerRTS.ColorNamePropKey, out object cnObj) &&
+                    cnObj is string cnStr && !string.IsNullOrEmpty(cnStr))
+                {
+                    devColorLabel = $"'{cnStr}' RGB({devColor.r:F2},{devColor.g:F2},{devColor.b:F2})";
+                }
+            }
+            if (NetworkManagerRTS.TryGetPlayerStartSlot(devActor, out int sc) && sc >= 0 && sc < 4)
+            {
+                devCorner = sc;
+                devCornerLabel = $"LocalPlayer.startSlot {sc} ({(char)('A' + sc)})";
+            }
+        }
+#endif
+
+        Debug.Log($"{scenePrefix} DevMode: No Photon payload arrived. Using LOCAL player props " +
+                  $"(or defaults if missing): actor #{devActor}, color={devColorLabel}, corner={devCornerLabel}.");
+
+        ApplyMatchStartLocally(
+            new[] { devActor },
+            new[] { devColor },
+            new[] { devCorner },
+            devStartResources);
+    }
+
     // ------------------------------------------------------------------ //
     // Public — called by the lobby / main menu Start button
     // ------------------------------------------------------------------ //
@@ -181,12 +338,16 @@ public class NetworkMatchCoordinator : MonoBehaviour
         int n = actors.Length;
 
         // Per-slot colour: each player's pushed colour, else the slot default.
-        Color[] colors = new Color[n];
+        // Also keep the colour NAME for diagnostic logging — proves that what
+        // the player picked in the lobby is what's going into the payload.
+        Color[]  colors     = new Color[n];
+        string[] colorNames = new string[n];
         for (int i = 0; i < n; i++)
         {
             bool got = NetworkManagerRTS.TryGetPlayerColor(
-                actors[i], DefaultColor(i), out Color col, out _);
-            colors[i] = got ? col : DefaultColor(i);
+                actors[i], DefaultColor(i), out Color col, out string nm);
+            colors[i]     = got ? col : DefaultColor(i);
+            colorNames[i] = got && !string.IsNullOrEmpty(nm) ? nm : "default";
         }
 
         int[] corners = ComputeCornerAssignment(actors);
@@ -198,6 +359,49 @@ public class NetworkMatchCoordinator : MonoBehaviour
             Debug.Log($"[MultiplayerMatch] Final corner assignment: slot {i} actor " +
                       $"#{actors[i]} → corner {(char)('A' + corners[i])} (index {corners[i]}).");
 
+        // Per-actor diagnostic — proves the payload that's about to be written
+        // to room properties uses each player's LATEST Photon-property values
+        // (lobby picks), and shows the selected→final corner mapping when the
+        // master had to random-fill duplicates or unchosen players.
+        for (int i = 0; i < n; i++)
+        {
+            int selected = NetworkManagerRTS.TryGetPlayerStartSlot(actors[i], out int sc) ? sc : -1;
+            string selStr = selected >= 0
+                ? $"{selected} ({(char)('A' + selected)} visual={QuadrantOf(selected)})"
+                : "none";
+            char finalLetter = (char)('A' + corners[i]);
+            string finalVisual = QuadrantOf(corners[i]);
+            Debug.Log($"[MatchStart] Actor #{actors[i]}: playerSlot={i}, " +
+                      $"color={colorNames[i]}, selectedStartSlot={selStr}, " +
+                      $"visualCorner={finalLetter} -> finalStartSlot={corners[i]} " +
+                      $"(visual={finalVisual}).");
+        }
+
+        // ---- Scene-split path: stash payload + LoadLevel ---------------- //
+        // The new scene's coordinator reads it from room properties in Start.
+        // This is the recommended Photon flow when matches happen in a
+        // separate scene from the menu.
+        bool useSplit = NetworkManagerRTS.Instance != null && NetworkManagerRTS.Instance.useSceneSplit;
+        if (useSplit)
+        {
+            WriteMatchStateToRoomProperties(actors, colors, corners, startingResources);
+
+            string roomName = PhotonNetwork.CurrentRoom != null
+                ? PhotonNetwork.CurrentRoom.Name : "<unknown>";
+            string matchId = string.IsNullOrEmpty(MatchSessionManager.CurrentMatchId)
+                ? "<none>" : MatchSessionManager.CurrentMatchId;
+            Debug.Log($"[MatchStart] Finalized payload for room '{roomName}', matchId '{matchId}'. " +
+                      $"({n} player(s), startingResources={startingResources})");
+
+            string mapScene = NetworkManagerRTS.Instance.gameMapSceneName;
+            Debug.Log($"[MatchStart] Loading GameMapScene via PhotonNetwork.LoadLevel('{mapScene}') " +
+                      "(AutomaticallySyncScene=true so all clients follow).");
+            PhotonNetwork.AutomaticallySyncScene = true;
+            PhotonNetwork.LoadLevel(mapScene);
+            return;
+        }
+
+        // ---- Single-scene path: RaiseEvent in place --------------------- //
         object[] payload = new object[3 + n * 3];
         payload[0] = PayloadVersion;
         payload[1] = n;
@@ -213,6 +417,73 @@ public class NetworkMatchCoordinator : MonoBehaviour
             MatchStartEventCode, payload,
             new RaiseEventOptions { Receivers = ReceiverGroup.All },     // include sender
             SendOptions.SendReliable);
+    }
+
+    // ------------------------------------------------------------------ //
+    // Scene-split: match payload serialised into the room's custom props
+    // ------------------------------------------------------------------ //
+
+    // Keys are deliberately short — Photon room properties are sent over the
+    // wire on every join, so terse keys reduce overhead.
+    private const string PropKeyVersion           = "m.ver";
+    private const string PropKeyPlayerCount       = "m.n";
+    private const string PropKeyStartingResources = "m.sr";
+    private const string PropKeyActors            = "m.actors";
+    private const string PropKeyCorners           = "m.corners";
+    private const string PropKeyColorsR           = "m.cR";
+    private const string PropKeyColorsG           = "m.cG";
+    private const string PropKeyColorsB           = "m.cB";
+
+    private static void WriteMatchStateToRoomProperties(
+        int[] actors, Color[] colors, int[] corners, int startingResources)
+    {
+        int n = actors.Length;
+        float[] cR = new float[n], cG = new float[n], cB = new float[n];
+        for (int i = 0; i < n; i++) { cR[i] = colors[i].r; cG[i] = colors[i].g; cB[i] = colors[i].b; }
+
+        Hashtable props = new Hashtable
+        {
+            { PropKeyVersion,           (byte)PayloadVersion },
+            { PropKeyPlayerCount,       n },
+            { PropKeyStartingResources, startingResources },
+            { PropKeyActors,            actors },
+            { PropKeyCorners,           corners },
+            { PropKeyColorsR,           cR },
+            { PropKeyColorsG,           cG },
+            { PropKeyColorsB,           cB },
+        };
+        PhotonNetwork.CurrentRoom.SetCustomProperties(props);
+        Debug.Log($"[MultiplayerMatch] Wrote match state to room properties ({n} player(s)).");
+    }
+
+    private static bool TryReadMatchStateFromRoomProperties(
+        out int[] actors, out Color[] colors, out int[] corners, out int startingResources)
+    {
+        actors = null; colors = null; corners = null; startingResources = 0;
+        if (PhotonNetwork.CurrentRoom == null || PhotonNetwork.CurrentRoom.CustomProperties == null) return false;
+        var p = PhotonNetwork.CurrentRoom.CustomProperties;
+
+        if (!p.TryGetValue(PropKeyPlayerCount,       out object nObj)  || !(nObj is int n)  || n < 1) return false;
+        if (!p.TryGetValue(PropKeyStartingResources, out object srObj) || !(srObj is int sr))        return false;
+        if (!p.TryGetValue(PropKeyActors,  out object aObj) || !(aObj is int[]   aArr))              return false;
+        if (!p.TryGetValue(PropKeyCorners, out object cObj) || !(cObj is int[]   cArr))              return false;
+        if (!p.TryGetValue(PropKeyColorsR, out object rObj) || !(rObj is float[] rArr))              return false;
+        if (!p.TryGetValue(PropKeyColorsG, out object gObj) || !(gObj is float[] gArr))              return false;
+        if (!p.TryGetValue(PropKeyColorsB, out object bObj) || !(bObj is float[] bArr))              return false;
+
+        if (aArr.Length != n || cArr.Length != n || rArr.Length != n ||
+            gArr.Length != n || bArr.Length != n)
+        {
+            Debug.LogWarning($"[MultiplayerMatch] Room props inconsistent — array length != playerCount {n}.");
+            return false;
+        }
+
+        actors = aArr;
+        corners = cArr;
+        colors = new Color[n];
+        for (int i = 0; i < n; i++) colors[i] = new Color(rArr[i], gArr[i], bArr[i], 1f);
+        startingResources = sr;
+        return true;
     }
 
     /// <summary>
@@ -373,13 +644,30 @@ public class NetworkMatchCoordinator : MonoBehaviour
         }
         IsMatchStarted = true;
 
+        // Per-slot mapping log — one line per active player, deterministic
+        // across all clients in this room (because they all read the same
+        // payload from PhotonNetwork.CurrentRoom.CustomProperties).
+        string applyPrefix = "[" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + "]";
+        for (int i = 0; i < PlayerCount; i++)
+        {
+            char letter = slotToCorner[i] >= 0 ? (char)('A' + slotToCorner[i]) : '?';
+            Debug.Log($"{applyPrefix} Actor #{slotToActor[i]} -> playerSlot {i} -> " +
+                      $"corner {letter} (index {slotToCorner[i]}).");
+        }
+
         // Push slot colours BEFORE revealing so TeamColorMarkers repaint on the
         // same frame as the reveal.
+        string applyScenePrefix = "[" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + "]";
         for (int i = 0; i < PlayerCount; i++)
         {
             MultiplayerColors.SetForOwner(i, colors[i]);
-            Debug.Log($"[TeamColor] Applied color RGB({colors[i].r:F2},{colors[i].g:F2}," +
-                      $"{colors[i].b:F2}) to slot {i}.");
+            int actor  = slotToActor[i];
+            int corner = slotToCorner[i];
+            char letter = (corner >= 0 && corner < 26) ? (char)('A' + corner) : '?';
+            Debug.Log($"{applyScenePrefix} Applying actor #{actor}: " +
+                      $"color=RGB({colors[i].r:F2},{colors[i].g:F2},{colors[i].b:F2}), corner={letter}");
+            Debug.Log($"[TeamColor] Applying RGB({colors[i].r:F2},{colors[i].g:F2}," +
+                      $"{colors[i].b:F2}) to actor #{actor} / playerSlot {i}.");
         }
 
         Debug.Log($"[MultiplayerMatch] MatchStart startingResources={startingResources}, " +
@@ -507,19 +795,28 @@ public class NetworkMatchCoordinator : MonoBehaviour
             CornerBase cb = cbs[i];
             if (cb == null) continue;
 
+            string activatePrefix = "[" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + "]";
             int slot = SlotForCorner(cb.cornerIndex);
+            Vector3 pos = cb.transform.position;
             if (slot >= 0)
             {
                 cb.AssignOwner(slot);
                 cb.gameObject.SetActive(true);
-                Debug.Log($"[MultiplayerMatch] Spawning player slot {slot} at corner " +
-                          $"{cb.Letter} (index {cb.cornerIndex}).");
+                int actor = (slot < slotToActor.Length) ? slotToActor[slot] : -1;
+                int nodes = (cb.resourceCluster != null) ? cb.resourceCluster.childCount : 0;
+                Debug.Log($"{activatePrefix} Activated visualCorner={cb.Letter} " +
+                          $"(index={cb.cornerIndex}, visual={cb.QuadrantLabel}) at " +
+                          $"world position=({pos.x:F1},{pos.y:F1},{pos.z:F1}) — gameplay-view " +
+                          $"{cb.QuadrantLabel} as seen by the player — for actor #{actor} " +
+                          $"(slot {slot}, resourceNodes={nodes}, " +
+                          $"dozer={(cb.dozer != null ? "yes" : "MISSING")}).");
             }
             else
             {
                 cb.ClearOwner();
                 cb.gameObject.SetActive(false);
-                Debug.Log($"[MultiplayerMatch] Skipped empty corner {cb.Letter} (index {cb.cornerIndex}).");
+                Debug.Log($"{activatePrefix} Skipped visualCorner={cb.Letter} " +
+                          $"(index={cb.cornerIndex}, visual={cb.QuadrantLabel}): unassigned.");
             }
         }
     }
@@ -530,6 +827,25 @@ public class NetworkMatchCoordinator : MonoBehaviour
         for (int i = 0; i < slotToCorner.Length; i++)
             if (slotToCorner[i] == cornerIndex) return i;
         return -1;
+    }
+
+    /// <summary>
+    /// Canonical mapping from cornerIndex (0..3) → GAMEPLAY-CAMERA-VIEW
+    /// quadrant label (NOT raw-world quadrant). Must match the lobby preview
+    /// and the baker's <c>SetupMultiplayerMatchMap.CornerPositions</c>.
+    /// In this game's camera, world +Z appears at the BOTTOM of the screen
+    /// and world -Z at the TOP — see <c>CornerBase.QuadrantLabel</c>.
+    /// </summary>
+    private static string QuadrantOf(int cornerIndex)
+    {
+        switch (cornerIndex)
+        {
+            case 0: return "TopLeft";
+            case 1: return "TopRight";
+            case 2: return "BottomLeft";
+            case 3: return "BottomRight";
+            default: return "Unknown";
+        }
     }
 
     // ------------------------------------------------------------------ //

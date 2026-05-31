@@ -43,14 +43,30 @@ public static class SetupMultiplayerMatchMap
     // ------------------------------------------------------------------ //
 
     // Fallback corner coordinates (X,Z). Y is resolved per-corner by raycasting
-    // down onto the ground/terrain. A=bottom-left, B=bottom-right, C=top-left,
-    // D=top-right.
+    // down onto the ground/terrain. Mapping MUST match the LOBBY PREVIEW as
+    // the PLAYER SEES IT in the actual gameplay camera (A drawn top-left,
+    // B top-right, C bottom-left, D bottom-right):
+    //
+    //   A (index 0) = visual top-left     = (-X, -Z)
+    //   B (index 1) = visual top-right    = (+X, -Z)
+    //   C (index 2) = visual bottom-left  = (-X, +Z)
+    //   D (index 3) = visual bottom-right = (+X, +Z)
+    //
+    // IMPORTANT — gameplay-camera convention (NOT raw-world convention):
+    // In this game's tilted top-down RTS camera, world +Z appears at the
+    // BOTTOM of the player's screen and world -Z appears at the TOP.
+    // (Camera sits at +Z high, tilted forward toward -Z, so the far side of
+    //  its frustum is -Z = top-of-screen.) The lobby preview must match what
+    // the player SEES, not the mathematical world axis. Earlier versions of
+    // this file used +Z = top (raw-world), which made the lobby visually
+    // top-bottom-flipped vs. gameplay. See also
+    // <see cref="FixCornerMapping.QuadrantFromPosition"/>.
     public static readonly Vector3[] CornerPositions =
     {
-        new Vector3(-80f, 0f, -70f), // A (index 0)
-        new Vector3( 80f, 0f, -70f), // B (index 1)
-        new Vector3(-80f, 0f,  70f), // C (index 2)
-        new Vector3( 80f, 0f,  70f), // D (index 3)
+        new Vector3(-80f, 0f, -70f), // A (index 0) — visual top-left     (camera -Z)
+        new Vector3( 80f, 0f, -70f), // B (index 1) — visual top-right    (camera -Z)
+        new Vector3(-80f, 0f,  70f), // C (index 2) — visual bottom-left  (camera +Z)
+        new Vector3( 80f, 0f,  70f), // D (index 3) — visual bottom-right (camera +Z)
     };
 
     private static readonly Color[] CornerColors =
@@ -403,7 +419,14 @@ public static class SetupMultiplayerMatchMap
     [MenuItem("Tools/RTS/Match/Validate 4 Player Map Setup")]
     public static void ValidateMenu()
     {
+        UnityEngine.SceneManagement.Scene active = EditorSceneManager.GetActiveScene();
         Debug.Log("[MultiplayerMatch] ───────── VALIDATE 4-PLAYER MAP SETUP ─────────");
+        Debug.Log($"[MultiplayerMatch] Validating open scene: '{active.name}' " +
+                  $"({(string.IsNullOrEmpty(active.path) ? "UNSAVED" : active.path)}).");
+        if (active.name == "MainMenuScene")
+            Debug.LogWarning("[MultiplayerMatch] ⚠ This validator audits the 4-corner GAMEPLAY map. " +
+                             "Open GameMapScene (Tools → RTS → Scenes → Open GameMapScene) and re-run " +
+                             "for a meaningful audit.");
         bool ok = ValidateInternal(logHeader: false);
         Debug.Log(ok
             ? "[MultiplayerMatch] ✓ Validation PASSED — 4 corner bases present and wired."
