@@ -394,6 +394,9 @@ public class BuildingPlacementManager : MonoBehaviour
         activeLabel  = label;
         IsPlacing    = true;
 
+        if (label == "Airfield")
+            Debug.Log($"[AirfieldBuild] Placement started — mode={activeMode}, prefab='{prefab.name}', cost={cost}.");
+
         // Make sure any in-progress drag selection is aborted and its UI hidden.
         // Otherwise a HUD button click can leave a stale selection rectangle on screen.
         UnitSelector selector = FindAnyObjectByType<UnitSelector>();
@@ -411,6 +414,30 @@ public class BuildingPlacementManager : MonoBehaviour
         // Strip gameplay scripts to prevent side-effects
         foreach (MonoBehaviour mb in ghost.GetComponentsInChildren<MonoBehaviour>(true))
             Destroy(mb);
+
+        // Strip non-MonoBehaviour Behaviours too — FBX-imported Lights, Cameras,
+        // Animators are NOT MonoBehaviours and would otherwise survive into the
+        // ghost. A swarm of FBX-baked Lights on a giant ghost was a documented
+        // cause of placement-time stalls / freezes for the new Airfield FBX.
+        foreach (Light l in ghost.GetComponentsInChildren<Light>(true))
+            if (l != null) Destroy(l);
+        foreach (Camera cam in ghost.GetComponentsInChildren<Camera>(true))
+            if (cam != null) Destroy(cam);
+        foreach (Animator an in ghost.GetComponentsInChildren<Animator>(true))
+            if (an != null) Destroy(an);
+
+        if (activeLabel == "Airfield")
+        {
+            Renderer[] gr = ghost.GetComponentsInChildren<Renderer>(true);
+            Bounds gb = gr.Length > 0 ? gr[0].bounds : new Bounds(ghost.transform.position, Vector3.zero);
+            for (int i = 1; i < gr.Length; i++) gb.Encapsulate(gr[i].bounds);
+            Debug.Log($"[AirfieldBuild] Preview created: prefab='{activePrefab.name}', " +
+                      $"renderer count={gr.Length}, combined bounds size={gb.size:F1}.");
+            if (gb.size.x > 60f || gb.size.z > 80f)
+                Debug.LogError($"[AirfieldBuild] ✗ Preview bounds {gb.size:F1} are WAY too big — " +
+                               "this is the 'giant wall'. Run Tools → RTS → Buildings → " +
+                               "Repair Airfield Runtime Prefab.");
+        }
 
         ghostRenderers = ghost.GetComponentsInChildren<Renderer>(true);
 
@@ -604,6 +631,9 @@ public class BuildingPlacementManager : MonoBehaviour
             // re-validate this against the dozer it resolves by id, so a
             // forged command from a misbehaving client is rejected on the
             // receiver too.
+            if (activeLabel == "Airfield")
+                Debug.Log($"[AirfieldBuild] Build command accepted: pos={pos:F1}, owner={dozerOwnerId}, " +
+                          $"siteId='{siteId}', finalId='{finalId}'.");
             CommandDispatcher.Issue(PlayerCommand.Build(
                 dozerOwnerId, dozerId, activeLabel, pos, siteId, finalId));
         }
@@ -620,6 +650,17 @@ public class BuildingPlacementManager : MonoBehaviour
     {
         GameObject placed = Instantiate(activePrefab, pos, Quaternion.identity);
         placed.name = activeLabel;
+
+        if (activeLabel == "Airfield")
+        {
+            Renderer[] rs = placed.GetComponentsInChildren<Renderer>(true);
+            Bounds rb = rs.Length > 0 ? rs[0].bounds : new Bounds(pos, Vector3.zero);
+            for (int i = 1; i < rs.Length; i++) rb.Encapsulate(rs[i].bounds);
+            BoxCollider bc = placed.GetComponent<BoxCollider>();
+            Debug.Log($"[AirfieldBuild] Final Airfield spawned at {pos:F1}. Renderer bounds={rb.size:F1}, " +
+                      $"root BoxCollider size={(bc != null ? bc.size.ToString("F1") : "<missing>")}, " +
+                      $"renderers={rs.Length}.");
+        }
 
         int buildingLayer = LayerMask.NameToLayer("Building");
         if (buildingLayer >= 0)
@@ -806,6 +847,9 @@ public class BuildingPlacementManager : MonoBehaviour
                   $"with siteId='{siteEntityId}', finalId='{finalBuildingEntityId}', " +
                   $"owner={ownerPlayerId}. Remaining resources (owner {ownerPlayerId}): " +
                   $"{(bank != null ? bank.CurrentResources : 0)}");
+        if (label == "Airfield")
+            Debug.Log($"[AirfieldBuild] ConstructionSite spawned at {pos:F1}, " +
+                      $"finalPrefab='{finalPrefab.name}'.");
     }
 
     // ------------------------------------------------------------------ //

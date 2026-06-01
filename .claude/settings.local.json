@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(grep -c \"^public static class\\\\|^[[:space:]]*\\\\\\(private\\\\|public\\\\|internal\\\\\\)[[:space:]]*static.*{$\" \"c:/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Editor/SetupRTSHUD.cs\")",
-      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\nigga\\\\Desktop\\\\UnityProjects\\\\RtsGame\\\\Assets\\\\Scenes\\\\\" -Name)"
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\nigga\\\\Desktop\\\\UnityProjects\\\\RtsGame\\\\Assets\\\\Scenes\\\\\" -Name)",
+      "Bash(ls \"C:/Users/nigga/Downloads/Airfield_Unity_Final/Airfield_Unity_Final\" 2>&1)",
+      "Read(//c/Users/nigga/Downloads/Airfield_Unity_Final/Airfield_Unity_Final/**)"
     ]
   }
 }

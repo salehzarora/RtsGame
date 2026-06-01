@@ -74,17 +74,37 @@ public class TeamColorMarker : MonoBehaviour
              "(e.g. previewing the prefab in isolation in the editor).")]
     [ColorUsage(false)] public Color fallbackColor = new Color(0.7f, 0.7f, 0.7f);
 
+    [Header("Paint targets (defaults preserve existing units)")]
+    [Tooltip("If true, the renderer's _BaseColor / _Color is overridden via the property " +
+             "block. Leave ON for units / soldiers / hulls (default). Turn OFF for " +
+             "buildings whose dark base materials should be PRESERVED while only the " +
+             "glowing edges/panels are team-tinted (e.g. the Airfield FBX).")]
+    public bool applyToBaseColor = true;
+
+    [Tooltip("If true, the renderer's _EmissionColor is overridden via the property " +
+             "block. Only renderers whose material has the _EMISSION shader keyword " +
+             "enabled actually change visibly — every other material silently ignores " +
+             "the property. Turn ON for buildings with hardcoded team-coloured glow " +
+             "(blue edges, team panels) that should follow the owning player's color.")]
+    public bool applyToEmission = false;
+
+    [Tooltip("Emission color = team color × this multiplier. Default 1 matches the " +
+             "team color exactly; raise (e.g. 1.5–3) for a brighter HDR glow.")]
+    [Range(0f, 5f)] public float emissionIntensity = 1.0f;
+
     // ------------------------------------------------------------------ //
     // Runtime
     // ------------------------------------------------------------------ //
 
     private MaterialPropertyBlock mpb;
 
-    // Shader property ids — cached once for both URP Lit (_BaseColor) and
-    // the Standard pipeline (_Color). Setting both via the property block is
-    // cheap; Unity silently ignores names the shader doesn't expose.
-    private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
-    private static readonly int ColorId     = Shader.PropertyToID("_Color");
+    // Shader property ids — cached once for URP Lit (_BaseColor), the
+    // Standard pipeline (_Color), and Unity's emission slot (_EmissionColor).
+    // Setting properties the shader doesn't expose is a no-op, so writing all
+    // three when applyToEmission is on is safe across pipelines.
+    private static readonly int BaseColorId     = Shader.PropertyToID("_BaseColor");
+    private static readonly int ColorId         = Shader.PropertyToID("_Color");
+    private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
 
     // ------------------------------------------------------------------ //
 
@@ -185,14 +205,26 @@ public class TeamColorMarker : MonoBehaviour
 
         if (mpb == null) mpb = new MaterialPropertyBlock();
 
+        // Pre-compute the HDR emission color once. Only fed into the property
+        // block when applyToEmission is on; materials whose _EMISSION keyword
+        // is off see no visible change either way.
+        Color emissionCol = color * emissionIntensity;
+
         for (int i = 0; i < bodyColorRenderers.Count; i++)
         {
             Renderer r = bodyColorRenderers[i];
             if (r == null) continue;
 
             r.GetPropertyBlock(mpb);
-            mpb.SetColor(BaseColorId, color);   // URP Lit
-            mpb.SetColor(ColorId,     color);   // Standard / Sprites
+            if (applyToBaseColor)
+            {
+                mpb.SetColor(BaseColorId, color);   // URP Lit
+                mpb.SetColor(ColorId,     color);   // Standard / Sprites
+            }
+            if (applyToEmission)
+            {
+                mpb.SetColor(EmissionColorId, emissionCol);
+            }
             r.SetPropertyBlock(mpb);
         }
     }

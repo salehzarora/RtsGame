@@ -340,6 +340,13 @@ public class AirUnitController : MonoBehaviour
     private Transform[] taxiBackRoute;
     private int         taxiBackIndex;
     private Vector3     finalLandingStartXZ;
+
+    /// <summary>
+    /// One-shot guard so the "forward axis is opposite travel direction"
+    /// diagnostic only fires once per landing attempt. Reset when entering
+    /// LandingApproach. Pure diagnostic — does not alter flight behaviour.
+    /// </summary>
+    private bool        warnedForwardAxis;
     private float       landingClearanceRetryTimer;
     private float       holdingPatternAngle;
 
@@ -1278,6 +1285,10 @@ public class AirUnitController : MonoBehaviour
             landingClearance    = c;
             State               = FlightState.LandingApproach;
             holdingPatternAngle = 0f;
+            warnedForwardAxis   = false;
+            LogLandingPath(c);
+            Debug.Log($"[LandingState] LandingApproach aircraft='{name}' " +
+                      $"target_LandingStart={(c.LandingStart != null ? c.LandingStart.position.ToString("F3") : "null")}.");
         }
         else
         {
@@ -1321,8 +1332,12 @@ public class AirUnitController : MonoBehaviour
             landingClearanceRetryTimer = landingClearanceCheckInterval;
             if (HomeAirfield.RequestLandingClearance(this, out Airfield.LandingClearance c))
             {
-                landingClearance = c;
-                State            = FlightState.LandingApproach;
+                landingClearance  = c;
+                State             = FlightState.LandingApproach;
+                warnedForwardAxis = false;
+                LogLandingPath(c);
+                Debug.Log($"[LandingState] LandingApproach aircraft='{name}' " +
+                          $"target_LandingStart={(c.LandingStart != null ? c.LandingStart.position.ToString("F3") : "null")}.");
                 return;
             }
         }
@@ -1400,6 +1415,10 @@ public class AirUnitController : MonoBehaviour
             finalLandingStartXZ = transform.position;
             State = FlightState.FinalLanding;
             Debug.Log($"[Aircraft:{name}] Final landing started.");
+            Transform endT = landingClearance?.LandingEnd;
+            Debug.Log($"[LandingState] FinalLanding aircraft='{name}'  " +
+                      $"descent_start={finalLandingStartXZ.ToString("F3")}  " +
+                      $"target_LandingEnd={(endT != null ? endT.position.ToString("F3") : "null")}.");
             return;
         }
 
@@ -1473,7 +1492,24 @@ public class AirUnitController : MonoBehaviour
         Vector3 face = new Vector3(dir.x, 0f, dir.z);
         if (face.sqrMagnitude > 0.0001f)
         {
-            Quaternion want = Quaternion.LookRotation(face);
+            Vector3 faceNorm = face.normalized;
+            // Diagnostic — warn ONCE per landing if the jet's current forward
+            // vector is opposite to the direction of travel. That indicates
+            // the model's nose is at -Z in local space (not Unity's default
+            // +Z), so Quaternion.LookRotation visually faces it backward.
+            // The fix isn't here — it's on the StrikeJetPrefab (rotate the
+            // model child 180° around Y, or apply a model-forward offset).
+            if (!warnedForwardAxis && Vector3.Dot(transform.forward, faceNorm) < -0.3f)
+            {
+                Debug.LogWarning($"[LandingWarning] Aircraft '{name}' forward " +
+                                 $"(forward={transform.forward.ToString("F2")}) is opposite the travel " +
+                                 $"direction (face={faceNorm.ToString("F2")}). The model's nose is likely " +
+                                 "at local -Z. Apply a 180° Y rotation to the visual child of " +
+                                 "StrikeJetPrefab to bring its forward axis in line with Unity's +Z.");
+                warnedForwardAxis = true;
+            }
+
+            Quaternion want = Quaternion.LookRotation(faceNorm);
             transform.rotation = Quaternion.RotateTowards(
                 transform.rotation, want, landingProfile.turnRateDegrees * Time.deltaTime);
         }
@@ -1481,6 +1517,9 @@ public class AirUnitController : MonoBehaviour
         if (distXZ.magnitude <= landingProfile.arrivalThreshold && targetY <= groundY + 0.01f)
         {
             Debug.Log($"[Aircraft:{name}] Touchdown.");
+            Debug.Log($"[LandingState] Touchdown aircraft='{name}'  " +
+                      $"actual_position={transform.position.ToString("F3")}  " +
+                      $"target_LandingEnd={(end != null ? end.position.ToString("F3") : "null")}.");
             EnterTaxiingToSlot();
         }
     }
@@ -1497,6 +1536,54 @@ public class AirUnitController : MonoBehaviour
 
         State = FlightState.TaxiingToSlot;
         Debug.Log($"[Aircraft:{name}] Taxiing back to slot.");
+        if (taxiBackRoute != null && taxiBackRoute.Length > 0)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < taxiBackRoute.Length; i++)
+                sb.Append((i > 0 ? " → " : "") +
+                          (taxiBackRoute[i] != null ? taxiBackRoute[i].position.ToString("F2") : "null"));
+            Debug.Log($"[LandingState] TaxiBack aircraft='{name}' route={sb}.");
+        }
+    }
+
+    /// <summary>
+    /// Dumps the full landing path so the player can verify which Transform
+    /// the runtime is ACTUALLY using for each phase. Fired at the moment
+    /// landing clearance is granted — that's the only spot where the jet
+    /// has a freshly-bound <see cref="Airfield.LandingClearance"/> and a
+    /// resolved <see cref="HomeSlot"/>, so we can dump everything in one
+    /// place.
+    /// </summary>
+    private void LogLandingPath(Airfield.LandingClearance c)
+    {
+        if (c == null) { Debug.LogWarning($"[LandingPath] '{name}' clearance is null."); return; }
+
+        string slotInfo = "<none>";
+        if (HomeSlot != null)
+        {
+            int slotIdx = -1;
+            if (HomeAirfield != null && HomeAirfield.slots != null)
+                for (int i = 0; i < HomeAirfield.slots.Length; i++)
+                    if (HomeAirfield.slots[i] == HomeSlot) { slotIdx = i; break; }
+            slotInfo = $"index={slotIdx} pos={HomeSlot.position.ToString("F3")}";
+        }
+
+        Debug.Log($"[LandingPath] Aircraft='{name}'");
+        Debug.Log($"[LandingPath]   approach={(c.LandingApproach != null ? c.LandingApproach.position.ToString("F3") : "null")}");
+        Debug.Log($"[LandingPath]   touchdown_anchor (LandingStart)={(c.LandingStart != null ? c.LandingStart.position.ToString("F3") : "null")}  " +
+                  "← used by LandingApproach to align at altitude");
+        Debug.Log($"[LandingPath]   touchdown_actual (LandingEnd)  ={(c.LandingEnd   != null ? c.LandingEnd.position.ToString("F3")   : "null")}  " +
+                  "← actual ground contact point");
+        Debug.Log($"[LandingPath]   exit (LandingExit)={(c.LandingExit != null ? c.LandingExit.position.ToString("F3") : "null")}");
+        Debug.Log($"[LandingPath]   assignedSlot={slotInfo}");
+        if (c.TaxiBackRoute != null)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < c.TaxiBackRoute.Length; i++)
+                sb.Append((i > 0 ? " → " : "") +
+                          (c.TaxiBackRoute[i] != null ? c.TaxiBackRoute[i].position.ToString("F2") : "null"));
+            Debug.Log($"[LandingPath]   TaxiBackRoute={sb}");
+        }
     }
 
     private void UpdateTaxiingToSlot()

@@ -350,6 +350,21 @@ public class ConstructionSite : MonoBehaviour
             Debug.Log($"[NetworkSpawn] Final building '{BuildingLabel}' adopted " +
                       $"entityId={networkFinalBuildingEntityId}.");
 
+        if (BuildingLabel == "Airfield")
+        {
+            Renderer[] rs = placed.GetComponentsInChildren<Renderer>(true);
+            Bounds rb = rs.Length > 0 ? rs[0].bounds : new Bounds(pos, Vector3.zero);
+            for (int i = 1; i < rs.Length; i++) rb.Encapsulate(rs[i].bounds);
+            BoxCollider bc = placed.GetComponent<BoxCollider>();
+            Debug.Log($"[AirfieldBuild] Final Airfield spawned at {pos:F1}. " +
+                      $"Renderer bounds size={rb.size:F1}, " +
+                      $"root BoxCollider size={(bc != null ? bc.size.ToString("F1") : "<missing>")}, " +
+                      $"renderers={rs.Length}.");
+            if (rb.size.x > 60f || rb.size.z > 80f)
+                Debug.LogError($"[AirfieldBuild] ✗ Final Airfield bounds {rb.size:F1} are oversized. " +
+                               "Run Tools → RTS → Buildings → Repair Airfield Runtime Prefab.");
+        }
+
         // Inherit ownership from this site so the final building ends up on
         // the same team / owner on every client.
         //

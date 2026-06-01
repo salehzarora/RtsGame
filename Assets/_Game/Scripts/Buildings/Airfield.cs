@@ -301,6 +301,32 @@ public class Airfield : MonoBehaviour
             Debug.LogWarning($"Airfield on '{name}': TaxiPoints array has {(taxiPoints?.Length ?? 0)} entries " +
                              $"(expected {MaxSlots}). Re-run Air System → Repair Airfield Layout.");
         }
+
+        // One-shot diagnostic at spawn so the runtime layout is self-documenting
+        // in the Console. Useful after the prefab visual was swapped or the slot
+        // positions were re-baked — confirms the right transforms are wired and
+        // their world positions look sensible vs. the building footprint.
+        if (slots != null)
+        {
+            int nonNull = 0;
+            for (int i = 0; i < slots.Length; i++) if (slots[i] != null) nonNull++;
+            Debug.Log($"[AirfieldSlots] '{name}' Awake — found {nonNull} aircraft slot(s) " +
+                      $"(expected {MaxSlots}).");
+            for (int i = 0; i < slots.Length; i++)
+            {
+                Transform s = slots[i];
+                if (s == null) Debug.LogWarning($"[AirfieldSlots]   Slot {i}: NULL — missing reference.");
+                else           Debug.Log($"[AirfieldSlots]   Slot {i} position={s.position:F1} rotY={s.eulerAngles.y:F0}°.");
+            }
+            Debug.Log($"[AirfieldSlots]   Takeoff A start={(takeoffStartA != null ? takeoffStartA.position.ToString("F1") : "null")} " +
+                      $"end={(takeoffEndA != null ? takeoffEndA.position.ToString("F1") : "null")} | " +
+                      $"B start={(takeoffStartB != null ? takeoffStartB.position.ToString("F1") : "null")} " +
+                      $"end={(takeoffEndB != null ? takeoffEndB.position.ToString("F1") : "null")}.");
+            Debug.Log($"[AirfieldSlots]   Landing approach={(landingApproachPoint != null ? landingApproachPoint.position.ToString("F1") : "null")} | " +
+                      $"A start={(landingStartA != null ? landingStartA.position.ToString("F1") : "null")} " +
+                      $"end={(landingEndA != null ? landingEndA.position.ToString("F1") : "null")} " +
+                      $"exit={(landingExitA != null ? landingExitA.position.ToString("F1") : "null")}.");
+        }
     }
 
     private void Update()
@@ -1007,6 +1033,113 @@ public class Airfield : MonoBehaviour
         if (laneBTaxiPoints != null)
             for (int i = 0; i < laneBTaxiPoints.Length; i++)
                 DrawRunwayPoint(laneBTaxiPoints[i], $"Lane B · {i}", new Color(1f, 0.7f, 0.3f));
+
+        // Per-slot takeoff path — visualises the full taxi → runway sequence
+        // each jet walks, colour-coded by lane (A = blue, B = orange). Pure
+        // editor gizmo; nothing here affects gameplay. Lets you spot a path
+        // that would clip the central building/tower before pressing Play.
+        DrawTakeoffPath();
+
+        // Landing path — the inbound flow per AirUnitController:
+        //   Approach hold → LandingStart (in-air align) → LandingEnd (TOUCHDOWN)
+        //   → LandingExit (off-runway) → per-slot Taxi → Slot.
+        // Drawn in magenta so it's distinct from the takeoff lanes.
+        DrawLandingPath();
+    }
+
+    private void DrawTakeoffPath()
+    {
+        if (slots == null || taxiPoints == null) return;
+        Color laneAColor = new Color(0.3f, 0.8f, 1f, 0.85f);
+        Color laneBColor = new Color(1f, 0.7f, 0.3f, 0.85f);
+
+        for (int i = 0; i < slots.Length; i++)
+        {
+            Transform slot = slots[i];
+            if (slot == null) continue;
+            Transform taxi = (i < taxiPoints.Length) ? taxiPoints[i] : null;
+            if (taxi == null) continue;
+
+            bool laneA = (i % 2 == 0);
+            Transform[] corridor = laneA ? laneATaxiPoints      : laneBTaxiPoints;
+            Transform   queue    = laneA ? runwayQueuePointA    : runwayQueuePointB;
+            Transform   start    = laneA ? takeoffStartA        : takeoffStartB;
+            Transform   end      = laneA ? takeoffEndA          : takeoffEndB;
+
+            Gizmos.color = laneA ? laneAColor : laneBColor;
+
+            Vector3 prev = slot.position;
+            Gizmos.DrawLine(prev, taxi.position);
+            prev = taxi.position;
+            if (corridor != null)
+            {
+                for (int j = 0; j < corridor.Length; j++)
+                {
+                    if (corridor[j] == null) continue;
+                    Gizmos.DrawLine(prev, corridor[j].position);
+                    prev = corridor[j].position;
+                }
+            }
+            if (queue != null) { Gizmos.DrawLine(prev, queue.position); prev = queue.position; }
+            if (start != null) { Gizmos.DrawLine(prev, start.position); prev = start.position; }
+            if (end   != null) { Gizmos.DrawLine(prev, end.position);   prev = end.position;   }
+        }
+    }
+
+    private void DrawLandingPath()
+    {
+        Color landingColor = new Color(1f, 0.3f, 0.9f, 0.85f);   // magenta
+        Color touchdownDot = new Color(1f, 0.1f, 0.1f, 1f);      // red marker at touchdown
+
+        Gizmos.color = landingColor;
+
+        // Common in-air chain: Approach → LandingStart_A → LandingEnd_A (touchdown).
+        // Lane B is reserved/unused in v1, drawn only if present.
+        Vector3? prev = null;
+        if (landingApproachPoint != null) { prev = landingApproachPoint.position; }
+        if (landingStartA != null)
+        {
+            if (prev.HasValue) Gizmos.DrawLine(prev.Value, landingStartA.position);
+            prev = landingStartA.position;
+        }
+        if (landingEndA != null)
+        {
+            if (prev.HasValue) Gizmos.DrawLine(prev.Value, landingEndA.position);
+            prev = landingEndA.position;
+
+            // Highlight TOUCHDOWN with a red sphere + label.
+            Gizmos.color = touchdownDot;
+            Gizmos.DrawSphere(landingEndA.position, 0.4f);
+#if UNITY_EDITOR
+            var tdStyle = new GUIStyle { fontSize = 11, fontStyle = FontStyle.Bold };
+            tdStyle.normal.textColor = touchdownDot;
+            UnityEditor.Handles.Label(landingEndA.position + Vector3.up * 1.5f, "TOUCHDOWN", tdStyle);
+#endif
+            Gizmos.color = landingColor;
+        }
+        if (landingExitA != null)
+        {
+            if (prev.HasValue) Gizmos.DrawLine(prev.Value, landingExitA.position);
+            prev = landingExitA.position;
+        }
+
+        // Per-slot taxi-back fan-out from LandingExit_A.
+        if (landingExitA != null && slots != null && taxiPoints != null)
+        {
+            for (int i = 0; i < slots.Length; i++)
+            {
+                Transform slot = slots[i];
+                Transform taxi = (i < taxiPoints.Length) ? taxiPoints[i] : null;
+                if (slot == null) continue;
+                Vector3 p0 = landingExitA.position;
+                if (taxi != null)
+                {
+                    Gizmos.DrawLine(p0, taxi.position);
+                    p0 = taxi.position;
+                }
+                Gizmos.DrawLine(p0, slot.position);
+            }
+        }
     }
 
     private void DrawRunwayPoint(Transform t, string label, Color color)
