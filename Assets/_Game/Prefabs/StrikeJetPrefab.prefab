@@ -1014,10 +1014,15 @@ MonoBehaviour:
   modelForwardOffsetEulerOverride: {x: 0, y: 0, z: 0}
   yawTurnSpeed: 6
   minVelocityForRotation: 0.1
-  takeoffPitch: -12
-  landingPitch: 6
+  takeoffPitch: -18
+  landingPitch: 10
   cruisePitch: 0
   pitchResponsiveness: 4
+  useVerticalVelocityForPitch: 1
+  verticalVelocityToPitchScale: 2
+  verticalVelocityDeadband: 0.2
+  forceTestPitch: 0
+  forcedPitchDegrees: -25
   maxBankAngle: 30
   bankYawRateForFullBank: 45
   bankResponsiveness: 5

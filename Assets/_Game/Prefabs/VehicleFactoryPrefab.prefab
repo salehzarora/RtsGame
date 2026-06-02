@@ -281,7 +281,7 @@ GameObject:
   - component: {fileID: 6472924407019695334}
   - component: {fileID: 167152066114591378}
   - component: {fileID: 6775115555936757449}
-  m_Layer: 2
+  m_Layer: 9
   m_Name: RoofBanner
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -710,6 +710,9 @@ MonoBehaviour:
   - {fileID: 8292812610182743690}
   - {fileID: 6775115555936757449}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+  applyToBaseColor: 1
+  applyToEmission: 0
+  emissionIntensity: 1
 --- !u!114 &3026012212896847368
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -737,7 +740,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4964919585199206399}
-  m_Layer: 2
+  m_Layer: 9
   m_Name: TeamColorAccent_DISABLED
   m_TagString: Untagged
   m_Icon: {fileID: 0}
