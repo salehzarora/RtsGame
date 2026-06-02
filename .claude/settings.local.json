@@ -9,7 +9,32 @@
       "Bash(ls \"/c/Users/nigga/AppData/Local/Unity/Editor/\" 2>/dev/null | head; echo \"---\"; tail -200 \"/c/Users/nigga/AppData/Local/Unity/Editor/Editor.log\" 2>/dev/null | grep -iE \"error CS|compile|SetupDevSandbox|DevSandboxBootstrap\" | tail -40)",
       "Read(//c/Users/nigga/AppData/Local/Unity/Editor//**)",
       "Read(//c/Users/nigga/AppData/Local/Unity/Editor/**)",
-      "Bash(awk '/Reloading assemblies|CompileScripts:|Refresh completed|Application started|^=========/{section++} {print section\"|\"$0}' \"/c/Users/nigga/AppData/Local/Unity/Editor/Editor.log\")"
+      "Bash(awk '/Reloading assemblies|CompileScripts:|Refresh completed|Application started|^=========/{section++} {print section\"|\"$0}' \"/c/Users/nigga/AppData/Local/Unity/Editor/Editor.log\")",
+      "Bash(grep -lr 'guid: __TRACKED_VAR__' Assets/_Game/Scripts)",
+      "Bash(awk '/m_Name: \\(LeftArm|RightArm|Head|Body|ChestStripe|Helmet|LeftLeg|RightLeg|Backpack|TeamColorAccent_DISABLED|PrimitivePlaceholder|RiflePlaceholder|SoldierVisualRoot|ImportedModelGoesHere|SelectionCircle|HealthBar\\)/{name=$0; for\\(i=1;i<=10;i++\\){getline; if\\(/m_IsActive/\\){print name\" → \"$0; break}}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!4 &7597902854214635123/{found=1} found{print; if\\(/m_GameObject/ || /m_Father/\\){count++}; if\\(count>=2\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!4 &3970202236340412702/{found=1} found{print; if\\(/m_Children/\\){children=1}; if\\(children && /^[^ ]/ && !/m_Children/ && !/^---/\\){children=0}; if\\(/m_Father/\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!1 &9173377314883017470|^--- !u!1 &6067435896608983967/{found=$0} found{print; if\\(/m_Name/\\){print \"END\"; found=0; if\\(NR>3000\\)exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk 'NR>=22 && NR<=45' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!4 &7103809166458864653/{found=1} found{print; if\\(/m_GameObject/\\){gameobj=$NF; gsub\\(/[{}]/, \"\", gameobj\\)}; if\\(/^---/\\){exit}}' /c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab)",
+      "Bash(awk 'BEGIN{looking=0} /^--- !u!4 &7103809166458864653/{looking=1} looking{print; if\\(/m_Father/\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!1 &8885252143392983283/{f=1} f{print; if\\(/m_Name/\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/m_Name: \\(SoldierVisualRoot|ImportedModelGoesHere|PrimitivePlaceholder|character|Soldier_Rigged|TeamColorAccent_DISABLED\\)/{name=$0; for\\(i=1;i<=12;i++\\){getline; if\\(/m_IsActive/\\){print name\" -> \"$0; break}}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/PrefabInstance:/{prefab=NR; capture=1; buf=\"\"} capture{buf=buf\"\\\\n\"$0; if\\(/m_SourcePrefab/\\){print \"=== PrefabInstance @ \"prefab\" ===\"; print buf; capture=0}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!4 &7597902854214635123/{f=1} f{print; if\\(/m_Father/\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!4 &2556253043846407545/{f=1} f{print; if\\(/m_Father/\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/4922090274214711740/{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/&4922090274214711740/{f=1} f{print; n++; if\\(n>20\\)exit}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/^--- !u!1001 &4883166966283794007/{f=1} f{print; if\\(/m_SourcePrefab/\\){exit}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/m_Name: \\(SoldierVisualRoot|ImportedModelGoesHere|PrimitivePlaceholder|character|TeamColorAccent_DISABLED|LeftArm|RightArm|Head|Body|ChestStripe|Helmet|LeftLeg|RightLeg|Backpack|RiflePlaceholder|HealthBar|SelectionCircle|SoldierPrefab\\)/{n=$0; for\\(i=1;i<=10;i++\\){getline; if\\(/m_IsActive/\\){print FILENAME\": \"n\" -> \"$0; break}}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\" \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab_OLD_Backup.prefab\")",
+      "Bash(awk '/m_Name: SoldierPrefab\\\\b/{f=NR} f && NR>=f && NR<=f+30{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/SoldierPrefab$/{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk 'NR>=875 && NR<=900' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/m_Name: \\(SoldierVisualRoot|ImportedModelGoesHere\\)/{name=$0; for\\(i=1;i<=15;i++\\){getline; if\\(/m_Layer/\\){print name\" -> \"$0; break}}}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/m_Name: ImportedModelGoesHere/{f=NR} f && NR>=f-20 && NR<=f+5{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/m_Name: SoldierPrefab_OLD_Backup/{f=NR} f && NR>=f-20 && NR<=f+5{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab_OLD_Backup.prefab\")",
+      "Bash(awk '/m_Name: SoldierVisualRoot/{f=NR} f && NR>=f-25 && NR<=f+8{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab_OLD_Backup.prefab\")",
+      "Bash(awk '/^layers:/{f=1; next} f{print; if\\(NR>50\\)exit}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/ProjectSettings/TagManager.asset\")"
     ]
   }
 }
