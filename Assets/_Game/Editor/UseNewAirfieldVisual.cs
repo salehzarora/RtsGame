@@ -106,12 +106,12 @@ public static class UseNewAirfieldVisual
     // together if you re-capture pad positions.
     private static readonly SlotLayout[] Layout =
     {
-        new SlotLayout { Index = 0, Slot = new Vector3( 8.23999977f, 0.6f,  3.65932417f), Taxi = new Vector3( 8.23999977f, 0f, -1f), RotationY = -55.959f },
-        new SlotLayout { Index = 1, Slot = new Vector3( 6.38754559f, 0.6f,  0.20483637f), Taxi = new Vector3( 6.38754559f, 0f, -1f), RotationY = -55.959f },
-        new SlotLayout { Index = 2, Slot = new Vector3( 4.69712925f, 0.6f, -4.08381081f), Taxi = new Vector3( 4.69712925f, 0f, -1f), RotationY = -55.959f },
-        new SlotLayout { Index = 3, Slot = new Vector3(-5.27180529f, 0.6f, -4.35003638f), Taxi = new Vector3(-5.27180529f, 0f, -1f), RotationY =  55.959f },
-        new SlotLayout { Index = 4, Slot = new Vector3(-6.12523460f, 0.6f,  0.26885521f), Taxi = new Vector3(-6.12523460f, 0f, -1f), RotationY =  55.959f },
-        new SlotLayout { Index = 5, Slot = new Vector3(-8.05147648f, 0.6f,  3.80998421f), Taxi = new Vector3(-8.05147648f, 0f, -1f), RotationY =  55.959f },
+        new SlotLayout { Index = 0, Slot = new Vector3( 8.23999977f, 1f,  3.65932417f), Taxi = new Vector3( 8.23999977f, 0f, -1f), RotationY = -55.959f },
+        new SlotLayout { Index = 1, Slot = new Vector3( 6.38754559f, 1f,  0.20483637f), Taxi = new Vector3( 6.38754559f, 0f, -1f), RotationY = -55.959f },
+        new SlotLayout { Index = 2, Slot = new Vector3( 4.69712925f, 1f, -4.08381081f), Taxi = new Vector3( 4.69712925f, 0f, -1f), RotationY = -55.959f },
+        new SlotLayout { Index = 3, Slot = new Vector3(-5.27180529f, 1f, -4.35003638f), Taxi = new Vector3(-5.27180529f, 0f, -1f), RotationY =  55.959f },
+        new SlotLayout { Index = 4, Slot = new Vector3(-6.12523460f, 1f,  0.26885521f), Taxi = new Vector3(-6.12523460f, 0f, -1f), RotationY =  55.959f },
+        new SlotLayout { Index = 5, Slot = new Vector3(-8.05147648f, 1f,  3.80998421f), Taxi = new Vector3(-8.05147648f, 0f, -1f), RotationY =  55.959f },
     };
 
     // Runway / lane corridor / landing — Z extends to ±10 (runway) and

@@ -83,12 +83,12 @@ public static class NormalizeAirfieldScale
         // Per-slot Taxi at Z = -1 (north of decorative buildings, just south
         // of RunwayQueue at Z = -1.87). Same Taxi point serves takeoff
         // pull-out AND landing taxi-back. See ApplyManualAirfieldAvoidBuilding.
-        new SlotLayout { Index = 0, Slot = new Vector3( 8.23999977f, 0.6f,  3.65932417f), Taxi = new Vector3( 8.23999977f, 0f, -1f), RotationY = -55.959f },
-        new SlotLayout { Index = 1, Slot = new Vector3( 6.38754559f, 0.6f,  0.20483637f), Taxi = new Vector3( 6.38754559f, 0f, -1f), RotationY = -55.959f },
-        new SlotLayout { Index = 2, Slot = new Vector3( 4.69712925f, 0.6f, -4.08381081f), Taxi = new Vector3( 4.69712925f, 0f, -1f), RotationY = -55.959f },
-        new SlotLayout { Index = 3, Slot = new Vector3(-5.27180529f, 0.6f, -4.35003638f), Taxi = new Vector3(-5.27180529f, 0f, -1f), RotationY =  55.959f },
-        new SlotLayout { Index = 4, Slot = new Vector3(-6.12523460f, 0.6f,  0.26885521f), Taxi = new Vector3(-6.12523460f, 0f, -1f), RotationY =  55.959f },
-        new SlotLayout { Index = 5, Slot = new Vector3(-8.05147648f, 0.6f,  3.80998421f), Taxi = new Vector3(-8.05147648f, 0f, -1f), RotationY =  55.959f },
+        new SlotLayout { Index = 0, Slot = new Vector3( 8.23999977f, 1f,  3.65932417f), Taxi = new Vector3( 8.23999977f, 0f, -1f), RotationY = -55.959f },
+        new SlotLayout { Index = 1, Slot = new Vector3( 6.38754559f, 1f,  0.20483637f), Taxi = new Vector3( 6.38754559f, 0f, -1f), RotationY = -55.959f },
+        new SlotLayout { Index = 2, Slot = new Vector3( 4.69712925f, 1f, -4.08381081f), Taxi = new Vector3( 4.69712925f, 0f, -1f), RotationY = -55.959f },
+        new SlotLayout { Index = 3, Slot = new Vector3(-5.27180529f, 1f, -4.35003638f), Taxi = new Vector3(-5.27180529f, 0f, -1f), RotationY =  55.959f },
+        new SlotLayout { Index = 4, Slot = new Vector3(-6.12523460f, 1f,  0.26885521f), Taxi = new Vector3(-6.12523460f, 0f, -1f), RotationY =  55.959f },
+        new SlotLayout { Index = 5, Slot = new Vector3(-8.05147648f, 1f,  3.80998421f), Taxi = new Vector3(-8.05147648f, 0f, -1f), RotationY =  55.959f },
     };
 
     // <c>RotY</c> = NaN means "don't touch the existing rotation" — used for
@@ -460,9 +460,13 @@ public static class NormalizeAirfieldScale
         if (badRot == 0)
             Debug.Log("[ValidateAirfieldScale]   All slot rotations within 15° of the ±55.959° reference ✓.");
 
-        // Y-height check — user's reference sat at Y = 0.6. Warn if any slot
-        // strayed below 0 (below ground) or above 1.5 (floating).
+        // Y-height check — current target is Y = 1 (new jet2 model pivot).
+        // Warn if any slot is below ground, far above target, or notably
+        // off the expected 1.0 (could mean stale 0.6 values from the
+        // earlier prefab).
         int badY = 0;
+        int offTarget = 0;
+        const float ExpectedSlotY = 1f;
         for (int i = 0; i < 6; i++)
         {
             Transform s = root.transform.Find($"Slot_{i}");
@@ -470,17 +474,24 @@ public static class NormalizeAirfieldScale
             float y = s.localPosition.y;
             if (y < 0f)
             {
-                Debug.LogError($"[ValidateAirfieldScale]   ✗ Slot {i} Y = {y:F2} (BELOW ground). Jet will sink under the airfield.");
+                Debug.LogError($"[ValidateAirfieldScale]   ✗ Slot {i} Y = {y:F2} (BELOW ground).");
                 badY++;
             }
             else if (y > 1.5f)
             {
-                Debug.LogWarning($"[ValidateAirfieldScale]   ⚠ Slot {i} Y = {y:F2} (above 1.5 m). Jet may visibly float over the apron.");
+                Debug.LogWarning($"[ValidateAirfieldScale]   ⚠ Slot {i} Y = {y:F2} (above 1.5 m). Jet may float.");
                 badY++;
             }
+            else if (Mathf.Abs(y - ExpectedSlotY) > 0.1f)
+            {
+                Debug.LogWarning($"[ValidateAirfieldScale]   ⚠ Slot {i} Y = {y:F2} differs from " +
+                                 $"expected {ExpectedSlotY:F1} (jet2 model). Run " +
+                                 "Tools → RTS → Buildings → Set Airfield Slot Y To One.");
+                offTarget++;
+            }
         }
-        if (badY == 0)
-            Debug.Log("[ValidateAirfieldScale]   All 6 slot Y values inside (0, 1.5) ✓.");
+        if (badY == 0 && offTarget == 0)
+            Debug.Log($"[ValidateAirfieldScale]   All 6 slot Y values within 0.1 m of expected {ExpectedSlotY:F1} ✓.");
 
         if (outside > 0)
             Debug.LogError($"[ValidateAirfieldScale]   ✗ {outside} slot(s) outside the {TargetVisibleSize:F0} m " +

@@ -53,9 +53,11 @@ public static class ApplyManualAirfieldSlotReference
     public const float RightSideRotY = -55.959f;
     public const float LeftSideRotY  =  55.959f;
 
-    // Slot Y matches the manually-placed jet height (0.6). Tune up to 1.0 if
-    // your StrikeJetPrefab pivot sits the wheels below ground at this height.
-    public const float SlotHeight = 0.6f;
+    // Slot Y for the new (jet2) aircraft pivot. Raised from 0.6 to 1.0 so
+    // the new model sits cleanly on the apron surface (the new pivot is
+    // lower in the body, so the previous 0.6 sank the wheels). All six
+    // <see cref="References"/> entries below use this constant.
+    public const float SlotHeight = 1f;
 
     public struct SlotRef
     {
