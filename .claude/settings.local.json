@@ -34,7 +34,20 @@
       "Bash(awk '/m_Name: ImportedModelGoesHere/{f=NR} f && NR>=f-20 && NR<=f+5{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
       "Bash(awk '/m_Name: SoldierPrefab_OLD_Backup/{f=NR} f && NR>=f-20 && NR<=f+5{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab_OLD_Backup.prefab\")",
       "Bash(awk '/m_Name: SoldierVisualRoot/{f=NR} f && NR>=f-25 && NR<=f+8{print NR\": \"$0}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab_OLD_Backup.prefab\")",
-      "Bash(awk '/^layers:/{f=1; next} f{print; if\\(NR>50\\)exit}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/ProjectSettings/TagManager.asset\")"
+      "Bash(awk '/^layers:/{f=1; next} f{print; if\\(NR>50\\)exit}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/ProjectSettings/TagManager.asset\")",
+      "Bash(cd \"/c/Users/nigga/Desktop/UnityProjects/RtsGame\" && grep -lrE \"Animator|animator\\\\.\" Assets/_Game/Scripts/Units 2>/dev/null | head)",
+      "Read(//c/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Scripts/**)",
+      "Bash(xargs grep -l \"guid: ce8bb100697c70c4781469b5dc5dd85b\")",
+      "Bash(awk '/m_Name: SoldierPrefab\\\\b/{rootSeen=1} rootSeen && /m_Component:/{f=1; next} f && /component:/{print $0} f && /m_Layer:/{exit}' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Bash(awk '/PrefabInstance.*c9d2d75d/,/m_SourcePrefab/' \"/c/Users/nigga/Desktop/UnityProjects/RtsGame/Assets/_Game/Prefabs/SoldierPrefab.prefab\")",
+      "Read(//c/c/Users/nigga/Desktop/UnityProjects/RtsGame/**)",
+      "Bash(xargs grep -l \"guid: b38c177e529da17488ccfb3f734e788e\")",
+      "Bash(grep -cE \"^\\(Hips|Spine|Chest|Head|LeftUpperArm|RightHand\\)$\")",
+      "mcp__unity-mcp__Unity_RunCommand",
+      "Bash(python -c \"import zlib,sys; print\\('python ok'\\)\")",
+      "Bash(py -c \"print\\('py ok'\\)\")",
+      "Bash(python -)",
+      "Bash(PYTHONIOENCODING=utf-8 python -)"
     ]
   }
 }
