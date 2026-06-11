@@ -103,6 +103,7 @@ GameObject:
   - component: {fileID: 2811238335410728528}
   - component: {fileID: 8124368648659623201}
   - component: {fileID: 299214454141092943}
+  - component: {fileID: 5705715470937997454}
   - component: {fileID: -2546268683819003572}
   - component: {fileID: 1646456304971889851}
   - component: {fileID: 417896357903518783}
@@ -356,3 +357,18 @@ Transform:
   - {fileID: 8060735226192184223}
   m_Father: {fileID: 4993628327693599795}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &5705715470937997454
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1810595053945247796}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 441f06905566a584da2772f472d8072c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Health
+  team: 0
+  maxHealth: 600
+  destroyDelay: 0

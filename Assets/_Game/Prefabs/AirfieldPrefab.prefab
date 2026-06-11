@@ -3057,6 +3057,7 @@ GameObject:
   - component: {fileID: 1993030529821401841}
   - component: {fileID: 2806777283754994273}
   - component: {fileID: 5028306148737764837}
+  - component: {fileID: 8110596420167836698}
   m_Layer: 9
   m_Name: AirfieldPrefab
   m_TagString: Untagged
@@ -4412,3 +4413,18 @@ Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8ad5e557ba47e744daa033d52ceeb9dd, type: 3}
   m_PrefabInstance: {fileID: 7725418818797541436}
   m_PrefabAsset: {fileID: 0}
+--- !u!114 &8110596420167836698
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7719987813672397985}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 441f06905566a584da2772f472d8072c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Health
+  team: 0
+  maxHealth: 1000
+  destroyDelay: 0

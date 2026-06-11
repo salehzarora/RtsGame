@@ -557,6 +557,7 @@ GameObject:
   - component: {fileID: 4571146822086913373}
   - component: {fileID: 5364102620363978243}
   - component: {fileID: 3026012212896847368}
+  - component: {fileID: 4978386812382825184}
   m_Layer: 9
   m_Name: VehicleFactoryPrefab
   m_TagString: Untagged
@@ -853,3 +854,18 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!114 &4978386812382825184
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7035481686126615289}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 441f06905566a584da2772f472d8072c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Health
+  team: 0
+  maxHealth: 800
+  destroyDelay: 0

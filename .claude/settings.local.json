@@ -47,7 +47,25 @@
       "Bash(python -c \"import zlib,sys; print\\('python ok'\\)\")",
       "Bash(py -c \"print\\('py ok'\\)\")",
       "Bash(python -)",
-      "Bash(PYTHONIOENCODING=utf-8 python -)"
+      "Bash(PYTHONIOENCODING=utf-8 python -)",
+      "mcp__unity-mcp__Unity_GetConsoleLogs",
+      "PowerShell(Get-Process -Name relay_win -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process -Id 73900 -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 73900 -Force -Confirm:$false)",
+      "PowerShell(Stop-Process -Id 46232 -Force -Confirm:$false -ErrorAction SilentlyContinue)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Read(//c/Users/nigga/.unity/relay//**)",
+      "Read(//c/Users/nigga/.unity/**)",
+      "Bash(cd \"/c/Users/nigga/Desktop/UnityProjects/RtsGame\" *)",
+      "Read(//c/Users/nigga/Desktop/UnityProjects/RtsGame/**)",
+      "Bash(mkdir -p Library/FileBridge)",
+      "Bash(printf '{\"id\":\"ping1\",\"op\":\"ping\",\"arg\":\"\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"val1\",\"op\":\"menu\",\"arg\":\"Tools/RTS/Validation/Validate All\",\"n\":0}')",
+      "Bash(cat Library/FileBridge/result_val1.json)",
+      "Bash(printf '{\"id\":\"con1\",\"op\":\"console\",\"arg\":\"\",\"n\":160}')",
+      "Bash(printf '{\"id\":\"ref1\",\"op\":\"menu\",\"arg\":\"Assets/Refresh\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"val2\",\"op\":\"menu\",\"arg\":\"Tools/RTS/Validation/Validate All\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"con2\",\"op\":\"console\",\"arg\":\"\",\"n\":30}')"
     ]
   }
 }
