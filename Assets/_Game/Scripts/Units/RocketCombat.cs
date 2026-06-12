@@ -250,7 +250,15 @@ public class RocketCombat : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.up * 1.2f;
 
+        // Launch flash at the RPG muzzle — backblast readability.
+        Vector3 shotDir = target != null ? (target.transform.position - origin) : transform.forward;
+        CombatVFX.MuzzleFlash(origin, shotDir);
         AudioManager.SfxAt(GameSound.RocketLaunch, origin);
+
+        // Launcher recoil — a rocket leaving the tube shoves the soldier
+        // visibly harder than rifle fire. Visual-only, MP-safe.
+        RecoilKickFX.Kick(transform, shotDir, 0.18f);
+        CameraShakeFX.ShakeAt(origin, 0.10f);
 
         if (firstShotPending)
         {

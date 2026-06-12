@@ -77,6 +77,9 @@ public class MissileProjectile : MonoBehaviour
         impactFlashDuration  = flashDuration;
         flashColor           = color;
 
+        // Readable smoke trail behind the arcing missile.
+        CombatVFX.AddProjectileTrail(gameObject, new Color(0.85f, 0.8f, 0.7f, 0.9f), 0.18f);
+
         // Snap the missile to launch position + orient along initial heading.
         transform.position = origin;
         Vector3 toImpact = impactPoint - origin;
@@ -187,6 +190,9 @@ public class MissileProjectile : MonoBehaviour
     private void SpawnImpactFlash(Vector3 worldPos)
     {
         AudioManager.SfxAt(GameSound.Impact, worldPos);
+
+        // Particle explosion (medium — this missile has splash damage).
+        CombatVFX.Explosion(worldPos, 1);
 
         if (impactFlashDuration <= 0f) return;
 

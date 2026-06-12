@@ -506,11 +506,13 @@ public class UnitSelector : MonoBehaviour
 
                 AudioManager.Sfx(GameSound.UnitAttackOrder);
 
+                // Red double-pulse at the target's feet — instant click
+                // confirmation even before units start moving. Local-only.
+                CommandMarkerVFX.AttackPing(targetHealth.transform.position);
+
                 if (attackMarker != null)
                 {
                     attackMarker.Show(targetHealth.transform);
-                    // TEMPORARY debug — remove once attack-marker wiring is verified.
-                    Debug.Log("[UnitSelector] Attack command marker shown");
                 }
                 else
                 {
@@ -586,6 +588,10 @@ public class UnitSelector : MonoBehaviour
             string[] moverIds = CollectSelectionEntityIds();
             CommandDispatcher.Issue(
                 PlayerCommand.Move(GameEntity.LocalCommandPlayerId, moverIds, groundHit.point));
+
+            // Click feedback — expanding green ring at the destination.
+            // Local-only visual; remote clients never see our markers.
+            CommandMarkerVFX.MoveMarker(groundHit.point);
 
             AudioManager.Sfx(GameSound.UnitMoveOrder);
         }

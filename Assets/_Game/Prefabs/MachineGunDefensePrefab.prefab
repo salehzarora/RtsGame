@@ -447,6 +447,7 @@ MonoBehaviour:
   team: 0
   maxHealth: 650
   destroyDelay: 0
+  destroyObjectOnDeath: 1
 --- !u!114 &8193103280261290316
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -529,6 +530,9 @@ MonoBehaviour:
   ignoreRenderers:
   - {fileID: 2186131107884202761}
   fallbackColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
+  applyToBaseColor: 1
+  applyToEmission: 0
+  emissionIntensity: 1
 --- !u!114 &6422221710006895179
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -862,8 +866,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HealthBar
   heightOffset: 2.4
-  size: {x: 1, y: 0.12}
-  depth: 0.04
+  size: {x: 2.4, y: 0.22}
+  depth: 0.05
   backgroundColor: {r: 0.07, g: 0.07, b: 0.07, a: 1}
   highColor: {r: 0.22, g: 0.82, b: 0.22, a: 1}
   midColor: {r: 0.93, g: 0.85, b: 0.1, a: 1}

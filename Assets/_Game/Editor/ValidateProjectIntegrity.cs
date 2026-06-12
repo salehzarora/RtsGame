@@ -158,8 +158,11 @@ public static class ValidateProjectIntegrity
         Scene scene = SceneManager.GetActiveScene();
         Debug.Log($"[ValidateAll] ─── Scene audit: '{scene.name}' ───");
 
+        // Render-texture cams excluded; MinimapCamera allocates its RT at
+        // RUNTIME, so in edit mode it looks like a screen camera — exclude
+        // by component to avoid a false positive.
         int cams = Object.FindObjectsByType<Camera>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
-                         .Count(c => c.targetTexture == null); // render-texture cams (minimap) excluded
+                         .Count(c => c.targetTexture == null && c.GetComponent<MinimapCamera>() == null);
         if (cams == 0) F("no active screen camera");
         else if (cams > 1) W($"{cams} active screen cameras — RTS expects exactly one main view");
         else P("exactly one screen camera");
@@ -194,6 +197,31 @@ public static class ValidateProjectIntegrity
                 F($"duplicate GameEntity id '{e.EntityId}' on '{e.name}' and '{other}'");
             else seen[e.EntityId] = e.name;
         }
+
+        // --- battlefield gameplay systems (hazards + cover) -------------- //
+        int hazards = 0, badHazards = 0;
+        foreach (ExplodeOnDeath ex in Object.FindObjectsByType<ExplodeOnDeath>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            hazards++;
+            if (ex.GetComponent<Health>() == null) { F($"hazard '{ex.name}' missing Health"); badHazards++; }
+            if (ex.explosionRadius < 0f || ex.explosionDamage < 0f)
+            { F($"hazard '{ex.name}' has negative radius/damage"); badHazards++; }
+        }
+        if (hazards > 0 && badHazards == 0) P($"{hazards} hazard prop(s), all valid");
+
+        int covers = 0, badCovers = 0;
+        foreach (CoverObject c in Object.FindObjectsByType<CoverObject>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            covers++;
+            if (c.coverRadius <= 0f || c.damageReduction <= 0f || c.damageReduction > 0.8f)
+            { F($"cover '{c.name}' has invalid radius/reduction"); badCovers++; }
+        }
+        if (covers > 0 && badCovers == 0) P($"{covers} cover object(s), all valid");
+
+        var dressingRoots = Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+                                  .Count(t => t.name == "BattlefieldDressing");
+        if (dressingRoots > 1) F($"{dressingRoots} BattlefieldDressing roots — re-run the dresser (it should replace, not add)");
+        else if (dressingRoots == 1) P("one BattlefieldDressing root");
 
         Debug.Log(_problems == 0
             ? "[ValidateAll] ✓ Scene audit complete — no problems."

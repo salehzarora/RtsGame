@@ -1440,3 +1440,95 @@ The expected log sequence on a host starting a 1-player match:
   both clients and clicked the same row on both. Master / target gating
   guarantees a single applier, but each click sends its own event. Use it on
   one client.
+
+## Two-Client PvP Smoke Test (2026-06-12)
+
+Single-client REAL-network flow is verified end-to-end (see PROGRESS_REPORT):
+Connect → CreateRoom → StartMatch → SampleScene → corner A spawn (CC+Dozer+
+bank+nodes), 3 empty corners inactive, color applied, camera on base →
+LeaveRoom → MatchSession cleanup → lobby.
+
+Two-client procedure:
+1. File → Build Profiles → build a Development Windows player (MainMenuScene
+   index 0, SampleScene index 1).
+2. Run the build (client A) AND press Play in the editor (client B) — both on
+   the same Photon AppId/region (dev region 'eu' is pinned in dev builds).
+3. A: Online → Create Room "Test". B: Online → Join (room list or name).
+4. A (master): Start Match. Verify on BOTH clients: different corners, own
+   color on own units, enemy units visible but not selectable, commands only
+   move own units, damage applies once (master-authoritative snap).
+5. Produce from Barracks/Factory/Airfield on each side; verify ownership +
+   color of produced units on both screens.
+6. A leaves (ESC → menu) → B should see player-left handling; both to menu →
+   create a SECOND room → verify clean state (10000 starting resources, no
+   old units, no stale colors).
+
+Bridge-side equivalents (editor client): BridgeOps.PvpConnect / PvpStatus /
+PvpCreateRoom / PvpStartMatch / PvpCornerReport / PvpLeave.
+
+Dev-systems check during PvP: console must show
+"[Skirmish] Multiplayer room detected — director disabled (by design)" or
+nothing at all (director absent / autoStart off).
+
+## Two-Client PvP — AUTOMATED procedure + results (2026-06-12, second pass)
+
+The two-client test is now fully automated and was executed live (3 matches,
+editor + development build). Everything below VERIFIED working:
+
+| Check | Result |
+|---|---|
+| Both clients join the same room | ✓ (room "BridgeSmokeTest", players=2) |
+| Both load SampleScene on Start Match | ✓ (after AutomaticallySyncScene fix) |
+| Different corners, opposite spawns | ✓ (A/D, B/D, D/C across 3 matches) |
+| Ownership isolation (own units only) | ✓ ([own]/[other] censuses both sides) |
+| Team colors on both screens | ✓ (blue owner-0 / red owner-1 on BOTH) |
+| Movement sync owner→remote | ✓ (snapshots; exact dest match (88,82)) |
+| Damage applies exactly once | ✓ (140→110 test; 14×10dmg combat lockstep) |
+| Networked Build (dozer) | ✓ (site/final ids p0-1/p0-2 identical both) |
+| Networked Produce (Barracks) | ✓ (Soldier p0-3 owner 0 on both; power gate
+  replicates — production blocks consistently on both clients without power) |
+| Real combat kill cross-client | ✓ (soldier chase → kill → NetDeath destroy) |
+| Leave → menu return | ✓ FIXED (scene returns to MainMenuScene in <5 s) |
+| Second/third match cleanliness | ✓ (no stale entities, fresh hp/positions) |
+
+How to run it yourself:
+1. `Tools → RTS → Multiplayer → Build Two-Client Test Player` (writes
+   `Builds/TwoClientTest/RtsGame.exe`, Development, both scenes).
+2. Editor: open MainMenuScene, press Play, then
+   `Tools → RTS → Multiplayer → Connect To Photon` and
+   `Create Test Room (BridgeSmokeTest)`.
+3. Launch the build with the auto-test flag (it joins, sets color Red, waits
+   for match start, then auto-moves its units and logs a full entity census
+   every ~16 s to the log file):
+   `RtsGame.exe -autotest -screen-fullscreen 0 -screen-width 800 -screen-height 600 -logFile Builds\TwoClientTest\playerB.log`
+4. Editor: `Start Match (Blue)` once status shows players=2, then use the
+   other menu items (Print Photon Status / Corner Report / Entity Positions,
+   Build PowerPlant→Barracks via bridge ops, Produce Worker/Soldier, Damage
+   Nearest Enemy, Attack Nearest, Leave Room) and read
+   `Builds/TwoClientTest/playerB.log` for the remote side.
+   NOTE: production REQUIRES a PowerPlant first — UnitProducer blocks
+   unpowered production on every client (correct, replicated behaviour).
+
+Client-B automation lives in `Assets/_Game/Scripts/DevTools/TwoClientAutoTester.cs`
+— completely inert without the `-autotest` command-line argument.
+
+## Game-Feel Pass — manual checklist (2026-06-12)
+
+Quick in-editor verification of the presentation systems (DevSandbox, Play):
+
+| Feel system | How to see it |
+|---|---|
+| Command markers | Right-click ground → green expanding ring; right-click enemy → red double pulse |
+| Firing recoil | Soldiers jolt on rifle fire; RPG soldier kicks back hard; artillery rocks the chassis |
+| Camera shake | Stand near a fuel-barrel explosion or artillery launch |
+| Movement dust | Order any unit across dirt — puffs trail by distance travelled |
+| Vehicle lean | Order Humvee/Dozer through a turn — body rolls in, pitches on accel/brake |
+| Explosion overhaul | Kill a vehicle/barrel: white core flash + debris chunks + ground shockwave + smoke + scorch |
+| Camera smoothing | WASD pan glides; scroll zoom eases (RTSCamera panSmoothTime/zoomSmoothTime = 0 reverts) |
+| Lighting | Shadow sides of units are readable (trilight ambient), soft warm sun, distance haze |
+| Health bars | Buildings 2.4 wide, vehicles 1.5, infantry 1.0 — thicker, readable at RTS zoom |
+
+All systems are visual-only and MP-safe; remote ghosts get dust/lean too
+(transform-motion-driven). Editor ops: PolishSceneLighting, PolishHealthBars,
+TidyDevSandboxModels (Tools menu equivalents under Tools → RTS → Multiplayer
+for the PvP ops; lighting ops run via FileBridge exec).

@@ -79,6 +79,14 @@ public class Health : MonoBehaviour
         if (dying) return;
         if (CurrentHealth <= 0f) return;            // already dead
 
+        // Tactical cover: infantry standing near a CoverObject (sandbags,
+        // barriers) takes reduced damage. Damage-time check only — no
+        // per-frame cost. Deterministic on all clients (scene cover + pos).
+        var cat = GetComponent<UnitCategory>();
+        if (cat != null && cat.category == UnitCategory.Category.Infantry &&
+            CoverObject.TryGetReduction(transform.position, out float coverCut))
+            amount *= (1f - coverCut);
+
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         OnHealthChanged?.Invoke(CurrentHealth, maxHealth);
 
@@ -101,6 +109,10 @@ public class Health : MonoBehaviour
             // throttled by the SoundEvent's minInterval so sustained fire doesn't
             // spam it. Death has its own sound below.
             AudioManager.SfxAt(GameSound.UnitDamaged, transform.position);
+
+            // Visual hit feedback — sparks at the hit point, plus building
+            // damage-smoke thresholds. Purely local visuals, MP-safe.
+            CombatVFX.HitFeedback(this);
         }
     }
 
@@ -109,6 +121,9 @@ public class Health : MonoBehaviour
     {
         CurrentHealth = Mathf.Min(maxHealth, CurrentHealth + amount);
         OnHealthChanged?.Invoke(CurrentHealth, maxHealth);
+
+        // Repairing above the smoke threshold clears building damage smoke.
+        CombatVFX.UpdateDamageSmoke(this);
     }
 
     // ------------------------------------------------------------------ //
@@ -170,6 +185,10 @@ public class Health : MonoBehaviour
         BroadcastDestroyIfMaster();
 
         PlayDeathSound();
+
+        // Death explosion sized by what died (building / vehicle / infantry).
+        // Local visual only — every client renders its own copy.
+        CombatVFX.DeathFeedback(this);
 
         OnDeath?.Invoke();
 

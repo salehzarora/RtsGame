@@ -34,7 +34,21 @@ public class RTSCamera : MonoBehaviour
     [Tooltip("Degrees per second for Q/E keys and middle-mouse drag")]
     public float rotationSpeed = 90f;
 
+    [Header("Feel (smoothing)")]
+    [Tooltip("Seconds for the pan to reach full speed / glide to a stop. " +
+             "0 reverts to the old instant stop-start movement.")]
+    [Range(0f, 0.4f)] public float panSmoothTime = 0.12f;
+
+    [Tooltip("Seconds for zoom height changes to settle. Scroll input sets a " +
+             "target height; the rig eases toward it instead of stepping. " +
+             "0 reverts to instant zoom.")]
+    [Range(0f, 0.5f)] public float zoomSmoothTime = 0.18f;
+
     // ------------------------------------------------------------------ //
+
+    private Vector3 panVelocity;        // SmoothDamp state for pan
+    private float   targetHeight = -1f; // -1 → initialise from current height
+    private float   zoomVelocity;
 
     private void Awake()
     {
@@ -85,17 +99,36 @@ public class RTSCamera : MonoBehaviour
         if (move.sqrMagnitude > 1f)
             move.Normalize();
 
-        transform.position += move * panSpeed * Time.deltaTime;
+        // Smoothed pan: the rig accelerates into movement and glides to a
+        // stop instead of stopping dead — reads far less jarring at RTS zoom.
+        Vector3 desiredVel = move * panSpeed;
+        if (panSmoothTime > 0.001f)
+        {
+            Vector3 current = panVelocity;
+            panVelocity = Vector3.Lerp(current, desiredVel,
+                1f - Mathf.Exp(-Time.deltaTime / Mathf.Max(0.02f, panSmoothTime) * 3f));
+        }
+        else panVelocity = desiredVel;
+
+        transform.position += panVelocity * Time.deltaTime;
     }
 
     private void HandleZoom()
     {
+        if (targetHeight < 0f) targetHeight = transform.position.y;
+
         float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (Mathf.Abs(scroll) < 0.001f) return;
+        if (Mathf.Abs(scroll) > 0.001f)
+        {
+            targetHeight -= scroll * zoomSpeed;
+            targetHeight = Mathf.Clamp(targetHeight, minHeight, maxHeight);
+        }
 
         Vector3 pos = transform.position;
-        pos.y -= scroll * zoomSpeed;
-        pos.y = Mathf.Clamp(pos.y, minHeight, maxHeight);
+        if (zoomSmoothTime > 0.001f)
+            pos.y = Mathf.SmoothDamp(pos.y, targetHeight, ref zoomVelocity, zoomSmoothTime);
+        else
+            pos.y = targetHeight;
         transform.position = pos;
     }
 

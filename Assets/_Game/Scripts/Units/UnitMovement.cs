@@ -118,6 +118,20 @@ public class UnitMovement : MonoBehaviour
             selfEntity.OnOwnershipApplied -= HandleOwnershipApplied;
     }
 
+    private void Start()
+    {
+        // Presentation auto-attach (purely visual, MP-safe — both effects
+        // read only the transform's motion, so they work identically on
+        // owner-driven and network-driven units):
+        //   • movement dust at the feet (emits by distance travelled)
+        //   • vehicles additionally get body lean (accel pitch / turn roll)
+        var cat = GetComponent<UnitCategory>();
+        bool isVehicle = cat != null && cat.category == UnitCategory.Category.Vehicle;
+        GroundDustFX.Attach(gameObject, isVehicle ? 2.2f : 0.9f);
+        if (isVehicle && GetComponent<VehicleLeanFX>() == null)
+            gameObject.AddComponent<VehicleLeanFX>();
+    }
+
     private void HandleOwnershipApplied(int newOwner)
     {
         RefreshOwnershipGate();
@@ -178,6 +192,8 @@ public class UnitMovement : MonoBehaviour
     /// owner clients in MP — those clients receive transform updates from
     /// the owner instead.
     /// </summary>
+    private Vector3 lastLoggedDest = new Vector3(99999f, 0f, 99999f);
+
     public void MoveTo(Vector3 destination)
     {
         if (!LocallyControlled)
@@ -194,7 +210,14 @@ public class UnitMovement : MonoBehaviour
         }
         if (agent == null || !agent.enabled || !agent.isOnNavMesh) return;
         agent.SetDestination(destination);
-        Debug.Log($"[Movement] MoveTo '{name}' → {destination:F1} (owner runs NavMeshAgent locally).");
+
+        // Log only when the destination meaningfully changes — combat chase
+        // re-issues MoveTo every tick and was flooding the console.
+        if ((destination - lastLoggedDest).sqrMagnitude > 4f)
+        {
+            lastLoggedDest = destination;
+            Debug.Log($"[Movement] MoveTo '{name}' → {destination:F1} (owner runs NavMeshAgent locally).");
+        }
     }
 
     /// <summary>

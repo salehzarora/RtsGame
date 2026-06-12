@@ -314,8 +314,10 @@ public class UnitCombat : MonoBehaviour
         tracer = tg.AddComponent<LineRenderer>();
         tracer.positionCount     = 2;
         tracer.useWorldSpace     = true;
-        tracer.startWidth        = tracerWidth;
-        tracer.endWidth          = tracerWidth;
+        // Clamp + taper: serialized prefab widths produced fat white beams
+        // at RTS zoom. Thick at muzzle, thin toward target = readable direction.
+        tracer.startWidth        = Mathf.Min(tracerWidth, 0.08f);
+        tracer.endWidth          = Mathf.Min(tracerWidth, 0.08f) * 0.35f;
         tracer.numCapVertices    = 0;
         tracer.shadowCastingMode = ShadowCastingMode.Off;
         tracer.receiveShadows    = false;
@@ -355,6 +357,22 @@ public class UnitCombat : MonoBehaviour
         tracer.SetPosition(1, end);
         tracer.enabled = true;
         tracerTimer    = tracerDuration;
+
+        // Brief muzzle flash at the barrel, oriented along the shot.
+        CombatVFX.MuzzleFlash(start, end - start);
+
+        // Firing motion: bullet weapons jolt the body slightly; cannon-class
+        // shots rock the chassis harder and thump the camera when close.
+        // Purely visual (RecoilKickFX moves visual children only) — MP-safe.
+        if (damageType == DamageType.Cannon)
+        {
+            RecoilKickFX.Kick(transform, end - start, 0.14f);
+            CameraShakeFX.ShakeAt(start, 0.16f);
+        }
+        else
+        {
+            RecoilKickFX.Kick(transform, end - start, 0.05f);
+        }
 
         // Positional gunfire — fires on the owner client (combat FSM is gated
         // off on non-owners). The SoundEvent's minInterval keeps a squad firing

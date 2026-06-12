@@ -225,8 +225,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HealthBar
   heightOffset: 1.8
-  size: {x: 1, y: 0.12}
-  depth: 0.04
+  size: {x: 1.5, y: 0.17}
+  depth: 0.05
   backgroundColor: {r: 0.07, g: 0.07, b: 0.07, a: 1}
   highColor: {r: 0.22, g: 0.82, b: 0.22, a: 1}
   midColor: {r: 0.93, g: 0.85, b: 0.1, a: 1}
@@ -516,6 +516,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 39d4aa2b1021bd342a117b001f907a24, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UnitMovement
+  useSnapshotInterpolation: 1
+  interpolationDelay: 0.18
+  maxSnapshotBufferSize: 5
+  maxExtrapolationSeconds: 0.1
+  snapDistance: 8
 --- !u!114 &6746676327573545583
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -531,6 +536,7 @@ MonoBehaviour:
   team: 1
   maxHealth: 140
   destroyDelay: 0
+  destroyObjectOnDeath: 1
 --- !u!114 &8367743816237614556
 MonoBehaviour:
   m_ObjectHideFlags: 0

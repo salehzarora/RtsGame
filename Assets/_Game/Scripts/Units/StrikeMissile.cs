@@ -58,6 +58,9 @@ public class StrikeMissile : MonoBehaviour
         impactFlashDuration = flashDuration;
         flashColor          = flash;
 
+        // Bright ordnance trail — aircraft strikes should read instantly.
+        CombatVFX.AddProjectileTrail(gameObject, new Color(1f, 0.85f, 0.45f, 0.95f), 0.16f);
+
         // Snapshot the impact point at the target's chest height. If target
         // is gone, drop on the missile's start position (rare — the caller
         // should null-check before spawning, but be defensive).
@@ -166,6 +169,9 @@ public class StrikeMissile : MonoBehaviour
         // Positional impact — runs on every client (the visual-only missile on
         // non-owners also calls Impact), so both players hear the strike land.
         AudioManager.SfxAt(GameSound.Impact, endPos);
+
+        // Particle explosion (medium — aircraft ordnance).
+        CombatVFX.Explosion(endPos, 1);
 
         if (impactFlashDuration <= 0f) return;
 

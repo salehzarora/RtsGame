@@ -79,6 +79,9 @@ public class RocketProjectile : MonoBehaviour
         impactFlashDuration = flashDuration;
         flashColor          = color;
 
+        // Thin bright trail so the rocket's path reads at RTS zoom.
+        CombatVFX.AddProjectileTrail(gameObject, new Color(1f, 0.75f, 0.35f, 0.9f), 0.12f);
+
         // Snapshot the launch-time target position. Used if the target dies
         // mid-flight (we fly on to where they were and explode).
         lastKnownTargetPosition = (target != null)
@@ -186,6 +189,9 @@ public class RocketProjectile : MonoBehaviour
     private void SpawnImpactFlash(Vector3 worldPos)
     {
         AudioManager.SfxAt(GameSound.Impact, worldPos);
+
+        // Particle explosion (small — single-target rocket).
+        CombatVFX.Explosion(worldPos, 0);
 
         if (impactFlashDuration <= 0f) return;
 

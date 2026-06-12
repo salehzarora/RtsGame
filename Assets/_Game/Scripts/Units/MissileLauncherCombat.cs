@@ -314,7 +314,14 @@ public class MissileLauncherCombat : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.up * 1.6f;
 
+        // Artillery launch flash at the rack.
+        CombatVFX.MuzzleFlash(origin, Vector3.up);
         AudioManager.SfxAt(GameSound.ArtilleryLaunch, origin);
+
+        // Heavy launch: the whole chassis rocks back and the camera thumps —
+        // artillery should feel like the biggest gun on the field. Visual-only.
+        RecoilKickFX.Kick(transform, transform.forward, 0.22f);
+        CameraShakeFX.ShakeAt(origin, 0.25f);
 
         // Snapshot the impact at the target's CURRENT ground position so the
         // missile feels committed — moving targets can dodge by relocating

@@ -65,7 +65,23 @@
       "Bash(printf '{\"id\":\"con1\",\"op\":\"console\",\"arg\":\"\",\"n\":160}')",
       "Bash(printf '{\"id\":\"ref1\",\"op\":\"menu\",\"arg\":\"Assets/Refresh\",\"n\":0}')",
       "Bash(printf '{\"id\":\"val2\",\"op\":\"menu\",\"arg\":\"Tools/RTS/Validation/Validate All\",\"n\":0}')",
-      "Bash(printf '{\"id\":\"con2\",\"op\":\"console\",\"arg\":\"\",\"n\":30}')"
+      "Bash(printf '{\"id\":\"con2\",\"op\":\"console\",\"arg\":\"\",\"n\":30}')",
+      "Bash(printf '{\"id\":\"ref2\",\"op\":\"menu\",\"arg\":\"Assets/Refresh\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"p2\",\"op\":\"ping\",\"arg\":\"\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"ce1\",\"op\":\"console\",\"arg\":\"error\",\"n\":12}')",
+      "Bash(printf '{\"id\":\"cv1\",\"op\":\"exec\",\"arg\":\"BridgeOps.ConvertScenesToTextSilent\",\"n\":0}')",
+      "Bash(break)",
+      "Bash(cat Library/FileBridge/result_cv1.json)",
+      "Bash(printf '{\"id\":\"co2\",\"op\":\"console\",\"arg\":\"\",\"n\":60}')",
+      "Bash(cd \"/c/Users/nigga/Desktop/UnityProjects/RtsGame\" && od -A x -t x1z -v Assets/Scenes/DevSandboxScene.unity | head -4; stat -c \"%s %y\" Assets/Scenes/DevSandboxScene.unity)",
+      "Bash(printf '{\"id\":\"o1\",\"op\":\"exec\",\"arg\":\"BridgeOps.OpenDevSandbox\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"v1\",\"op\":\"exec\",\"arg\":\"ValidateProjectIntegrity.ValidateScene\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"c3\",\"op\":\"console\",\"arg\":\"\",\"n\":40}')",
+      "Bash(printf '{\"id\":\"hb1\",\"op\":\"exec\",\"arg\":\"BridgeOps.AddBuildingHealthBars\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"c4\",\"op\":\"console\",\"arg\":\"\",\"n\":12}')",
+      "Bash(printf '{\"id\":\"sm1\",\"op\":\"exec\",\"arg\":\"BridgeOps.SmokeSpawnCombat\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"sr1\",\"op\":\"exec\",\"arg\":\"BridgeOps.SmokeReport\",\"n\":0}')",
+      "Bash(printf '{\"id\":\"c5\",\"op\":\"console\",\"arg\":\"\",\"n\":40}')"
     ]
   }
 }

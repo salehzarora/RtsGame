@@ -244,6 +244,13 @@ public class AircraftWeapon : MonoBehaviour
             ? firePoint.position
             : transform.position + Vector3.down * 0.3f;
 
+        // Launch flash under the wing hardpoint.
+        CombatVFX.MuzzleFlash(start, (target != null ? target.transform.position - start : Vector3.down));
+
+        // Missile separation: the airframe bumps up slightly as the weight
+        // drops off the rail. Visual children only — flight model untouched.
+        RecoilKickFX.Kick(transform, Vector3.down, 0.08f);
+
         StrikeMissile missile = BuildMissileObject(start);
         missile.Launch(start, target, missileDamage, damageType,
                        missileProjectileSpeed, impactFlashDuration, missileColor);

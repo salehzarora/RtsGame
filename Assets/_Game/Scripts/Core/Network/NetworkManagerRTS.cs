@@ -434,7 +434,11 @@ public class NetworkManagerRTS : MonoBehaviour
             Debug.Log("[NetworkRTS] Connect() — already connected, no-op.");
             return;
         }
-        PhotonNetwork.AutomaticallySyncScene = false;
+        // Must be TRUE on every client (not just the master): followers only
+        // load the gameplay scene when the master's LoadLevel scene property
+        // arrives AND this flag is set locally. With false here, remote
+        // clients stayed in the menu while the match started without them.
+        PhotonNetwork.AutomaticallySyncScene = true;
         PhotonNetwork.GameVersion            = photonAppVersion;
         bool ok = PhotonNetwork.ConnectUsingSettings();
         Debug.Log($"[NetworkRTS] Connecting to Photon (settings) — ConnectUsingSettings returned {ok}.");
@@ -785,13 +789,17 @@ public class NetworkManagerRTS : MonoBehaviour
         OnRoomLeftEvent?.Invoke();
 
         // Scene-split: return the player to the main menu scene whenever they
-        // leave a room from gameplay. Skip if we're already in the menu, if
-        // the flag is off (single-scene project), or if the target scene
-        // isn't actually in Build Settings (defensive — avoids a black screen).
-        if (useSceneSplit && !string.IsNullOrEmpty(mainMenuSceneName))
+        // leave a room from gameplay. Deliberately NOT gated on useSceneSplit:
+        // that serialized flag proved stale on scene-baked instances, leaving
+        // players stranded in the gameplay scene with menu UI overlaid. If the
+        // active scene isn't the menu, the project is split by definition —
+        // CanStreamedLevelBeLoaded stays as the defensive check (avoids a
+        // black screen when the menu scene isn't in Build Settings).
+        if (!string.IsNullOrEmpty(mainMenuSceneName))
         {
             Scene cur = SceneManager.GetActiveScene();
-            if (cur.name != mainMenuSceneName)
+            if (cur.name != mainMenuSceneName
+                && Application.CanStreamedLevelBeLoaded(mainMenuSceneName))
             {
                 Debug.Log($"[NetworkRTS] Scene-split: loading '{mainMenuSceneName}' " +
                           "after leaving room.");

@@ -396,8 +396,9 @@ public class BuildingTurretCombat : MonoBehaviour
         tracer = tg.AddComponent<LineRenderer>();
         tracer.positionCount     = 2;
         tracer.useWorldSpace     = true;
-        tracer.startWidth        = tracerWidth;
-        tracer.endWidth          = tracerWidth;
+        // Clamp + taper (see UnitCombat.BuildTracer) — readable, not beam-like.
+        tracer.startWidth        = Mathf.Min(tracerWidth, 0.08f);
+        tracer.endWidth          = Mathf.Min(tracerWidth, 0.08f) * 0.35f;
         tracer.numCapVertices    = 0;
         tracer.shadowCastingMode = ShadowCastingMode.Off;
         tracer.receiveShadows    = false;
@@ -434,6 +435,13 @@ public class BuildingTurretCombat : MonoBehaviour
         tracer.SetPosition(1, end);
         tracer.enabled = true;
         tracerTimer    = tracerDuration;
+
+        // Brief muzzle flash at the turret barrel.
+        CombatVFX.MuzzleFlash(start, end - start);
+
+        // Tiny structural thump per burst — defensive turrets feel mounted,
+        // not painted on. Visual children only; MP-safe.
+        RecoilKickFX.Kick(transform, end - start, 0.03f);
 
         // Positional MG-turret fire. Throttled by the SoundEvent's minInterval
         // so the fast attackCooldown (~0.15s) doesn't machine-gun the speakers.

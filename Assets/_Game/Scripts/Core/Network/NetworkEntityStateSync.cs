@@ -230,8 +230,15 @@ public class NetworkEntityStateSync : MonoBehaviour
         GameEntity ge = EntityRegistry.Find(entityId);
         if (ge == null)
         {
-            // Don't fabricate — a missing entity is a deeper bug. Log so
-            // future diagnostics can catch it.
+            // Master says the entity is INACTIVE (e.g. a dozer in an
+            // unassigned corner that was deactivated at match start). Not
+            // having it registered locally is consistent — inactive objects
+            // never register — so there is nothing to reconcile. Warning
+            // here flooded remote logs every snapshot tick.
+            if (!isActive) return;
+
+            // Don't fabricate — a missing ACTIVE entity is a deeper bug.
+            // Log so future diagnostics can catch it.
             Debug.LogWarning($"[NetSnap] Snapshot for entity '{entityId}' (owner {ownerPlayerId}) " +
                              "but it's not in local EntityRegistry. Possible missed spawn.");
             return;
